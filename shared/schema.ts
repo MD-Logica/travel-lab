@@ -80,6 +80,7 @@ export const tripVersions = pgTable("trip_versions", {
   versionNumber: integer("version_number").notNull().default(1),
   name: text("name").notNull().default("Version 1"),
   isPrimary: boolean("is_primary").notNull().default(true),
+  showPricing: boolean("show_pricing").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
