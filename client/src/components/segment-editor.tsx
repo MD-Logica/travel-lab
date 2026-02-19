@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -16,7 +17,7 @@ import {
   X, Plus, ImageIcon, DollarSign, Star, Clock, MapPin, Phone,
   Globe, Hash, User, Truck, Train, Bus, Anchor,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Landmark, Palette,
-  Dumbbell, Sparkles, Ticket, Search,
+  Dumbbell, Sparkles, Ticket, Search, Bookmark,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -588,6 +589,17 @@ const typeFieldComponents: Record<string, typeof FlightFields> = {
   note: NoteFields,
 };
 
+export interface TemplateData {
+  type: string;
+  title: string;
+  subtitle?: string;
+  cost?: number;
+  currency?: string;
+  notes?: string;
+  metadata?: Record<string, any>;
+  templateId?: string;
+}
+
 interface SegmentEditorProps {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -595,6 +607,7 @@ interface SegmentEditorProps {
   versionId: string;
   existingSegment: TripSegment | null;
   defaultDay: number;
+  templateData?: TemplateData | null;
 }
 
 export function SegmentEditor({
@@ -604,6 +617,7 @@ export function SegmentEditor({
   versionId,
   existingSegment,
   defaultDay,
+  templateData,
 }: SegmentEditorProps) {
   const { toast } = useToast();
   const isEdit = !!existingSegment;
@@ -620,6 +634,8 @@ export function SegmentEditor({
   const [notes, setNotes] = useState(existingSegment?.notes || "");
   const [photos, setPhotos] = useState<string[]>((existingSegment?.photos as string[]) || []);
   const [metadata, setMetadata] = useState<Record<string, any>>((existingSegment?.metadata as Record<string, any>) || {});
+  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
+  const [templateLabel, setTemplateLabel] = useState("");
 
   const resetForm = useCallback(() => {
     setType("activity");
@@ -634,6 +650,8 @@ export function SegmentEditor({
     setNotes("");
     setPhotos([]);
     setMetadata({});
+    setSaveAsTemplate(false);
+    setTemplateLabel("");
   }, [defaultDay]);
 
   useEffect(() => {
@@ -651,11 +669,26 @@ export function SegmentEditor({
         setNotes(existingSegment.notes || "");
         setPhotos((existingSegment.photos as string[]) || []);
         setMetadata((existingSegment.metadata as Record<string, any>) || {});
+      } else if (templateData) {
+        setType(templateData.type);
+        setTitle(templateData.title);
+        setSubtitle(templateData.subtitle || "");
+        setDayNumber(defaultDay);
+        setStartTime("");
+        setEndTime("");
+        setConfirmationNumber("");
+        setCost(templateData.cost?.toString() || "");
+        setCurrency(templateData.currency || "USD");
+        setNotes(templateData.notes || "");
+        setPhotos([]);
+        setMetadata(templateData.metadata || {});
       } else {
         resetForm();
       }
+      setSaveAsTemplate(false);
+      setTemplateLabel("");
     }
-  }, [open, existingSegment, resetForm]);
+  }, [open, existingSegment, templateData, resetForm, defaultDay]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -682,7 +715,31 @@ export function SegmentEditor({
         return res.json();
       }
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      if (saveAsTemplate && templateLabel.trim()) {
+        try {
+          await apiRequest("POST", "/api/segment-templates", {
+            type,
+            label: templateLabel.trim(),
+            data: {
+              title,
+              subtitle: subtitle || undefined,
+              cost: cost ? parseInt(cost) : undefined,
+              currency,
+              notes: notes || undefined,
+              metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+            },
+          });
+          toast({ title: "Template saved", description: `"${templateLabel}" saved for reuse` });
+        } catch {
+          toast({ title: "Segment saved but template failed", variant: "destructive" });
+        }
+        queryClient.invalidateQueries({ queryKey: ["/api/segment-templates"] });
+      }
+      if (templateData?.templateId) {
+        apiRequest("POST", `/api/segment-templates/${templateData.templateId}/use`).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ["/api/segment-templates"] });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
       toast({ title: isEdit ? "Segment updated" : "Segment added" });
       resetForm();
@@ -821,11 +878,36 @@ export function SegmentEditor({
           <PhotosField photos={photos} onChange={setPhotos} />
         </div>
 
-        <div className="shrink-0 border-t border-border/50 p-4">
+        <div className="shrink-0 border-t border-border/50 p-4 space-y-3">
+          {!isEdit && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="save-template"
+                  checked={saveAsTemplate}
+                  onCheckedChange={(v) => setSaveAsTemplate(!!v)}
+                  data-testid="checkbox-save-template"
+                />
+                <label htmlFor="save-template" className="text-sm text-muted-foreground flex items-center gap-1.5 cursor-pointer">
+                  <Bookmark className="w-3.5 h-3.5" />
+                  Save as reusable template
+                </label>
+              </div>
+              {saveAsTemplate && (
+                <Input
+                  value={templateLabel}
+                  onChange={(e) => setTemplateLabel(e.target.value)}
+                  placeholder="Template name, e.g. 'Aman Tokyo Standard Suite'"
+                  className="text-sm"
+                  data-testid="input-template-label"
+                />
+              )}
+            </div>
+          )}
           <Button
             className="w-full"
             onClick={() => saveMutation.mutate()}
-            disabled={!title.trim() || saveMutation.isPending}
+            disabled={!title.trim() || saveMutation.isPending || (saveAsTemplate && !templateLabel.trim())}
             data-testid="button-save-segment"
           >
             {saveMutation.isPending ? "Saving..." : isEdit ? `Update ${cfg.label}` : `Save ${cfg.label}`}

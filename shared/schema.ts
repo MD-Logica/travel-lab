@@ -150,6 +150,18 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const segmentTemplates = pgTable("segment_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  createdBy: varchar("created_by").notNull(),
+  type: segmentTypeEnum("type").notNull(),
+  label: text("label").notNull(),
+  data: jsonb("data").notNull(),
+  useCount: integer("use_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const insertFlightTrackingSchema = createInsertSchema(flightTracking).omit({
   id: true,
   createdAt: true,
@@ -160,10 +172,18 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
   createdAt: true,
 });
 
+export const insertSegmentTemplateSchema = createInsertSchema(segmentTemplates).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type FlightTracking = typeof flightTracking.$inferSelect;
 export type InsertFlightTracking = z.infer<typeof insertFlightTrackingSchema>;
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type SegmentTemplate = typeof segmentTemplates.$inferSelect;
+export type InsertSegmentTemplate = z.infer<typeof insertSegmentTemplateSchema>;
 
 export const flightTrackingRelations = relations(flightTracking, ({ one }) => ({
   segment: one(tripSegments, {

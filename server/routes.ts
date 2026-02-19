@@ -1033,6 +1033,160 @@ export async function registerRoutes(
     }
   });
 
+  // ──── SEGMENT TEMPLATES ─────────────────────────────────────────
+
+  app.get("/api/segment-templates", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const templates = await storage.getSegmentTemplatesByOrg(req._orgId);
+      res.json(templates);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch templates" });
+    }
+  });
+
+  app.post("/api/segment-templates", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const schema = z.object({
+        type: z.enum(["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]),
+        label: z.string().min(1),
+        data: z.record(z.any()),
+      });
+      const parsed = schema.parse(req.body);
+      const template = await storage.createSegmentTemplate({
+        ...parsed,
+        orgId: req._orgId,
+        createdBy: req._profile.id,
+        useCount: 0,
+      });
+      res.status(201).json(template);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to create template" });
+    }
+  });
+
+  app.patch("/api/segment-templates/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const schema = z.object({
+        label: z.string().min(1).optional(),
+      });
+      const parsed = schema.parse(req.body);
+      const template = await storage.updateSegmentTemplate(req.params.id, req._orgId, parsed);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+      res.json(template);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to update template" });
+    }
+  });
+
+  app.delete("/api/segment-templates/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const template = await storage.getSegmentTemplate(req.params.id, req._orgId);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+      if (template.createdBy !== req._profile.id && req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only template creator or org owner can delete" });
+      }
+      await storage.deleteSegmentTemplate(req.params.id, req._orgId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete template" });
+    }
+  });
+
+  app.post("/api/segment-templates/:id/use", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      await storage.incrementTemplateUseCount(req.params.id, req._orgId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to increment use count" });
+    }
+  });
+
+  // ──── TRIP DUPLICATION ─────────────────────────────────────────
+
+  app.post("/api/trips/:tripId/duplicate", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const schema = z.object({
+        title: z.string().min(1),
+        clientId: z.string().min(1),
+        startDate: z.string().optional().nullable(),
+      });
+      const parsed = schema.parse(req.body);
+      const orgId = req._orgId;
+
+      const sourceTrip = await storage.getTrip(req.params.tripId, orgId);
+      if (!sourceTrip) return res.status(404).json({ message: "Source trip not found" });
+
+      let endDate: Date | null = null;
+      let startDate: Date | null = parsed.startDate ? new Date(parsed.startDate) : null;
+      if (startDate && sourceTrip.startDate && sourceTrip.endDate) {
+        const durationMs = new Date(sourceTrip.endDate).getTime() - new Date(sourceTrip.startDate).getTime();
+        endDate = new Date(startDate.getTime() + durationMs);
+      }
+
+      const newTrip = await storage.createTrip({
+        orgId,
+        title: parsed.title,
+        destination: sourceTrip.destination,
+        description: sourceTrip.description,
+        coverImageUrl: sourceTrip.coverImageUrl,
+        startDate: startDate,
+        endDate: endDate,
+        status: "draft",
+        budget: sourceTrip.budget,
+        currency: sourceTrip.currency,
+        clientId: parsed.clientId,
+        advisorId: req._profile.id,
+        notes: sourceTrip.notes,
+      });
+
+      const sourceVersions = await storage.getTripVersions(req.params.tripId, orgId);
+
+      for (const sv of sourceVersions) {
+        const newVersion = await storage.createTripVersion({
+          tripId: newTrip.id,
+          orgId,
+          versionNumber: sv.versionNumber,
+          name: sv.name,
+          isPrimary: sv.isPrimary,
+        });
+
+        const sourceSegments = await storage.getTripSegments(sv.id, orgId);
+        for (const seg of sourceSegments) {
+          const metaCopy = seg.metadata ? { ...(seg.metadata as Record<string, any>) } : null;
+          if (metaCopy) {
+            delete metaCopy.confirmationNumber;
+          }
+          await storage.createTripSegment({
+            versionId: newVersion.id,
+            tripId: newTrip.id,
+            orgId,
+            dayNumber: seg.dayNumber,
+            sortOrder: seg.sortOrder,
+            type: seg.type,
+            title: seg.title,
+            subtitle: seg.subtitle,
+            startTime: seg.startTime,
+            endTime: seg.endTime,
+            confirmationNumber: null,
+            cost: seg.cost,
+            currency: seg.currency,
+            notes: seg.notes,
+            photos: seg.photos,
+            metadata: metaCopy,
+          });
+        }
+      }
+
+      res.status(201).json(newTrip);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      console.error("Trip duplication error:", error);
+      res.status(500).json({ message: "Failed to duplicate trip" });
+    }
+  });
+
   app.get("/api/plan-limits", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const org = await storage.getOrganization(req._orgId);

@@ -9,18 +9,24 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
 import {
   User, Building2, LogOut, Crown, Calendar, Shield,
+  Bookmark, Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
+  Trash2, Pencil, MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { Organization, Profile } from "@shared/schema";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 
-type SettingsSection = "profile" | "organization" | "account";
+type SettingsSection = "profile" | "organization" | "templates" | "account";
 
 const navItems: { id: SettingsSection; label: string; icon: typeof User }[] = [
   { id: "profile", label: "Profile", icon: User },
   { id: "organization", label: "Organization", icon: Building2 },
+  { id: "templates", label: "Templates", icon: Bookmark },
   { id: "account", label: "Account", icon: LogOut },
 ];
 
@@ -262,6 +268,155 @@ function OrganizationSection({ profile }: { profile: Profile }) {
   );
 }
 
+const templateTypeIcons: Record<string, typeof Plane> = {
+  flight: Plane, charter: Ship, hotel: Hotel, transport: Car,
+  restaurant: UtensilsCrossed, activity: Activity, note: StickyNote,
+};
+
+const templateTypeLabels: Record<string, string> = {
+  flight: "Flight", charter: "Charter", hotel: "Hotel", transport: "Transport",
+  restaurant: "Restaurant", activity: "Activity", note: "Note",
+};
+
+function TemplatesSection() {
+  const { toast } = useToast();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+
+  const { data: templates, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/segment-templates"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/segment-templates/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/segment-templates"] });
+      toast({ title: "Template deleted" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const renameMutation = useMutation({
+    mutationFn: async ({ id, label }: { id: string; label: string }) => {
+      const res = await apiRequest("PATCH", `/api/segment-templates/${id}`, { label });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/segment-templates"] });
+      setEditingId(null);
+      toast({ title: "Template renamed" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
+      <div className="mb-6">
+        <h2 className="font-serif text-2xl tracking-tight" data-testid="text-templates-section-title">Segment Templates</h2>
+        <p className="text-sm text-muted-foreground mt-1">Reusable segment templates shared across your agency</p>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+        </div>
+      ) : !templates || templates.length === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center">
+            <Bookmark className="w-8 h-8 mx-auto text-muted-foreground/30 mb-3" />
+            <p className="text-sm text-muted-foreground">No templates yet</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">Save segments as templates when editing trips</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-2">
+          {templates.map((tpl: any) => {
+            const TIcon = templateTypeIcons[tpl.type] || Activity;
+            const isEditing = editingId === tpl.id;
+
+            return (
+              <Card key={tpl.id} data-testid={`template-card-${tpl.id}`}>
+                <CardContent className="p-4 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center shrink-0">
+                    <TIcon className="w-4 h-4 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {isEditing ? (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={editLabel}
+                          onChange={(e) => setEditLabel(e.target.value)}
+                          className="h-7 text-sm"
+                          autoFocus
+                          data-testid="input-rename-template"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && editLabel.trim()) {
+                              renameMutation.mutate({ id: tpl.id, label: editLabel.trim() });
+                            } else if (e.key === "Escape") {
+                              setEditingId(null);
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          onClick={() => editLabel.trim() && renameMutation.mutate({ id: tpl.id, label: editLabel.trim() })}
+                          disabled={!editLabel.trim() || renameMutation.isPending}
+                          data-testid="button-save-rename"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium truncate" data-testid={`text-template-label-${tpl.id}`}>{tpl.label}</p>
+                        <p className="text-xs text-muted-foreground/60">
+                          {templateTypeLabels[tpl.type] || tpl.type}
+                          {tpl.creatorName && ` by ${tpl.creatorName}`}
+                          {" \u00B7 "}used {tpl.useCount}x
+                        </p>
+                      </>
+                    )}
+                  </div>
+                  {!isEditing && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" data-testid={`button-template-actions-${tpl.id}`}>
+                          <MoreVertical className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => { setEditingId(tpl.id); setEditLabel(tpl.label); }}
+                          data-testid={`button-rename-template-${tpl.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5 mr-2" /> Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => deleteMutation.mutate(tpl.id)}
+                          className="text-destructive"
+                          data-testid={`button-delete-template-${tpl.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
 function AccountSection() {
   const { logout } = useAuth();
 
@@ -352,6 +507,7 @@ export default function SettingsPage() {
           <div className="flex-1 min-w-0">
             {activeSection === "profile" && <ProfileSection profile={profile} />}
             {activeSection === "organization" && <OrganizationSection profile={profile} />}
+            {activeSection === "templates" && <TemplatesSection />}
             {activeSection === "account" && <AccountSection />}
           </div>
         </div>

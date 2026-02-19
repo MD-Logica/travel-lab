@@ -4,6 +4,10 @@ import { useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
@@ -24,11 +28,11 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown, RefreshCw,
+  ChevronDown, RefreshCw, Bookmark,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { SegmentEditor } from "@/components/segment-editor";
+import { SegmentEditor, type TemplateData } from "@/components/segment-editor";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking } from "@shared/schema";
 import { format } from "date-fns";
 
@@ -590,6 +594,171 @@ function ClientPreferencesPanel({ clientId, clientName }: { clientId: string; cl
   );
 }
 
+function DuplicateTripDialog({ tripId, tripTitle, open, onOpenChange }: {
+  tripId: string;
+  tripTitle: string;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const [title, setTitle] = useState(`${tripTitle} (Copy)`);
+  const [clientId, setClientId] = useState("");
+  const [startDate, setStartDate] = useState("");
+
+  const { data: clients } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+    enabled: open,
+  });
+
+  const duplicateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/trips/${tripId}/duplicate`, {
+        title,
+        clientId,
+        startDate: startDate || null,
+      });
+      return res.json();
+    },
+    onSuccess: (newTrip: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      toast({ title: "Trip duplicated", description: `"${newTrip.title}" created` });
+      onOpenChange(false);
+      navigate(`/trips/${newTrip.id}/edit`);
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-serif text-xl">Duplicate Trip</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-2">
+          <div>
+            <Label className="text-sm">Trip Title</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Italy Honeymoon (Copy)"
+              data-testid="input-duplicate-title"
+            />
+          </div>
+          <div>
+            <Label className="text-sm">Client</Label>
+            <Select value={clientId} onValueChange={setClientId}>
+              <SelectTrigger data-testid="select-duplicate-client">
+                <SelectValue placeholder="Select client" />
+              </SelectTrigger>
+              <SelectContent>
+                {clients?.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>{c.fullName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-sm">New Start Date (optional)</Label>
+            <Input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              data-testid="input-duplicate-start-date"
+            />
+            <p className="text-xs text-muted-foreground/60 mt-1">Leave blank to keep original dates</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-duplicate">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => duplicateMutation.mutate()}
+              disabled={!title.trim() || !clientId || duplicateMutation.isPending}
+              data-testid="button-confirm-duplicate"
+            >
+              {duplicateMutation.isPending ? "Duplicating..." : "Duplicate Trip"}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const segmentTypeIcons: Record<string, typeof Plane> = {
+  flight: Plane, charter: Ship, hotel: Hotel, transport: Car,
+  restaurant: UtensilsCrossed, activity: Activity, note: StickyNote,
+};
+
+function AddSegmentMenu({ day, onAddBlank, onAddFromTemplate }: {
+  day: number;
+  onAddBlank: (day: number) => void;
+  onAddFromTemplate: (day: number, tpl: TemplateData) => void;
+}) {
+  const { data: templates } = useQuery<any[]>({
+    queryKey: ["/api/segment-templates"],
+  });
+
+  const hasTemplates = templates && templates.length > 0;
+
+  if (!hasTemplates) {
+    return (
+      <Button variant="ghost" size="sm" className="text-xs" onClick={() => onAddBlank(day)} data-testid={`button-add-segment-day-${day}`}>
+        <Plus className="w-3 h-3 mr-1" /> Add
+      </Button>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="text-xs" data-testid={`button-add-segment-day-${day}`}>
+          <Plus className="w-3 h-3 mr-1" /> Add
+          <ChevronDown className="w-3 h-3 ml-1" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-64">
+        <DropdownMenuItem onClick={() => onAddBlank(day)} data-testid={`add-blank-segment-day-${day}`}>
+          <Plus className="w-3.5 h-3.5 mr-2" />
+          Blank segment
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <div className="px-2 py-1.5">
+          <p className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground/60 font-medium flex items-center gap-1">
+            <Bookmark className="w-3 h-3" /> Templates
+          </p>
+        </div>
+        {templates.map((tpl: any) => {
+          const TIcon = segmentTypeIcons[tpl.type] || Activity;
+          return (
+            <DropdownMenuItem
+              key={tpl.id}
+              onClick={() => onAddFromTemplate(day, {
+                type: tpl.type,
+                title: tpl.data?.title || tpl.label,
+                subtitle: tpl.data?.subtitle,
+                cost: tpl.data?.cost,
+                currency: tpl.data?.currency,
+                notes: tpl.data?.notes,
+                metadata: tpl.data?.metadata,
+                templateId: tpl.id,
+              })}
+              data-testid={`add-template-${tpl.id}`}
+            >
+              <TIcon className="w-3.5 h-3.5 mr-2 shrink-0" />
+              <span className="truncate">{tpl.label}</span>
+              <span className="ml-auto text-[10px] text-muted-foreground/50">{tpl.useCount}x</span>
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export default function TripEditPage() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -598,6 +767,8 @@ export default function TripEditPage() {
   const [segmentDialogOpen, setSegmentDialogOpen] = useState(false);
   const [editingSegment, setEditingSegment] = useState<TripSegment | null>(null);
   const [addSegmentDay, setAddSegmentDay] = useState(1);
+  const [templateForEditor, setTemplateForEditor] = useState<TemplateData | null>(null);
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
 
   const { data: tripData, isLoading: tripLoading } = useQuery<TripFull>({
     queryKey: ["/api/trips", id, "full"],
@@ -698,12 +869,21 @@ export default function TripEditPage() {
 
   const openAddSegment = (day: number) => {
     setEditingSegment(null);
+    setTemplateForEditor(null);
+    setAddSegmentDay(day);
+    setSegmentDialogOpen(true);
+  };
+
+  const openAddFromTemplate = (day: number, tpl: TemplateData) => {
+    setEditingSegment(null);
+    setTemplateForEditor(tpl);
     setAddSegmentDay(day);
     setSegmentDialogOpen(true);
   };
 
   const openEditSegment = (segment: TripSegment) => {
     setEditingSegment(segment);
+    setTemplateForEditor(null);
     setAddSegmentDay(segment.dayNumber);
     setSegmentDialogOpen(true);
   };
@@ -776,6 +956,14 @@ export default function TripEditPage() {
                 {(trip.currency || "USD")} {totalCost.toLocaleString()}
               </Badge>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDuplicateDialogOpen(true)}
+              data-testid="button-duplicate-trip"
+            >
+              <Copy className="w-3.5 h-3.5 mr-1" /> Duplicate
+            </Button>
           </div>
         </div>
 
@@ -897,15 +1085,11 @@ export default function TripEditPage() {
                         )}
                       </div>
                       <Separator className="flex-1" />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-xs"
-                        onClick={() => openAddSegment(dayNum)}
-                        data-testid={`button-add-segment-day-${dayNum}`}
-                      >
-                        <Plus className="w-3 h-3 mr-1" /> Add
-                      </Button>
+                      <AddSegmentMenu
+                        day={dayNum}
+                        onAddBlank={openAddSegment}
+                        onAddFromTemplate={openAddFromTemplate}
+                      />
                     </div>
                     <div className="space-y-2 pl-0 md:pl-4">
                       {daySegments.map((seg) => (
@@ -950,15 +1134,23 @@ export default function TripEditPage() {
 
       {currentVersionId && (
         <SegmentEditor
-          key={editingSegment?.id || `new-${addSegmentDay}`}
+          key={editingSegment?.id || `new-${addSegmentDay}-${templateForEditor?.templateId || ''}`}
           open={segmentDialogOpen}
           onOpenChange={setSegmentDialogOpen}
           tripId={id!}
           versionId={currentVersionId}
           existingSegment={editingSegment}
           defaultDay={addSegmentDay}
+          templateData={templateForEditor}
         />
       )}
+
+      <DuplicateTripDialog
+        tripId={id!}
+        tripTitle={trip.title}
+        open={duplicateDialogOpen}
+        onOpenChange={setDuplicateDialogOpen}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
-  flightTracking, notifications,
+  flightTracking, notifications, segmentTemplates,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -10,6 +10,7 @@ import {
   type TripDocument, type InsertTripDocument,
   type FlightTracking, type InsertFlightTracking,
   type Notification, type InsertNotification,
+  type SegmentTemplate, type InsertSegmentTemplate,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike, desc } from "drizzle-orm";
@@ -83,6 +84,13 @@ export interface IStorage {
   markAllNotificationsRead(profileId: string): Promise<void>;
 
   getAdvisorProfilesForOrg(orgId: string): Promise<Profile[]>;
+
+  createSegmentTemplate(data: InsertSegmentTemplate): Promise<SegmentTemplate>;
+  getSegmentTemplatesByOrg(orgId: string): Promise<(SegmentTemplate & { creatorName: string | null })[]>;
+  getSegmentTemplate(id: string, orgId: string): Promise<SegmentTemplate | undefined>;
+  updateSegmentTemplate(id: string, orgId: string, data: Partial<InsertSegmentTemplate>): Promise<SegmentTemplate | undefined>;
+  deleteSegmentTemplate(id: string, orgId: string): Promise<boolean>;
+  incrementTemplateUseCount(id: string, orgId: string): Promise<void>;
 
   updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined>;
   updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined>;
@@ -613,6 +621,51 @@ export class DatabaseStorage implements IStorage {
         or(eq(profiles.role, "owner"), eq(profiles.role, "advisor"))
       )
     );
+  }
+
+  async createSegmentTemplate(data: InsertSegmentTemplate): Promise<SegmentTemplate> {
+    const [result] = await db.insert(segmentTemplates).values(data).returning();
+    return result;
+  }
+
+  async getSegmentTemplatesByOrg(orgId: string): Promise<(SegmentTemplate & { creatorName: string | null })[]> {
+    const rows = await db
+      .select({
+        template: segmentTemplates,
+        creatorName: profiles.fullName,
+      })
+      .from(segmentTemplates)
+      .leftJoin(profiles, eq(segmentTemplates.createdBy, profiles.id))
+      .where(eq(segmentTemplates.orgId, orgId))
+      .orderBy(desc(segmentTemplates.useCount));
+    return rows.map(r => ({ ...r.template, creatorName: r.creatorName }));
+  }
+
+  async getSegmentTemplate(id: string, orgId: string): Promise<SegmentTemplate | undefined> {
+    const [result] = await db.select().from(segmentTemplates)
+      .where(and(eq(segmentTemplates.id, id), eq(segmentTemplates.orgId, orgId)));
+    return result;
+  }
+
+  async updateSegmentTemplate(id: string, orgId: string, data: Partial<InsertSegmentTemplate>): Promise<SegmentTemplate | undefined> {
+    const [result] = await db.update(segmentTemplates)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(segmentTemplates.id, id), eq(segmentTemplates.orgId, orgId)))
+      .returning();
+    return result;
+  }
+
+  async deleteSegmentTemplate(id: string, orgId: string): Promise<boolean> {
+    const [result] = await db.delete(segmentTemplates)
+      .where(and(eq(segmentTemplates.id, id), eq(segmentTemplates.orgId, orgId)))
+      .returning();
+    return !!result;
+  }
+
+  async incrementTemplateUseCount(id: string, orgId: string): Promise<void> {
+    await db.update(segmentTemplates)
+      .set({ useCount: sql`${segmentTemplates.useCount} + 1` })
+      .where(and(eq(segmentTemplates.id, id), eq(segmentTemplates.orgId, orgId)));
   }
 }
 
