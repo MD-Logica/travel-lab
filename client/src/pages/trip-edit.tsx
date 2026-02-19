@@ -79,10 +79,14 @@ function SegmentCard({
     if (meta.provider) metaDetails.push(meta.provider);
   } else if (segment.type === "restaurant") {
     if (meta.cuisine) metaDetails.push(meta.cuisine);
-    if (meta.dressCode) metaDetails.push(meta.dressCode);
+    if (meta.guestName) metaDetails.push(meta.guestName);
+    if (meta.partySize) metaDetails.push(`${meta.partySize} guests`);
   } else if (segment.type === "activity") {
+    if (meta.category) metaDetails.push(meta.category.charAt(0).toUpperCase() + meta.category.slice(1));
     if (meta.provider) metaDetails.push(meta.provider);
     if (meta.duration) metaDetails.push(meta.duration);
+  } else if (segment.type === "note") {
+    if (meta.noteType) metaDetails.push(meta.noteType.charAt(0).toUpperCase() + meta.noteType.slice(1));
   }
 
   const confNum = meta.confirmationNumber || segment.confirmationNumber;
@@ -137,8 +141,10 @@ function SegmentCard({
               </span>
             )}
           </div>
-          {segment.notes && (
-            <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{segment.notes}</p>
+          {(segment.notes || (segment.type === "note" && meta.content)) && (
+            <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">
+              {segment.type === "note" && meta.content ? meta.content : segment.notes}
+            </p>
           )}
         </div>
       </CardContent>

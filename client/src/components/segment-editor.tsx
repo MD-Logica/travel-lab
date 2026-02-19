@@ -15,6 +15,8 @@ import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   X, Plus, ImageIcon, DollarSign, Star, Clock, MapPin, Phone,
   Globe, Hash, User, Truck, Train, Bus, Anchor,
+  Info, Lightbulb, AlertTriangle, ShieldAlert, Landmark, Palette,
+  Dumbbell, Sparkles, Ticket, Search,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -354,27 +356,31 @@ function RestaurantFields({ metadata, onChange }: { metadata: Record<string, any
         <FieldLabel>Restaurant Name</FieldLabel>
         <Input value={metadata.restaurantName || ""} onChange={(e) => set("restaurantName", e.target.value)} placeholder="Noma" data-testid="input-restaurant-name" />
       </div>
-      <div>
-        <FieldLabel>Cuisine</FieldLabel>
-        <Input value={metadata.cuisine || ""} onChange={(e) => set("cuisine", e.target.value)} placeholder="New Nordic" data-testid="input-cuisine" />
-      </div>
-      <div>
-        <FieldLabel>Address</FieldLabel>
-        <Input value={metadata.address || ""} onChange={(e) => set("address", e.target.value)} data-testid="input-restaurant-address" />
-      </div>
       <FieldRow>
         <div>
-          <FieldLabel>Phone</FieldLabel>
-          <Input value={metadata.phone || ""} onChange={(e) => set("phone", e.target.value)} data-testid="input-restaurant-phone" />
+          <FieldLabel>Cuisine</FieldLabel>
+          <Input value={metadata.cuisine || ""} onChange={(e) => set("cuisine", e.target.value)} placeholder="New Nordic" data-testid="input-cuisine" />
         </div>
         <div>
-          <FieldLabel>Website</FieldLabel>
-          <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} data-testid="input-restaurant-website" />
+          <FieldLabel>Address</FieldLabel>
+          <Input value={metadata.address || ""} onChange={(e) => set("address", e.target.value)} placeholder="Refshalevej 96, Copenhagen" data-testid="input-restaurant-address" />
         </div>
       </FieldRow>
       <FieldRow>
         <div>
-          <FieldLabel>Reservation Date + Time</FieldLabel>
+          <FieldLabel>Phone</FieldLabel>
+          <Input value={metadata.phone || ""} onChange={(e) => set("phone", e.target.value)} placeholder="+45 3296 3297" data-testid="input-restaurant-phone" />
+        </div>
+        <div>
+          <FieldLabel>Website</FieldLabel>
+          <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} placeholder="https://noma.dk" data-testid="input-restaurant-website" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Reservation</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Date + Time</FieldLabel>
           <Input type="datetime-local" value={metadata.reservationDateTime || ""} onChange={(e) => set("reservationDateTime", e.target.value)} data-testid="input-reservation-datetime" />
         </div>
         <div>
@@ -382,6 +388,10 @@ function RestaurantFields({ metadata, onChange }: { metadata: Record<string, any
           <Input type="number" min={1} value={metadata.partySize || ""} onChange={(e) => set("partySize", e.target.value)} placeholder="2" data-testid="input-party-size" />
         </div>
       </FieldRow>
+      <div>
+        <FieldLabel>Guest Name</FieldLabel>
+        <Input value={metadata.guestName || ""} onChange={(e) => set("guestName", e.target.value)} placeholder="Mr & Mrs Johnson" data-testid="input-guest-name" />
+      </div>
       <FieldRow>
         <div>
           <FieldLabel>Dress Code</FieldLabel>
@@ -396,6 +406,15 @@ function RestaurantFields({ metadata, onChange }: { metadata: Record<string, any
   );
 }
 
+const activityCategories = [
+  { value: "tour", label: "Tour", icon: MapPin },
+  { value: "museum", label: "Museum", icon: Landmark },
+  { value: "sport", label: "Sport", icon: Dumbbell },
+  { value: "wellness", label: "Wellness", icon: Sparkles },
+  { value: "entertainment", label: "Entertainment", icon: Ticket },
+  { value: "other", label: "Other", icon: Palette },
+];
+
 function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
   return (
@@ -406,8 +425,26 @@ function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>;
         <Input value={metadata.activityName || ""} onChange={(e) => set("activityName", e.target.value)} placeholder="Private gondola tour" data-testid="input-activity-name" />
       </div>
       <div>
-        <FieldLabel>Provider / Operator</FieldLabel>
-        <Input value={metadata.provider || ""} onChange={(e) => set("provider", e.target.value)} placeholder="Walks of Italy" data-testid="input-activity-provider" />
+        <FieldLabel>Category</FieldLabel>
+        <div className="flex flex-wrap gap-1.5">
+          {activityCategories.map((c) => {
+            const CIcon = c.icon;
+            const selected = metadata.category === c.value;
+            return (
+              <Button
+                key={c.value}
+                type="button"
+                variant={selected ? "default" : "outline"}
+                size="sm"
+                onClick={() => set("category", c.value)}
+                data-testid={`button-activity-category-${c.value}`}
+              >
+                <CIcon className="w-3.5 h-3.5 mr-1" />
+                {c.label}
+              </Button>
+            );
+          })}
+        </div>
       </div>
       <div>
         <FieldLabel>Location</FieldLabel>
@@ -415,34 +452,79 @@ function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>;
       </div>
       <FieldRow>
         <div>
-          <FieldLabel>Start Time</FieldLabel>
+          <FieldLabel>Date + Time</FieldLabel>
           <Input type="datetime-local" value={metadata.startDateTime || ""} onChange={(e) => set("startDateTime", e.target.value)} data-testid="input-activity-start" />
         </div>
         <div>
-          <FieldLabel>End Time</FieldLabel>
-          <Input type="datetime-local" value={metadata.endDateTime || ""} onChange={(e) => set("endDateTime", e.target.value)} data-testid="input-activity-end" />
-        </div>
-      </FieldRow>
-      <FieldRow>
-        <div>
           <FieldLabel>Duration</FieldLabel>
           <Input value={metadata.duration || ""} onChange={(e) => set("duration", e.target.value)} placeholder="2 hours" data-testid="input-activity-duration" />
+        </div>
+      </FieldRow>
+      <div>
+        <FieldLabel>Meeting Point</FieldLabel>
+        <Input value={metadata.meetingPoint || ""} onChange={(e) => set("meetingPoint", e.target.value)} placeholder="Hotel lobby, dock 3..." data-testid="input-meeting-point" />
+      </div>
+      <FieldRow>
+        <div>
+          <FieldLabel>Operator / Guide</FieldLabel>
+          <Input value={metadata.provider || ""} onChange={(e) => set("provider", e.target.value)} placeholder="Walks of Italy" data-testid="input-activity-provider" />
         </div>
         <div>
           <FieldLabel>Confirmation Number</FieldLabel>
           <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-activity-confirmation" />
         </div>
       </FieldRow>
-      <div>
-        <FieldLabel>What to Bring</FieldLabel>
-        <Input value={metadata.whatToBring || ""} onChange={(e) => set("whatToBring", e.target.value)} placeholder="Comfortable shoes, sunscreen" data-testid="input-what-to-bring" />
-      </div>
     </div>
   );
 }
 
+const noteTypes = [
+  { value: "info", label: "Info", icon: Info, color: "text-sky-600" },
+  { value: "tip", label: "Tip", icon: Lightbulb, color: "text-amber-600" },
+  { value: "important", label: "Important", icon: AlertTriangle, color: "text-orange-600" },
+  { value: "warning", label: "Warning", icon: ShieldAlert, color: "text-rose-600" },
+];
+
 function NoteFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
-  return <></>;
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Note</SectionHeading>
+      <div>
+        <FieldLabel>Note Type</FieldLabel>
+        <div className="flex flex-wrap gap-1.5">
+          {noteTypes.map((n) => {
+            const NIcon = n.icon;
+            const selected = metadata.noteType === n.value;
+            return (
+              <Button
+                key={n.value}
+                type="button"
+                variant={selected ? "default" : "outline"}
+                size="sm"
+                onClick={() => set("noteType", n.value)}
+                data-testid={`button-note-type-${n.value}`}
+              >
+                <NIcon className={`w-3.5 h-3.5 mr-1 ${selected ? "" : n.color}`} />
+                {n.label}
+              </Button>
+            );
+          })}
+        </div>
+      </div>
+      <div>
+        <FieldLabel>Content</FieldLabel>
+        <Textarea
+          value={metadata.content || ""}
+          onChange={(e) => set("content", e.target.value)}
+          placeholder="Write your note here..."
+          className="resize-none min-h-[160px]"
+          rows={7}
+          data-testid="input-note-content"
+        />
+      </div>
+    </div>
+  );
 }
 
 function PhotosField({ photos, onChange }: { photos: string[]; onChange: (p: string[]) => void }) {
