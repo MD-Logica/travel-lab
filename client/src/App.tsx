@@ -18,6 +18,7 @@ import TripsPage from "@/pages/trips";
 import TripDetailPage from "@/pages/trip-detail";
 import TripNewPage from "@/pages/trip-new";
 import TripEditPage from "@/pages/trip-edit";
+import TripViewPage from "@/pages/trip-view";
 import ClientsPage from "@/pages/clients";
 import ClientDetailPage from "@/pages/client-detail";
 import SettingsPage from "@/pages/settings";
@@ -122,6 +123,15 @@ function AppRouter() {
     }
     navigate("/login", { replace: true });
     return null;
+  }
+
+  if (location.startsWith("/trip/") && !location.startsWith("/trips")) {
+    return (
+      <Switch>
+        <Route path="/trip/:id" component={TripViewPage} />
+        <Route component={NotFound} />
+      </Switch>
+    );
   }
 
   if (profileLoading) {

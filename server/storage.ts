@@ -57,6 +57,14 @@ export interface IStorage {
   reorderTripSegments(versionId: string, orgId: string, segmentIds: string[]): Promise<void>;
 
   getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined>;
+
+  getTripFullView(tripId: string): Promise<{
+    trip: Trip;
+    organization: { id: string; name: string; logoUrl: string | null };
+    advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null;
+    client: { fullName: string; email: string | null } | null;
+    versions: (TripVersion & { segments: TripSegment[] })[];
+  } | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -376,6 +384,63 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(trips.id, id), eq(trips.orgId, orgId)));
     if (rows.length === 0) return undefined;
     return { ...rows[0].trip, clientName: rows[0].clientName };
+  }
+  async getTripFullView(tripId: string): Promise<{
+    trip: Trip;
+    organization: { id: string; name: string; logoUrl: string | null };
+    advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null;
+    client: { fullName: string; email: string | null } | null;
+    versions: (TripVersion & { segments: TripSegment[] })[];
+  } | undefined> {
+    const [trip] = await db.select().from(trips).where(eq(trips.id, tripId));
+    if (!trip) return undefined;
+
+    const [org] = await db.select({
+      id: organizations.id,
+      name: organizations.name,
+      logoUrl: organizations.logoUrl,
+    }).from(organizations).where(eq(organizations.id, trip.orgId));
+    if (!org) return undefined;
+
+    let advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null = null;
+    if (trip.advisorId) {
+      const [adv] = await db.select({
+        fullName: profiles.fullName,
+        email: profiles.email,
+        avatarUrl: profiles.avatarUrl,
+      }).from(profiles).where(eq(profiles.id, trip.advisorId));
+      if (adv) advisor = adv;
+    }
+
+    let client: { fullName: string; email: string | null } | null = null;
+    if (trip.clientId) {
+      const [cl] = await db.select({
+        fullName: clients.fullName,
+        email: clients.email,
+      }).from(clients).where(eq(clients.id, trip.clientId));
+      if (cl) client = cl;
+    }
+
+    const versionRows = await db.select().from(tripVersions)
+      .where(eq(tripVersions.tripId, tripId))
+      .orderBy(tripVersions.versionNumber);
+
+    const versionsWithSegments = await Promise.all(
+      versionRows.map(async (v) => {
+        const segs = await db.select().from(tripSegments)
+          .where(eq(tripSegments.versionId, v.id))
+          .orderBy(tripSegments.dayNumber, tripSegments.sortOrder);
+        return { ...v, segments: segs };
+      })
+    );
+
+    return {
+      trip,
+      organization: org,
+      advisor,
+      client,
+      versions: versionsWithSegments,
+    };
   }
 }
 

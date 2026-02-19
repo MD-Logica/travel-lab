@@ -302,6 +302,36 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/trip-view/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const data = await storage.getTripFullView(req.params.id);
+      if (!data) return res.status(404).json({ message: "Trip not found" });
+
+      const profile = await storage.getProfile(userId);
+      const isOrgMember = profile && profile.orgId === data.trip.orgId;
+
+      let isInvitedClient = false;
+      if (data.trip.clientId && data.client?.email) {
+        const userEmail = req.user.claims.email;
+        if (userEmail && userEmail.toLowerCase() === data.client.email.toLowerCase()) {
+          isInvitedClient = true;
+        }
+      }
+
+      if (!isOrgMember && !isInvitedClient) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      res.json(data);
+    } catch (error) {
+      console.error("Trip view error:", error);
+      res.status(500).json({ message: "Failed to fetch trip view" });
+    }
+  });
+
   app.post("/api/trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const orgId = req._orgId;
