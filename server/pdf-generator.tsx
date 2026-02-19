@@ -1,5 +1,6 @@
 import ReactPDF, { Document, Page, Text, View, StyleSheet, Font } from "@react-pdf/renderer";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
+import { formatDestinations } from "@shared/schema";
 
 Font.register({
   family: "Serif",
@@ -77,64 +78,108 @@ function getMetaValue(metadata: any, key: string): string {
   return String(metadata[key] || "");
 }
 
+function formatCurrency(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString()}`;
+  }
+}
+
 function SegmentView({ segment }: { segment: TripSegment }) {
-  const meta = segment.metadata as Record<string, any> || {};
+  const meta = (segment.metadata || {}) as Record<string, any>;
   const typeColor = getSegmentColor(segment.type);
   const details: string[] = [];
 
-  if (segment.type === "flight") {
-    const dep = getMetaValue(meta, "departureAirport");
-    const arr = getMetaValue(meta, "arrivalAirport");
-    if (dep && arr) details.push(`${dep} → ${arr}`);
-    const fn = getMetaValue(meta, "flightNumber");
-    if (fn) details.push(`Flight ${fn}`);
-    const airline = getMetaValue(meta, "airline");
-    if (airline) details.push(airline);
-  } else if (segment.type === "hotel") {
-    const name = getMetaValue(meta, "hotelName");
-    if (name) details.push(name);
-    const room = getMetaValue(meta, "roomType");
-    if (room) details.push(`Room: ${room}`);
-    const stars = getMetaValue(meta, "starRating");
-    if (stars) details.push(`${"★".repeat(Number(stars))} rating`);
-  } else if (segment.type === "restaurant") {
-    const name = getMetaValue(meta, "restaurantName");
-    if (name) details.push(name);
-    const cuisine = getMetaValue(meta, "cuisine");
-    if (cuisine) details.push(`Cuisine: ${cuisine}`);
-    const guest = getMetaValue(meta, "guestName");
-    if (guest) details.push(`Guest: ${guest}`);
-  } else if (segment.type === "activity") {
-    const provider = getMetaValue(meta, "provider");
-    if (provider) details.push(`Provider: ${provider}`);
-    const category = getMetaValue(meta, "category");
-    if (category) details.push(`Category: ${category}`);
-    const meeting = getMetaValue(meta, "meetingPoint");
-    if (meeting) details.push(`Meeting: ${meeting}`);
-  } else if (segment.type === "note") {
-    const noteType = getMetaValue(meta, "noteType");
-    if (noteType) details.push(`[${noteType.toUpperCase()}]`);
-    const content = getMetaValue(meta, "content");
-    if (content) details.push(content.slice(0, 200));
+  try {
+    if (segment.type === "flight") {
+      const dep = getMetaValue(meta, "departureAirport");
+      const arr = getMetaValue(meta, "arrivalAirport");
+      if (dep && arr) details.push(`${dep} > ${arr}`);
+      const fn = getMetaValue(meta, "flightNumber");
+      if (fn) details.push(`Flight ${fn}`);
+      const airline = getMetaValue(meta, "airline");
+      if (airline) details.push(airline);
+      const cabin = getMetaValue(meta, "cabin");
+      if (cabin) details.push(`Class: ${cabin}`);
+    } else if (segment.type === "charter") {
+      const operator = getMetaValue(meta, "operator");
+      if (operator) details.push(`Operator: ${operator}`);
+      const aircraft = getMetaValue(meta, "aircraftType");
+      if (aircraft) details.push(`Aircraft: ${aircraft}`);
+      const dep = getMetaValue(meta, "departureLocation");
+      const arr = getMetaValue(meta, "arrivalLocation");
+      if (dep && arr) details.push(`${dep} > ${arr}`);
+    } else if (segment.type === "hotel") {
+      const name = getMetaValue(meta, "hotelName");
+      if (name) details.push(name);
+      const room = getMetaValue(meta, "roomType");
+      if (room) details.push(`Room: ${room}`);
+      const stars = getMetaValue(meta, "starRating");
+      if (stars && Number(stars) > 0) details.push(`${stars}-star`);
+      const checkIn = getMetaValue(meta, "checkIn");
+      const checkOut = getMetaValue(meta, "checkOut");
+      if (checkIn) details.push(`Check-in: ${checkIn}`);
+      if (checkOut) details.push(`Check-out: ${checkOut}`);
+    } else if (segment.type === "restaurant") {
+      const name = getMetaValue(meta, "restaurantName");
+      if (name) details.push(name);
+      const cuisine = getMetaValue(meta, "cuisine");
+      if (cuisine) details.push(`Cuisine: ${cuisine}`);
+      const guest = getMetaValue(meta, "guestName");
+      if (guest) details.push(`Guest: ${guest}`);
+      const partySize = getMetaValue(meta, "partySize");
+      if (partySize) details.push(`Party: ${partySize}`);
+    } else if (segment.type === "transport") {
+      const provider = getMetaValue(meta, "provider");
+      if (provider) details.push(`Provider: ${provider}`);
+      const tType = getMetaValue(meta, "transportType");
+      if (tType) details.push(tType.charAt(0).toUpperCase() + tType.slice(1));
+      const vehicle = getMetaValue(meta, "vehicleType");
+      if (vehicle) details.push(`Vehicle: ${vehicle}`);
+      const pickup = getMetaValue(meta, "pickupLocation");
+      const dropoff = getMetaValue(meta, "dropoffLocation");
+      if (pickup) details.push(`Pickup: ${pickup}`);
+      if (dropoff) details.push(`Dropoff: ${dropoff}`);
+    } else if (segment.type === "activity") {
+      const provider = getMetaValue(meta, "provider");
+      if (provider) details.push(`Provider: ${provider}`);
+      const category = getMetaValue(meta, "category");
+      if (category) details.push(`Category: ${category}`);
+      const meeting = getMetaValue(meta, "meetingPoint");
+      if (meeting) details.push(`Meeting: ${meeting}`);
+      const duration = getMetaValue(meta, "duration");
+      if (duration) details.push(`Duration: ${duration}`);
+    } else if (segment.type === "note") {
+      const noteType = getMetaValue(meta, "noteType");
+      if (noteType) details.push(`[${noteType.toUpperCase()}]`);
+      const content = getMetaValue(meta, "content");
+      if (content) details.push(content.slice(0, 200));
+    }
+
+    if (segment.startTime) details.push(`Time: ${segment.startTime}${segment.endTime ? ` - ${segment.endTime}` : ""}`);
+  } catch (err) {
+    details.push("(details unavailable)");
   }
 
-  if (segment.startTime) details.push(`Time: ${segment.startTime}${segment.endTime ? ` – ${segment.endTime}` : ""}`);
+  const title = segment.title || segment.type || "Segment";
+  const confNum = getMetaValue(meta, "confirmationNumber") || segment.confirmationNumber || "";
 
   return (
     <View style={[s.segmentCard, { borderLeftColor: typeColor }]}>
-      <Text style={s.segmentType}>{segment.type}</Text>
-      <Text style={s.segmentTitle}>{segment.title}</Text>
-      {segment.subtitle && <Text style={s.segmentDetail}>{segment.subtitle}</Text>}
+      <Text style={s.segmentType}>{segment.type || "other"}</Text>
+      <Text style={s.segmentTitle}>{title}</Text>
+      {segment.subtitle ? <Text style={s.segmentDetail}>{segment.subtitle}</Text> : null}
       {details.map((d, i) => (
         <Text key={i} style={s.segmentDetail}>{d}</Text>
       ))}
-      {segment.confirmationNumber && (
-        <Text style={s.segmentConfirmation}>Confirmation: {segment.confirmationNumber}</Text>
-      )}
-      {segment.cost != null && (
-        <Text style={s.segmentDetail}>Cost: {segment.currency || "USD"} {segment.cost.toLocaleString()}</Text>
-      )}
-      {segment.notes && <Text style={s.segmentNotes}>{segment.notes}</Text>}
+      {confNum ? (
+        <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+      ) : null}
+      {segment.cost != null && segment.cost > 0 ? (
+        <Text style={s.segmentDetail}>Cost: {formatCurrency(segment.cost, segment.currency || "USD")}</Text>
+      ) : null}
+      {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
     </View>
   );
 }
@@ -156,14 +201,14 @@ function TripPdfDocument({ data }: { data: PdfData }) {
   const dateRange = [trip.startDate, trip.endDate]
     .filter(Boolean)
     .map(d => formatDate(d))
-    .join(" – ");
+    .join(" - ");
 
   return (
     <Document>
       <Page size="A4" style={s.coverPage}>
         <View style={s.coverOverlay}>
           <Text style={s.coverTitle}>{trip.title}</Text>
-          <Text style={s.coverSubtitle}>{trip.destination}</Text>
+          <Text style={s.coverSubtitle}>{formatDestinations((trip as any).destinations, trip.destination)}</Text>
           {client && <Text style={s.coverSubtitle}>Prepared for {client.fullName}</Text>}
           {dateRange && <Text style={s.coverDate}>{dateRange}</Text>}
           <Text style={s.coverBranding}>
@@ -176,7 +221,7 @@ function TripPdfDocument({ data }: { data: PdfData }) {
       <Page size="A4" style={s.page} wrap>
         <View style={s.header} fixed>
           <Text style={s.headerOrg}>{organization.name}</Text>
-          <Text style={s.headerTrip}>{trip.title} — {version.name}</Text>
+          <Text style={s.headerTrip}>{trip.title} - {version.name}</Text>
         </View>
 
         {dayNumbers.map((dayNum) => {
@@ -185,10 +230,10 @@ function TripPdfDocument({ data }: { data: PdfData }) {
           if (trip.startDate) {
             const d = new Date(trip.startDate);
             d.setDate(d.getDate() + dayNum - 1);
-            dayLabel += ` — ${formatDate(d)}`;
+            dayLabel += ` - ${formatDate(d)}`;
           }
           return (
-            <View key={dayNum} wrap={false}>
+            <View key={dayNum}>
               <Text style={s.dayHeader}>{dayLabel}</Text>
               {daySegments.map((seg) => (
                 <SegmentView key={seg.id} segment={seg} />
@@ -198,7 +243,7 @@ function TripPdfDocument({ data }: { data: PdfData }) {
         })}
 
         <Text style={s.footer} fixed>
-          {organization.name} — Generated by Travel Lab
+          {organization.name} - Generated by Travel Lab
         </Text>
       </Page>
     </Document>
@@ -206,5 +251,8 @@ function TripPdfDocument({ data }: { data: PdfData }) {
 }
 
 export async function generateTripPdf(data: PdfData): Promise<NodeJS.ReadableStream> {
+  if (!data.segments) data.segments = [];
+  if (!data.version) throw new Error("No version provided for PDF generation");
+  if (!data.trip) throw new Error("No trip provided for PDF generation");
   return ReactPDF.renderToStream(<TripPdfDocument data={data} />);
 }

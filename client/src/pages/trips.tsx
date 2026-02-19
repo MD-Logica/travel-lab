@@ -13,6 +13,7 @@ import {
 import { Link } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Trip } from "@shared/schema";
+import { formatDestinationsShort } from "@shared/schema";
 import { format, differenceInDays } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
@@ -132,8 +133,10 @@ export default function TripsPage() {
   const filtered = useMemo(() => {
     if (!trips) return [];
     return trips.filter((trip) => {
+      const destStr = formatDestinationsShort((trip as any).destinations, trip.destination);
       const matchesSearch = !searchQuery ||
         trip.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        destStr.toLowerCase().includes(searchQuery.toLowerCase()) ||
         trip.destination.toLowerCase().includes(searchQuery.toLowerCase()) ||
         trip.clientName?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesStatus = activeFilter === "all" || trip.status === activeFilter;
@@ -299,7 +302,7 @@ export default function TripsPage() {
                             </h3>
                             <div className="flex items-center gap-1.5 mt-1">
                               <MapPin className="w-3 h-3 text-white/80 shrink-0" strokeWidth={1.5} />
-                              <span className="text-white/80 text-xs truncate">{trip.destination}</span>
+                              <span className="text-white/80 text-xs truncate">{formatDestinationsShort((trip as any).destinations, trip.destination)}</span>
                             </div>
                           </div>
                           <div className="absolute top-3 right-3">

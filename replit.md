@@ -19,7 +19,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - **organizations**: id, name, slug, plan (trial/pro/enterprise), plan_status, trial_ends_at, max_advisors, max_clients
 - **profiles**: id (= auth user id), org_id, role (owner/advisor/assistant/client), full_name, email, phone, avatar_url
 - **clients**: id, org_id, full_name, email, phone, notes, tags, preferences (jsonb), preferences_updated_at
-- **trips**: id, org_id, title, destination, description, cover_image_url, start_date, end_date, status, budget, currency, notes
+- **trips**: id, org_id, title, destination (text, legacy), destinations (jsonb, DestinationEntry[]), description, cover_image_url, start_date, end_date, status, budget, currency, notes
 - **trip_versions**: id, trip_id, org_id, version_number, name, is_primary
 - **trip_segments**: id, version_id, trip_id, org_id, day_number, sort_order, type (flight/charter/hotel/transport/restaurant/activity/note), title, subtitle, start_time, end_time, confirmation_number, cost, currency, notes
 - **trip_documents**: id, org_id, trip_id, client_id, uploaded_by, file_name, file_type, file_size, storage_path, label, is_visible_to_client, created_at
@@ -42,7 +42,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 ## Project Structure
 - client/src/pages/ - Landing, Pricing, Onboarding, Dashboard, Trips, TripDetail, TripNew, TripEdit, Clients, ClientDetail, Settings, Messages
 - client/src/pages/auth/ - Login, Signup, ForgotPassword, SetPassword
-- client/src/components/ - AppSidebar, MarketingNav, AuthLayout, TrialBanner, UpgradePrompt, MobileTabBar, PwaInstallPrompt
+- client/src/components/ - AppSidebar, MarketingNav, AuthLayout, TrialBanner, UpgradePrompt, MobileTabBar, PwaInstallPrompt, DestinationInput, PlacesAutocomplete, PhoneInput, CurrencyInput
 - client/src/hooks/ - use-auth, use-mobile, use-toast, use-push-notifications
 - server/routes.ts - All API routes with auth + org middleware
 - server/storage.ts - DatabaseStorage class with org-scoped queries
@@ -64,6 +64,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - Install prompt: shows after 30s on first mobile visit
 
 ## Recent Changes
+- 2026-02-19: Multi-city destination system — `destinations` jsonb column on trips for structured multi-destination support; DestinationInput component with Google Places cities autocomplete, free-text entry, tag-style chips, keyboard navigation, blur auto-commit, deduplication; formatDestinations/formatDestinationsShort display helpers; CurrencyInput integrated in trip-new/trip-detail budget fields; PDF export hardened with transport/charter segment support, currency formatting via Intl.NumberFormat, defensive null checks, try-catch error handling
 - 2026-02-19: Analytics page (/dashboard/analytics) — premium editorial design with Recharts; date range selector (30d/3m/12m/all time); 4 summary stat cards (total trips, active trips, total clients, portfolio value); trips-over-time area chart; top destinations horizontal bar chart; trips-by-status donut chart; most active clients table (clickable to profile); advisor activity table (owner only); graceful empty states; sidebar navigation with BarChart2 icon
 - 2026-02-19: Advisor productivity features — segment_templates table for reusable segment templates (Save as template checkbox in segment editor, template picker dropdown in Add menu, Templates section in Settings with rename/delete); trip duplication via Duplicate button in trip editor header (copies all versions/segments, lets you pick new client/dates, strips confirmation numbers)
 - 2026-02-19: Flight status monitoring system — flight_tracking table, AeroDataBox API integration (via RapidAPI), 20-minute background polling for flights within monitoring window (3h before departure to 1h after arrival), notification bell in header with unread count + dropdown panel, flight status badges on segment cards (Scheduled/On Time/Delayed/Cancelled/Departed/Landed), manual refresh button, auto-creates tracking when flight segments saved, advisor notifications for delays 20+ min, gate changes, cancellations, departures, landings

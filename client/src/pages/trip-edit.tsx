@@ -37,6 +37,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SegmentEditor, type TemplateData } from "@/components/segment-editor";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking } from "@shared/schema";
+import { formatDestinationsShort } from "@shared/schema";
 import { format, addDays, differenceInDays } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
@@ -1016,8 +1017,8 @@ export default function TripEditPage() {
                     {dateRange}
                   </span>
                 )}
-                {trip.destination && (
-                  <span>{trip.destination}</span>
+                {(trip.destination || (trip as any).destinations) && (
+                  <span>{formatDestinationsShort((trip as any).destinations, trip.destination)}</span>
                 )}
               </div>
             </div>

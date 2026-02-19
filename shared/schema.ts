@@ -10,6 +10,27 @@ export const planStatusEnum = pgEnum("plan_status", ["active", "past_due", "canc
 export const roleEnum = pgEnum("role", ["owner", "advisor", "assistant", "client"]);
 export const tripStatusEnum = pgEnum("trip_status", ["draft", "planning", "confirmed", "in_progress", "completed", "cancelled"]);
 
+export interface DestinationEntry {
+  name: string;
+  country?: string;
+  placeId?: string;
+  lat?: number;
+  lng?: number;
+  freeText?: boolean;
+}
+
+export function formatDestinations(destinations: DestinationEntry[] | null | undefined, fallback?: string): string {
+  if (!destinations || destinations.length === 0) return fallback || "";
+  return destinations.map(d => d.name).join(" · ");
+}
+
+export function formatDestinationsShort(destinations: DestinationEntry[] | null | undefined, fallback?: string, maxShow = 2): string {
+  if (!destinations || destinations.length === 0) return fallback || "";
+  if (destinations.length <= maxShow) return destinations.map(d => d.name).join(" · ");
+  const shown = destinations.slice(0, maxShow).map(d => d.name).join(" · ");
+  return `${shown} +${destinations.length - maxShow} more`;
+}
+
 export const organizations = pgTable("organizations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -59,6 +80,7 @@ export const trips = pgTable("trips", {
   orgId: varchar("org_id").notNull().references(() => organizations.id),
   title: text("title").notNull(),
   destination: text("destination").notNull(),
+  destinations: jsonb("destinations").$type<DestinationEntry[]>(),
   description: text("description"),
   coverImageUrl: text("cover_image_url"),
   startDate: timestamp("start_date"),

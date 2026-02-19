@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { CurrencyInput } from "@/components/currency-input";
+import { DestinationInput } from "@/components/destination-input";
 import {
   ArrowLeft, MapPin, Calendar, DollarSign, Edit2, Save, X, Trash2, Layers, Eye, FileDown, CalendarPlus, Monitor,
 } from "lucide-react";
@@ -20,6 +22,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Trip } from "@shared/schema";
+import { type DestinationEntry, formatDestinations } from "@shared/schema";
 import { format } from "date-fns";
 
 const statusColors: Record<string, string> = {
@@ -42,7 +45,6 @@ const statusOptions = [
 
 const editSchema = z.object({
   title: z.string().min(1),
-  destination: z.string().min(1),
   description: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
@@ -60,6 +62,7 @@ export default function TripDetailPage() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
+  const [editDestinations, setEditDestinations] = useState<DestinationEntry[]>([]);
 
   const { data: trip, isLoading } = useQuery<Trip>({
     queryKey: ["/api/trips", id],
@@ -74,7 +77,6 @@ export default function TripDetailPage() {
     resolver: zodResolver(editSchema),
     values: trip ? {
       title: trip.title,
-      destination: trip.destination,
       description: trip.description || "",
       startDate: trip.startDate ? format(new Date(trip.startDate), "yyyy-MM-dd") : "",
       endDate: trip.endDate ? format(new Date(trip.endDate), "yyyy-MM-dd") : "",
@@ -85,11 +87,25 @@ export default function TripDetailPage() {
     } : undefined,
   });
 
+  const startEditing = () => {
+    const dests = (trip as any)?.destinations as DestinationEntry[] | null;
+    if (dests && dests.length > 0) {
+      setEditDestinations(dests);
+    } else if (trip?.destination) {
+      setEditDestinations([{ name: trip.destination, freeText: true }]);
+    } else {
+      setEditDestinations([]);
+    }
+    setEditing(true);
+  };
+
   const updateMutation = useMutation({
     mutationFn: async (data: EditData) => {
+      const destinationStr = editDestinations.map(d => d.name).join(", ") || trip?.destination || "TBD";
       const payload: any = {
         title: data.title,
-        destination: data.destination,
+        destination: destinationStr,
+        destinations: editDestinations,
         description: data.description || null,
         status: data.status,
         currency: data.currency,
@@ -172,13 +188,14 @@ export default function TripDetailPage() {
                     <FormMessage />
                   </FormItem>
                 )} />
-                <FormField control={form.control} name="destination" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Destination</FormLabel>
-                    <FormControl><Input data-testid="input-edit-destination" {...field} /></FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )} />
+                <div>
+                  <label className="text-sm font-medium mb-2 block">Destinations</label>
+                  <DestinationInput
+                    value={editDestinations}
+                    onChange={setEditDestinations}
+                    testId="input-edit-destination"
+                  />
+                </div>
                 <FormField control={form.control} name="description" render={({ field }) => (
                   <FormItem>
                     <FormLabel>Description</FormLabel>
@@ -206,7 +223,15 @@ export default function TripDetailPage() {
                   <FormField control={form.control} name="budget" render={({ field }) => (
                     <FormItem>
                       <FormLabel>Budget</FormLabel>
-                      <FormControl><Input type="number" {...field} /></FormControl>
+                      <FormControl>
+                        <CurrencyInput
+                          value={field.value || ""}
+                          onChange={field.onChange}
+                          currency={form.getValues("currency") || "USD"}
+                          placeholder="10,000"
+                          testId="input-edit-budget"
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )} />
@@ -263,7 +288,7 @@ export default function TripDetailPage() {
                   <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1.5">
                       <MapPin className="w-3.5 h-3.5" strokeWidth={1.5} />
-                      {trip.destination}
+                      {formatDestinations((trip as any).destinations, trip.destination)}
                     </span>
                     {trip.startDate && (
                       <span className="flex items-center gap-1.5">
@@ -294,7 +319,7 @@ export default function TripDetailPage() {
                     <Button variant="outline" size="sm" onClick={() => window.open(`/api/export/calendar?tripId=${id}`, "_blank")} data-testid="button-export-calendar">
                       <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Calendar
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => setEditing(true)} data-testid="button-edit-trip">
+                    <Button variant="outline" size="sm" onClick={startEditing} data-testid="button-edit-trip">
                       <Edit2 className="w-3.5 h-3.5 mr-1" /> Edit
                     </Button>
                     <Button
@@ -332,7 +357,7 @@ export default function TripDetailPage() {
                   <CardContent className="p-8 text-center">
                     <p className="text-sm text-muted-foreground">No description or notes yet.</p>
                     {!isMobile && (
-                      <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                      <Button variant="outline" size="sm" className="mt-3" onClick={startEditing}>
                         <Edit2 className="w-3.5 h-3.5 mr-1" /> Add details
                       </Button>
                     )}

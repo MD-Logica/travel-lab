@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
+import { formatDestinations } from "@shared/schema";
 import { motion, AnimatePresence } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -468,10 +469,10 @@ export default function TripViewPage() {
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif font-bold text-white leading-tight mb-3" data-testid="text-trip-title">
             {trip.title}
           </h1>
-          {trip.destination && (
+          {(trip.destination || (trip as any).destinations) && (
             <p className="text-lg sm:text-xl text-white/80 font-light flex items-center gap-2 mb-2">
               <MapPin className="w-4 h-4" strokeWidth={1.5} />
-              {trip.destination}
+              {formatDestinations((trip as any).destinations, trip.destination)}
             </p>
           )}
           <div className="flex flex-wrap items-center gap-4 mt-2">

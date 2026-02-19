@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CurrencyInput } from "@/components/currency-input";
+import { DestinationInput } from "@/components/destination-input";
+import type { DestinationEntry } from "@shared/schema";
 import {
   Select,
   SelectContent,
@@ -41,7 +43,6 @@ import type { Client } from "@shared/schema";
 
 const tripFormSchema = z.object({
   title: z.string().min(1, "Trip title is required"),
-  destination: z.string().min(1, "Destination is required"),
   description: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
@@ -80,6 +81,8 @@ export default function TripNewPage() {
 
   const [clientSearch, setClientSearch] = useState("");
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
+  const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
+  const [destinationError, setDestinationError] = useState("");
 
   const { data: clients, isLoading: clientsLoading } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -89,7 +92,6 @@ export default function TripNewPage() {
     resolver: zodResolver(tripFormSchema),
     defaultValues: {
       title: "",
-      destination: "",
       description: "",
       startDate: "",
       endDate: "",
@@ -121,9 +123,11 @@ export default function TripNewPage() {
 
   const createTripMutation = useMutation({
     mutationFn: async (data: TripFormData) => {
+      const destinationStr = destinations.map(d => d.name).join(", ") || "TBD";
       const payload: any = {
         title: data.title,
-        destination: data.destination,
+        destination: destinationStr,
+        destinations,
         description: data.description || null,
         status: data.status,
         currency: data.currency,
@@ -193,7 +197,14 @@ export default function TripNewPage() {
           <Card>
             <CardContent className="p-6 md:p-8">
               <Form {...form}>
-                <form onSubmit={form.handleSubmit((d) => createTripMutation.mutate(d))} className="space-y-8">
+                <form onSubmit={form.handleSubmit((d) => {
+                  if (destinations.length === 0) {
+                    setDestinationError("At least one destination is required");
+                    return;
+                  }
+                  setDestinationError("");
+                  createTripMutation.mutate(d);
+                })} className="space-y-8">
 
                   {coverImageUrl && (
                     <div className="relative aspect-[21/9] overflow-hidden rounded-md">
@@ -233,26 +244,21 @@ export default function TripNewPage() {
                           )}
                         />
 
-                        <FormField
-                          control={form.control}
-                          name="destination"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs text-muted-foreground flex items-center gap-1.5">
-                                <MapPin className="w-3 h-3" strokeWidth={1.5} />
-                                Destination
-                              </FormLabel>
-                              <FormControl>
-                                <Input
-                                  placeholder="e.g. Amalfi Coast, Italy"
-                                  data-testid="input-trip-destination"
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
+                        <div>
+                          <label className="text-xs text-muted-foreground flex items-center gap-1.5 mb-2 font-medium">
+                            <MapPin className="w-3 h-3" strokeWidth={1.5} />
+                            Destinations
+                          </label>
+                          <DestinationInput
+                            value={destinations}
+                            onChange={(d) => { setDestinations(d); if (d.length > 0) setDestinationError(""); }}
+                            placeholder="Search cities or type freely..."
+                            testId="input-trip-destination"
+                          />
+                          {destinationError && (
+                            <p className="text-xs text-destructive mt-1.5">{destinationError}</p>
                           )}
-                        />
+                        </div>
 
                         <FormField
                           control={form.control}

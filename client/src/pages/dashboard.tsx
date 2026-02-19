@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Users, Plane, CircleCheck, Plus, Calendar, MapPin } from "lucide-react";
 import { Link } from "wouter";
 import type { Trip, Profile } from "@shared/schema";
+import { formatDestinationsShort } from "@shared/schema";
 import { format } from "date-fns";
 
 type RecentTrip = Trip & { clientName: string | null };
@@ -176,7 +177,7 @@ export default function DashboardPage() {
                             className={`w-full h-full bg-gradient-to-br ${getGradientForDestination(trip.destination)} flex items-end p-5`}
                           >
                             <span className="font-serif text-lg text-foreground/40 tracking-tight">
-                              {trip.destination}
+                              {formatDestinationsShort((trip as any).destinations, trip.destination)}
                             </span>
                           </div>
                         )}
