@@ -26,6 +26,8 @@ export interface IStorage {
   updateClient(id: string, orgId: string, data: Partial<InsertClient>): Promise<Client | undefined>;
   countClientsByOrgNew(orgId: string): Promise<number>;
 
+  getTripsByClient(clientId: string, orgId: string): Promise<Trip[]>;
+
   createTrip(trip: InsertTrip): Promise<Trip>;
   getTrip(id: string, orgId: string): Promise<Trip | undefined>;
   getTripsByOrg(orgId: string): Promise<Trip[]>;
@@ -129,6 +131,12 @@ export class DatabaseStorage implements IStorage {
   async countClientsByOrgNew(orgId: string): Promise<number> {
     const [result] = await db.select({ count: count() }).from(clients).where(eq(clients.orgId, orgId));
     return result.count;
+  }
+
+  async getTripsByClient(clientId: string, orgId: string): Promise<Trip[]> {
+    return db.select().from(trips).where(
+      and(eq(trips.clientId, clientId), eq(trips.orgId, orgId))
+    ).orderBy(sql`${trips.createdAt} DESC`);
   }
 
   async createTrip(trip: InsertTrip): Promise<Trip> {

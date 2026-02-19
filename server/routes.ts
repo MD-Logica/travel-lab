@@ -422,13 +422,51 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/clients/:id/trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const clientTrips = await storage.getTripsByClient(req.params.id, req._orgId);
+      res.json(clientTrips);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch client trips" });
+    }
+  });
+
   app.patch("/api/clients/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const client = await storage.updateClient(req.params.id, req._orgId, req.body);
+      const updateSchema = z.object({
+        fullName: z.string().min(1).optional(),
+        email: z.string().email().optional().or(z.literal("")).or(z.null()),
+        phone: z.string().optional().or(z.literal("")).or(z.null()),
+        notes: z.string().optional().or(z.literal("")).or(z.null()),
+        tags: z.array(z.string()).optional().or(z.null()),
+      });
+      const parsed = updateSchema.parse(req.body);
+      const client = await storage.updateClient(req.params.id, req._orgId, parsed);
       if (!client) return res.status(404).json({ message: "Client not found" });
       res.json(client);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
       res.status(500).json({ message: "Failed to update client" });
+    }
+  });
+
+  app.post("/api/clients/:id/invite", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const client = await storage.getClient(req.params.id, req._orgId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+      if (!client.email) return res.status(400).json({ message: "Client has no email address" });
+
+      const updated = await storage.updateClient(req.params.id, req._orgId, {
+        invited: "yes",
+        invitedAt: new Date(),
+      } as any);
+
+      res.json({ success: true, client: updated });
+    } catch (error) {
+      console.error("Invite client error:", error);
+      res.status(500).json({ message: "Failed to send invitation" });
     }
   });
 
