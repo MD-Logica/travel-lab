@@ -3,6 +3,8 @@ import { createServer, type Server } from "http";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { storage } from "./storage";
 import { z } from "zod";
+import bcrypt from "bcryptjs";
+import crypto from "crypto";
 
 function slugify(text: string): string {
   return text
@@ -41,6 +43,143 @@ export async function registerRoutes(
 ): Promise<Server> {
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  const { authStorage } = await import("./replit_integrations/auth/storage");
+
+  const registerSchema = z.object({
+    firstName: z.string().min(1, "First name is required"),
+    lastName: z.string().min(1, "Last name is required"),
+    email: z.string().email("Invalid email address"),
+    password: z.string().min(8, "Password must be at least 8 characters"),
+  });
+
+  const loginSchema = z.object({
+    email: z.string().email("Invalid email address"),
+    password: z.string().min(1, "Password is required"),
+  });
+
+  app.post("/api/auth/register", async (req: any, res) => {
+    try {
+      const parsed = registerSchema.parse(req.body);
+      const { firstName, lastName, password } = parsed;
+      const email = parsed.email.toLowerCase().trim();
+
+      const existing = await authStorage.getUserByEmail(email);
+      if (existing) {
+        return res.status(409).json({ message: "An account with this email already exists" });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
+      const user = await authStorage.createUserWithPassword(email, firstName, lastName, passwordHash);
+
+      req.login(
+        { claims: { sub: user.id, email: user.email, first_name: user.firstName, last_name: user.lastName }, expires_at: Math.floor(Date.now() / 1000) + 86400 * 7 },
+        (err: any) => {
+          if (err) return res.status(500).json({ message: "Registration succeeded but login failed" });
+          res.status(201).json({ id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName });
+        }
+      );
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      console.error("Register error:", error);
+      res.status(500).json({ message: "Registration failed" });
+    }
+  });
+
+  app.post("/api/auth/login", async (req: any, res) => {
+    try {
+      const parsed = loginSchema.parse(req.body);
+      const email = parsed.email.toLowerCase().trim();
+      const password = parsed.password;
+
+      const user = await authStorage.getUserByEmail(email);
+      if (!user || !user.passwordHash) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      const valid = await bcrypt.compare(password, user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      req.login(
+        { claims: { sub: user.id, email: user.email, first_name: user.firstName, last_name: user.lastName }, expires_at: Math.floor(Date.now() / 1000) + 86400 * 7 },
+        (err: any) => {
+          if (err) return res.status(500).json({ message: "Login failed" });
+          res.json({ id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName });
+        }
+      );
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      console.error("Login error:", error);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = z.object({ email: z.string().email() }).parse(req.body);
+
+      const user = await authStorage.getUserByEmail(email);
+      if (user) {
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+        await authStorage.createResetToken(user.id, token, expiresAt);
+        if (process.env.NODE_ENV === "development") {
+          console.log(`[DEV] Password reset link: /set-password?token=${token}`);
+        }
+      }
+
+      res.json({ message: "If an account exists with that email, we've sent a reset link." });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: "Please enter a valid email address" });
+      }
+      res.status(500).json({ message: "Failed to process request" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const schema = z.object({
+        token: z.string().min(1),
+        password: z.string().min(8, "Password must be at least 8 characters"),
+      });
+      const { token, password } = schema.parse(req.body);
+
+      const resetToken = await authStorage.getValidResetToken(token);
+      if (!resetToken) {
+        return res.status(400).json({ message: "Invalid or expired reset link" });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
+      await authStorage.updatePasswordHash(resetToken.userId, passwordHash);
+      await authStorage.markResetTokenUsed(token);
+
+      res.json({ message: "Password has been reset successfully" });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
+
+  app.get("/api/auth/validate-reset-token/:token", async (req, res) => {
+    try {
+      const resetToken = await authStorage.getValidResetToken(req.params.token);
+      if (!resetToken) {
+        return res.status(400).json({ valid: false, message: "Invalid or expired reset link" });
+      }
+      res.json({ valid: true });
+    } catch {
+      res.status(500).json({ valid: false, message: "Failed to validate token" });
+    }
+  });
 
   const orgMiddleware = async (req: any, res: any, next: any) => {
     try {

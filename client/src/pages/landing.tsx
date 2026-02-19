@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Compass, Globe, Shield, ArrowRight, MapPin, Star } from "lucide-react";
 
@@ -57,13 +58,13 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <Button variant="ghost" asChild>
-              <a href="/api/login" data-testid="button-login">Sign In</a>
+              <Link href="/login" data-testid="button-login">Sign In</Link>
             </Button>
             <Button asChild>
-              <a href="/api/login" data-testid="button-get-started">
+              <Link href="/signup" data-testid="button-get-started">
                 Get Started
                 <ArrowRight className="w-4 h-4 ml-1" />
-              </a>
+              </Link>
             </Button>
           </div>
         </div>
@@ -119,10 +120,10 @@ export default function LandingPage() {
                 className="flex flex-wrap items-center gap-3"
               >
                 <Button size="lg" asChild>
-                  <a href="/api/login" data-testid="button-hero-cta">
+                  <Link href="/signup" data-testid="button-hero-cta">
                     Start Your Free Trial
                     <ArrowRight className="w-4 h-4 ml-1" />
-                  </a>
+                  </Link>
                 </Button>
                 <Button variant="outline" size="lg" asChild>
                   <a href="#features" data-testid="button-learn-more">Learn More</a>
@@ -292,9 +293,9 @@ export default function LandingPage() {
                   className="w-full"
                   asChild
                 >
-                  <a href="/api/login" data-testid={`button-pricing-${plan.name.toLowerCase()}`}>
+                  <Link href="/signup" data-testid={`button-pricing-${plan.name.toLowerCase()}`}>
                     {plan.enterprise ? "Contact Us" : "Get Started"}
-                  </a>
+                  </Link>
                 </Button>
               </motion.div>
             ))}

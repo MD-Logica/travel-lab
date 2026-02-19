@@ -16,7 +16,13 @@ import TripsPage from "@/pages/trips";
 import TripDetailPage from "@/pages/trip-detail";
 import ClientsPage from "@/pages/clients";
 import SettingsPage from "@/pages/settings";
+import LoginPage from "@/pages/auth/login";
+import SignupPage from "@/pages/auth/signup";
+import ForgotPasswordPage from "@/pages/auth/forgot-password";
+import SetPasswordPage from "@/pages/auth/set-password";
 import type { Profile } from "@shared/schema";
+
+const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/set-password"];
 
 function AuthenticatedLayout() {
   const style = {
@@ -75,8 +81,23 @@ function AppRouter() {
     );
   }
 
+  if (AUTH_ROUTES.some(r => location.startsWith(r))) {
+    return (
+      <Switch>
+        <Route path="/login" component={LoginPage} />
+        <Route path="/signup" component={SignupPage} />
+        <Route path="/forgot-password" component={ForgotPasswordPage} />
+        <Route path="/set-password" component={SetPasswordPage} />
+      </Switch>
+    );
+  }
+
   if (!user) {
-    return <LandingPage />;
+    if (location === "/" || location === "") {
+      return <LandingPage />;
+    }
+    navigate("/login", { replace: true });
+    return null;
   }
 
   if (profileLoading) {
@@ -91,10 +112,14 @@ function AppRouter() {
   }
 
   if (!profile) {
+    if (location !== "/onboarding") {
+      navigate("/onboarding", { replace: true });
+      return null;
+    }
     return <OnboardingPage />;
   }
 
-  if (location === "/" || location === "") {
+  if (location === "/" || location === "" || location === "/onboarding") {
     navigate("/dashboard", { replace: true });
     return null;
   }
