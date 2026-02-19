@@ -51,6 +51,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
 
 ## Recent Changes
+- 2026-02-19: Flight status monitoring system — flight_tracking table, AeroDataBox API integration (via RapidAPI), 20-minute background polling for flights within monitoring window (3h before departure to 1h after arrival), notification bell in header with unread count + dropdown panel, flight status badges on segment cards (Scheduled/On Time/Delayed/Cancelled/Departed/Landed), manual refresh button, auto-creates tracking when flight segments saved, advisor notifications for delays 20+ min, gate changes, cancellations, departures, landings
 - 2026-02-19: Secure document vault — trip_documents table, file upload via Replit Object Storage (presigned URL flow), drag-drop upload on client detail Documents tab and trip editor; label suggestions, visibility toggle, download/delete; org-scoped security on all document routes
 - 2026-02-19: Client preferences system — tab bar on client detail page (Overview/Preferences/Documents), structured preferences editor with travel style, flights, hotels, dining, interests, important dates, loyalty, general notes; view/edit modes; preferences reference panel in trip editor
 - 2026-02-19: Trip editor (/trips/:id/edit) with version tabs, day timeline, segment CRUD (add/edit/delete dialog), version management (duplicate, set primary, delete)

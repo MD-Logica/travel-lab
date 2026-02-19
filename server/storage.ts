@@ -1,5 +1,6 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
+  flightTracking, notifications,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -7,9 +8,11 @@ import {
   type TripVersion, type InsertTripVersion,
   type TripSegment, type InsertTripSegment,
   type TripDocument, type InsertTripDocument,
+  type FlightTracking, type InsertFlightTracking,
+  type Notification, type InsertNotification,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, count, sql, or, ilike } from "drizzle-orm";
+import { eq, and, count, sql, or, ilike, desc } from "drizzle-orm";
 
 export interface IStorage {
   createOrganization(org: InsertOrganization): Promise<Organization>;
@@ -65,6 +68,21 @@ export interface IStorage {
   getTripDocument(id: string, orgId: string): Promise<TripDocument | undefined>;
   updateTripDocument(id: string, orgId: string, data: Partial<InsertTripDocument>): Promise<TripDocument | undefined>;
   deleteTripDocument(id: string, orgId: string): Promise<TripDocument | undefined>;
+
+  createFlightTracking(data: InsertFlightTracking): Promise<FlightTracking>;
+  getFlightTrackingBySegment(segmentId: string): Promise<FlightTracking | undefined>;
+  getActiveFlightTrackingForDate(date: string): Promise<FlightTracking[]>;
+  updateFlightTracking(id: string, data: Partial<InsertFlightTracking>): Promise<FlightTracking | undefined>;
+  deleteFlightTrackingBySegment(segmentId: string): Promise<void>;
+  getFlightTrackingForTrip(tripId: string, orgId: string): Promise<FlightTracking[]>;
+
+  createNotification(data: InsertNotification): Promise<Notification>;
+  getNotifications(profileId: string, limit?: number): Promise<Notification[]>;
+  getUnreadNotificationCount(profileId: string): Promise<number>;
+  markNotificationRead(id: string, profileId: string): Promise<void>;
+  markAllNotificationsRead(profileId: string): Promise<void>;
+
+  getAdvisorProfilesForOrg(orgId: string): Promise<Profile[]>;
 
   updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined>;
   updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined>;
@@ -527,6 +545,74 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(tripDocuments.id, id), eq(tripDocuments.orgId, orgId)))
       .returning();
     return result;
+  }
+
+  async createFlightTracking(data: InsertFlightTracking): Promise<FlightTracking> {
+    const [result] = await db.insert(flightTracking).values(data).returning();
+    return result;
+  }
+
+  async getFlightTrackingBySegment(segmentId: string): Promise<FlightTracking | undefined> {
+    const [result] = await db.select().from(flightTracking).where(eq(flightTracking.segmentId, segmentId));
+    return result;
+  }
+
+  async getActiveFlightTrackingForDate(date: string): Promise<FlightTracking[]> {
+    return db.select().from(flightTracking).where(
+      and(eq(flightTracking.flightDate, date), eq(flightTracking.isActive, true))
+    );
+  }
+
+  async updateFlightTracking(id: string, data: Partial<InsertFlightTracking>): Promise<FlightTracking | undefined> {
+    const [result] = await db.update(flightTracking).set(data).where(eq(flightTracking.id, id)).returning();
+    return result;
+  }
+
+  async deleteFlightTrackingBySegment(segmentId: string): Promise<void> {
+    await db.delete(flightTracking).where(eq(flightTracking.segmentId, segmentId));
+  }
+
+  async getFlightTrackingForTrip(tripId: string, orgId: string): Promise<FlightTracking[]> {
+    return db.select().from(flightTracking).where(
+      and(eq(flightTracking.tripId, tripId), eq(flightTracking.orgId, orgId))
+    );
+  }
+
+  async createNotification(data: InsertNotification): Promise<Notification> {
+    const [result] = await db.insert(notifications).values(data).returning();
+    return result;
+  }
+
+  async getNotifications(profileId: string, limit = 20): Promise<Notification[]> {
+    return db.select().from(notifications)
+      .where(eq(notifications.profileId, profileId))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit);
+  }
+
+  async getUnreadNotificationCount(profileId: string): Promise<number> {
+    const [result] = await db.select({ count: count() }).from(notifications)
+      .where(and(eq(notifications.profileId, profileId), eq(notifications.isRead, false)));
+    return result?.count || 0;
+  }
+
+  async markNotificationRead(id: string, profileId: string): Promise<void> {
+    await db.update(notifications).set({ isRead: true })
+      .where(and(eq(notifications.id, id), eq(notifications.profileId, profileId)));
+  }
+
+  async markAllNotificationsRead(profileId: string): Promise<void> {
+    await db.update(notifications).set({ isRead: true })
+      .where(and(eq(notifications.profileId, profileId), eq(notifications.isRead, false)));
+  }
+
+  async getAdvisorProfilesForOrg(orgId: string): Promise<Profile[]> {
+    return db.select().from(profiles).where(
+      and(
+        eq(profiles.orgId, orgId),
+        or(eq(profiles.role, "owner"), eq(profiles.role, "advisor"))
+      )
+    );
   }
 }
 

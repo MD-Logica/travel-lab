@@ -24,16 +24,45 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown,
+  ChevronDown, RefreshCw,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SegmentEditor } from "@/components/segment-editor";
-import type { Trip, TripVersion, TripSegment, Client, TripDocument } from "@shared/schema";
+import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking } from "@shared/schema";
 import { format } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
 type TripFull = { trip: TripWithClient; versions: TripVersion[] };
+
+interface FlightStatusInfo {
+  status: string;
+  departureDelay?: number;
+  departureGate?: string;
+  departureTerminal?: string;
+  arrivalAirport?: string;
+  departureAirport?: string;
+}
+
+const flightStatusConfig: Record<string, { label: string; dotClass: string }> = {
+  scheduled: { label: "Scheduled", dotClass: "bg-muted-foreground" },
+  on_time: { label: "On Time", dotClass: "bg-emerald-500" },
+  delayed: { label: "Delayed", dotClass: "bg-amber-500" },
+  cancelled: { label: "Cancelled", dotClass: "bg-red-500" },
+  departed: { label: "Departed", dotClass: "bg-emerald-500" },
+  landed: { label: "Landed", dotClass: "bg-sky-500" },
+  unknown: { label: "Unknown", dotClass: "bg-muted-foreground" },
+};
+
+function checkedTimeAgo(date: Date | string | null): string {
+  if (!date) return "";
+  const d = typeof date === "string" ? new Date(date) : date;
+  const diffMin = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (diffMin < 1) return "Checked just now";
+  if (diffMin < 60) return `Checked ${diffMin} min ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  return `Checked ${diffHr}h ago`;
+}
 
 const segmentTypeConfig: Record<string, { label: string; icon: typeof Plane; color: string }> = {
   flight: { label: "Flight", icon: Plane, color: "text-sky-600 bg-sky-50 dark:bg-sky-950/40" },
@@ -50,14 +79,30 @@ function SegmentCard({
   segment,
   tripId,
   onEdit,
+  tracking,
 }: {
   segment: TripSegment;
   tripId: string;
   onEdit: (s: TripSegment) => void;
+  tracking?: FlightTracking | null;
 }) {
   const { toast } = useToast();
   const cfg = segmentTypeConfig[segment.type] || segmentTypeConfig.activity;
   const Icon = cfg.icon;
+
+  const refreshMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/flight-tracking/${segment.id}/refresh`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "flight-tracking"] });
+      toast({ title: "Flight status updated" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Could not refresh", description: e.message, variant: "destructive" });
+    },
+  });
 
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -156,6 +201,42 @@ function SegmentCard({
             <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">
               {segment.type === "note" && meta.content ? meta.content : segment.notes}
             </p>
+          )}
+          {segment.type === "flight" && tracking && (
+            <div className="flex items-center gap-2 mt-2 flex-wrap" data-testid={`flight-status-${segment.id}`}>
+              {(() => {
+                const ls = tracking.lastStatus as FlightStatusInfo | null;
+                const statusKey = ls?.status || "scheduled";
+                const statusCfg = flightStatusConfig[statusKey] || flightStatusConfig.unknown;
+                return (
+                  <>
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium">
+                      <span className={`w-2 h-2 rounded-full ${statusCfg.dotClass}`} />
+                      {statusCfg.label}
+                      {statusKey === "delayed" && ls?.departureDelay ? ` (${ls.departureDelay}min)` : ""}
+                    </span>
+                    {ls?.departureGate && (
+                      <span className="text-[10px] text-muted-foreground">Gate {ls.departureGate}</span>
+                    )}
+                    {tracking.lastCheckedAt && (
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {checkedTimeAgo(tracking.lastCheckedAt)}
+                      </span>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5"
+                      onClick={(e) => { e.stopPropagation(); refreshMutation.mutate(); }}
+                      disabled={refreshMutation.isPending}
+                      data-testid={`button-refresh-flight-${segment.id}`}
+                    >
+                      <RefreshCw className={`w-3 h-3 ${refreshMutation.isPending ? "animate-spin" : ""}`} />
+                    </Button>
+                  </>
+                );
+              })()}
+            </div>
           )}
         </div>
       </CardContent>
@@ -543,6 +624,17 @@ export default function TripEditPage() {
     enabled: !!currentVersionId,
   });
 
+  const { data: flightTrackings = [] } = useQuery<FlightTracking[]>({
+    queryKey: ["/api/trips", id, "flight-tracking"],
+    refetchInterval: 60000,
+  });
+
+  const trackingBySegment = useMemo(() => {
+    const map = new Map<string, FlightTracking>();
+    for (const ft of flightTrackings) map.set(ft.segmentId, ft);
+    return map;
+  }, [flightTrackings]);
+
   const dayGroups = useMemo(() => {
     const groups = new Map<number, TripSegment[]>();
     for (const seg of segments) {
@@ -822,6 +914,7 @@ export default function TripEditPage() {
                           segment={seg}
                           tripId={id!}
                           onEdit={openEditSegment}
+                          tracking={seg.type === "flight" ? trackingBySegment.get(seg.id) : null}
                         />
                       ))}
                     </div>

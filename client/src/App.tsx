@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TrialBanner } from "@/components/trial-banner";
+import { NotificationBell } from "@/components/notification-bell";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -43,8 +44,9 @@ function AuthenticatedLayout() {
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
           <TrialBanner />
-          <header className="flex items-center gap-3 p-3 border-b border-border/50 sticky top-0 z-50 bg-background/80 backdrop-blur-xl">
+          <header className="flex items-center justify-between gap-3 p-3 border-b border-border/50 sticky top-0 z-50 bg-background/80 backdrop-blur-xl">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
+            <NotificationBell />
           </header>
           <main className="flex-1 overflow-hidden flex flex-col">
             <Switch>

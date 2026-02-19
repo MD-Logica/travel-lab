@@ -8,6 +8,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
+import { checkSingleFlight } from "./flight-tracker";
 
 const objectStorageService = new ObjectStorageService();
 
@@ -19,6 +20,47 @@ const ALLOWED_FILE_TYPES = [
   "image/webp",
 ];
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+
+async function syncFlightTracking(segment: any, tripId: string, orgId: string) {
+  const meta = segment.metadata as Record<string, any> | null;
+  if (segment.type !== "flight" || !meta?.flightNumber) {
+    await storage.deleteFlightTrackingBySegment(segment.id);
+    return;
+  }
+
+  const flightNumber = meta.flightNumber as string;
+  let flightDate = "";
+  if (meta.departureDateTime) {
+    flightDate = (meta.departureDateTime as string).split("T")[0];
+  }
+  if (!flightDate) return;
+
+  const existing = await storage.getFlightTrackingBySegment(segment.id);
+  if (existing) {
+    if (existing.flightNumber !== flightNumber || existing.flightDate !== flightDate) {
+      await storage.updateFlightTracking(existing.id, {
+        flightNumber,
+        flightDate,
+        scheduledDeparture: meta.departureDateTime || null,
+        scheduledArrival: meta.arrivalDateTime || null,
+        isActive: true,
+        lastStatus: null,
+        lastCheckedAt: null,
+      });
+    }
+  } else {
+    await storage.createFlightTracking({
+      segmentId: segment.id,
+      tripId,
+      orgId,
+      flightNumber,
+      flightDate,
+      scheduledDeparture: meta.departureDateTime || null,
+      scheduledArrival: meta.arrivalDateTime || null,
+      isActive: true,
+    });
+  }
+}
 
 function slugify(text: string): string {
   return text
@@ -622,6 +664,7 @@ export async function registerRoutes(
         tripId: req.params.tripId,
         orgId: req._orgId,
       });
+      await syncFlightTracking(segment, req.params.tripId, req._orgId).catch(e => console.error("Flight tracking sync error:", e));
       res.status(201).json(segment);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -652,6 +695,7 @@ export async function registerRoutes(
       const parsed = updateSchema.parse(req.body);
       const segment = await storage.updateTripSegment(req.params.segmentId, req._orgId, parsed);
       if (!segment) return res.status(404).json({ message: "Segment not found" });
+      await syncFlightTracking(segment, req.params.tripId, req._orgId).catch(e => console.error("Flight tracking sync error:", e));
       res.json(segment);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -928,6 +972,64 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete document" });
+    }
+  });
+
+  // ──── NOTIFICATIONS ──────────────────────────────────────────────
+
+  app.get("/api/notifications", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const notifs = await storage.getNotifications(req._profile.id, 20);
+      const unreadCount = await storage.getUnreadNotificationCount(req._profile.id);
+      res.json({ notifications: notifs, unreadCount });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  app.post("/api/notifications/mark-all-read", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      await storage.markAllNotificationsRead(req._profile.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark notifications as read" });
+    }
+  });
+
+  app.patch("/api/notifications/:id/read", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      await storage.markNotificationRead(req.params.id, req._profile.id);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark notification as read" });
+    }
+  });
+
+  // ──── FLIGHT TRACKING ──────────────────────────────────────────
+
+  app.get("/api/trips/:tripId/flight-tracking", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const trackings = await storage.getFlightTrackingForTrip(req.params.tripId, req._orgId);
+      res.json(trackings);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch flight tracking data" });
+    }
+  });
+
+  app.post("/api/flight-tracking/:segmentId/refresh", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const tracking = await storage.getFlightTrackingBySegment(req.params.segmentId);
+      if (!tracking) return res.status(404).json({ message: "No flight tracking found for this segment" });
+      if (tracking.orgId !== req._orgId) return res.status(403).json({ message: "Forbidden" });
+
+      const newStatus = await checkSingleFlight(tracking);
+      if (!newStatus) return res.status(502).json({ message: "Could not fetch flight status. Please try again later." });
+
+      const updated = await storage.getFlightTrackingBySegment(req.params.segmentId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Flight refresh error:", error);
+      res.status(500).json({ message: "Failed to refresh flight status" });
     }
   });
 
