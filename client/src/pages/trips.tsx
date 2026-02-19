@@ -1,51 +1,32 @@
-import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import {
-  Plus, Search, MapPin, Calendar, Filter,
-  ArrowRight, DollarSign, X,
+  Plus, Search, MapPin, Calendar, User,
+  DollarSign, Clock,
 } from "lucide-react";
-import { Link, useSearch } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 import type { Trip } from "@shared/schema";
-import { format } from "date-fns";
+import { format, differenceInDays } from "date-fns";
 
-const tripFormSchema = z.object({
-  title: z.string().min(1, "Title is required"),
-  destination: z.string().min(1, "Destination is required"),
-  description: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  budget: z.string().optional(),
-  currency: z.string().default("USD"),
-  status: z.string().default("draft"),
-});
+type TripWithClient = Trip & { clientName: string | null };
 
-type TripFormData = z.infer<typeof tripFormSchema>;
-
-const statusColors: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  planning: "bg-primary/10 text-primary",
-  confirmed: "bg-chart-2/10 text-chart-2",
-  in_progress: "bg-chart-4/10 text-chart-4",
-  completed: "bg-chart-2/10 text-chart-2",
-  cancelled: "bg-destructive/10 text-destructive",
+const statusConfig: Record<string, { label: string; className: string }> = {
+  draft: { label: "Draft", className: "bg-muted text-muted-foreground" },
+  planning: { label: "Planning", className: "bg-primary/10 text-primary" },
+  confirmed: { label: "Confirmed", className: "bg-chart-2/10 text-chart-2" },
+  in_progress: { label: "In Progress", className: "bg-chart-4/10 text-chart-4" },
+  completed: { label: "Completed", className: "bg-chart-2/10 text-chart-2" },
+  cancelled: { label: "Cancelled", className: "bg-destructive/10 text-destructive" },
 };
 
-const statusOptions = [
+const filterTabs = [
+  { value: "all", label: "All" },
   { value: "draft", label: "Draft" },
   { value: "planning", label: "Planning" },
   { value: "confirmed", label: "Confirmed" },
@@ -54,346 +35,259 @@ const statusOptions = [
   { value: "cancelled", label: "Cancelled" },
 ];
 
+const gradientClasses = [
+  "from-amber-600/80 to-orange-400/60",
+  "from-sky-600/80 to-cyan-400/60",
+  "from-emerald-600/80 to-teal-400/60",
+  "from-rose-600/80 to-pink-400/60",
+  "from-violet-600/80 to-purple-400/60",
+  "from-slate-600/80 to-zinc-400/60",
+];
+
+function getGradient(title: string): string {
+  let hash = 0;
+  for (let i = 0; i < title.length; i++) hash = title.charCodeAt(i) + ((hash << 5) - hash);
+  return gradientClasses[Math.abs(hash) % gradientClasses.length];
+}
+
+function getDuration(start: string | Date | null, end: string | Date | null): string | null {
+  if (!start || !end) return null;
+  const days = differenceInDays(new Date(end), new Date(start));
+  if (days <= 0) return null;
+  const nights = days;
+  return `${nights} night${nights !== 1 ? "s" : ""}`;
+}
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 12 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: i * 0.04, duration: 0.4, ease: [0.25, 0.46, 0.45, 0.94] },
+  }),
+};
+
 export default function TripsPage() {
-  const { toast } = useToast();
-  const searchString = useSearch();
-  const params = new URLSearchParams(searchString);
-  const [showNewTrip, setShowNewTrip] = useState(params.get("new") === "true");
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [activeFilter, setActiveFilter] = useState("all");
 
-  const { data: trips, isLoading } = useQuery<Trip[]>({ queryKey: ["/api/trips"] });
+  const { data: trips, isLoading } = useQuery<TripWithClient[]>({ queryKey: ["/api/trips"] });
 
-  const form = useForm<TripFormData>({
-    resolver: zodResolver(tripFormSchema),
-    defaultValues: {
-      title: "",
-      destination: "",
-      description: "",
-      startDate: "",
-      endDate: "",
-      budget: "",
-      currency: "USD",
-      status: "draft",
-    },
-  });
+  const filtered = useMemo(() => {
+    if (!trips) return [];
+    return trips.filter((trip) => {
+      const matchesSearch = !searchQuery ||
+        trip.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        trip.destination.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        trip.clientName?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesStatus = activeFilter === "all" || trip.status === activeFilter;
+      return matchesSearch && matchesStatus;
+    });
+  }, [trips, searchQuery, activeFilter]);
 
-  const createTripMutation = useMutation({
-    mutationFn: async (data: TripFormData) => {
-      const payload: any = {
-        title: data.title,
-        destination: data.destination,
-        description: data.description || null,
-        status: data.status,
-        currency: data.currency,
-        budget: data.budget ? parseInt(data.budget) : null,
-        startDate: data.startDate ? new Date(data.startDate).toISOString() : null,
-        endDate: data.endDate ? new Date(data.endDate).toISOString() : null,
-      };
-      const res = await apiRequest("POST", "/api/trips", payload);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-      setShowNewTrip(false);
-      form.reset();
-      toast({ title: "Trip created", description: "Your new trip has been added." });
-    },
-    onError: (error: Error) => {
-      try {
-        const parsed = JSON.parse(error.message.split(": ").slice(1).join(": "));
-        if (parsed.upgrade) {
-          toast({
-            title: "Plan limit reached",
-            description: `You've reached the maximum of ${parsed.limit} trips on your current plan. Upgrade to create more.`,
-            variant: "destructive",
-          });
-          return;
-        }
-      } catch {}
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    },
-  });
-
-  const filteredTrips = (trips || []).filter((trip) => {
-    const matchesSearch = !searchQuery ||
-      trip.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      trip.destination.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "all" || trip.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const statusCounts = useMemo(() => {
+    if (!trips) return {};
+    const counts: Record<string, number> = { all: trips.length };
+    for (const trip of trips) {
+      counts[trip.status] = (counts[trip.status] || 0) + 1;
+    }
+    return counts;
+  }, [trips]);
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-6xl mx-auto p-6 md:p-8">
+      <div className="max-w-6xl mx-auto px-6 md:px-10 py-10 md:py-14">
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="flex flex-wrap items-end justify-between gap-4 mb-6"
+          transition={{ duration: 0.5 }}
+          className="mb-10"
         >
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-1">Manage</p>
-            <h1 className="font-serif text-3xl tracking-tight" data-testid="text-trips-title">Trips</h1>
+          <div className="flex items-end justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="font-serif text-4xl md:text-5xl tracking-tight" data-testid="text-trips-title">
+                Trips
+              </h1>
+              <p className="text-muted-foreground mt-2 text-base">
+                {trips ? `${trips.length} trip${trips.length !== 1 ? "s" : ""}` : "Loading..."}
+              </p>
+            </div>
+            <Link href="/trips/new">
+              <Button variant="outline" size="sm" data-testid="button-new-trip">
+                <Plus className="w-3.5 h-3.5" />
+                New Trip
+              </Button>
+            </Link>
           </div>
-          <Button onClick={() => setShowNewTrip(true)} data-testid="button-new-trip">
-            <Plus className="w-4 h-4 mr-1" />
-            New Trip
-          </Button>
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 12 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.4 }}
-          className="flex flex-wrap items-center gap-3 mb-6"
+          className="flex flex-col gap-5 mb-8"
         >
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" strokeWidth={1.5} />
+          <div className="relative max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" strokeWidth={1.5} />
             <Input
-              placeholder="Search trips..."
+              placeholder="Search trips, destinations, clients..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              className="pl-10 border-border/50"
               data-testid="input-search-trips"
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]" data-testid="select-status-filter">
-              <Filter className="w-3.5 h-3.5 mr-1.5" strokeWidth={1.5} />
-              <SelectValue placeholder="All statuses" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {statusOptions.map((s) => (
-                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {filterTabs.map((tab) => {
+              const count = statusCounts[tab.value] || 0;
+              const isActive = activeFilter === tab.value;
+              return (
+                <button
+                  key={tab.value}
+                  onClick={() => setActiveFilter(tab.value)}
+                  className={`
+                    px-3 py-1.5 rounded-full text-xs font-medium transition-colors
+                    ${isActive
+                      ? "bg-foreground text-background"
+                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                    }
+                  `}
+                  data-testid={`button-filter-${tab.value}`}
+                >
+                  {tab.label}
+                  {count > 0 && (
+                    <span className={`ml-1.5 ${isActive ? "opacity-70" : "opacity-50"}`}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </motion.div>
 
         {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[0, 1, 2, 3, 4, 5].map((i) => (
               <Card key={i}>
-                <CardContent className="p-5">
-                  <Skeleton className="h-5 w-3/4 mb-3" />
-                  <Skeleton className="h-4 w-1/2 mb-2" />
+                <Skeleton className="aspect-[16/10] rounded-t-md" />
+                <CardContent className="p-5 space-y-3">
+                  <Skeleton className="h-5 w-3/4" />
+                  <Skeleton className="h-4 w-1/2" />
                   <Skeleton className="h-3 w-2/3" />
                 </CardContent>
               </Card>
             ))}
           </div>
-        ) : filteredTrips.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredTrips.map((trip, i) => (
-              <motion.div
-                key={trip.id}
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05, duration: 0.4 }}
-              >
-                <Link href={`/trips/${trip.id}`}>
-                  <Card className="hover-elevate cursor-pointer h-full">
-                    {trip.coverImageUrl && (
-                      <div className="aspect-[16/9] overflow-hidden rounded-t-md">
-                        <img src={trip.coverImageUrl} alt={trip.title} className="w-full h-full object-cover" />
-                      </div>
-                    )}
-                    <CardContent className="p-5">
-                      <div className="flex items-start justify-between gap-3 mb-3">
-                        <h3 className="font-medium text-sm line-clamp-1" data-testid={`text-trip-card-title-${trip.id}`}>
-                          {trip.title}
-                        </h3>
-                        <Badge
-                          variant="secondary"
-                          className={`text-[10px] uppercase tracking-wider shrink-0 ${statusColors[trip.status] || ''}`}
-                        >
-                          {trip.status.replace("_", " ")}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-muted-foreground mb-2">
-                        <MapPin className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                        <span className="text-xs truncate">{trip.destination}</span>
-                      </div>
-                      {trip.startDate && (
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                          <Calendar className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                          <span>
-                            {format(new Date(trip.startDate), "MMM d")}
-                            {trip.endDate && ` — ${format(new Date(trip.endDate), "MMM d, yyyy")}`}
-                          </span>
+        ) : filtered.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {filtered.map((trip, i) => {
+              const duration = getDuration(trip.startDate, trip.endDate);
+              const cfg = statusConfig[trip.status] || statusConfig.draft;
+
+              return (
+                <motion.div
+                  key={trip.id}
+                  custom={i}
+                  initial="hidden"
+                  animate="visible"
+                  variants={fadeUp}
+                >
+                  <Link href={`/trips/${trip.id}`}>
+                    <Card className="hover-elevate cursor-pointer h-full overflow-visible" data-testid={`card-trip-${trip.id}`}>
+                      <div className="relative aspect-[16/10] overflow-hidden rounded-t-md">
+                        {trip.coverImageUrl ? (
+                          <img
+                            src={trip.coverImageUrl}
+                            alt={trip.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className={`w-full h-full bg-gradient-to-br ${getGradient(trip.title)}`} />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
+                        <div className="absolute bottom-3 left-4 right-4">
+                          <h3 className="text-white text-base font-medium line-clamp-1 drop-shadow-sm" data-testid={`text-trip-card-title-${trip.id}`}>
+                            {trip.title}
+                          </h3>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <MapPin className="w-3 h-3 text-white/80 shrink-0" strokeWidth={1.5} />
+                            <span className="text-white/80 text-xs truncate">{trip.destination}</span>
+                          </div>
                         </div>
-                      )}
-                      {trip.budget && (
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                          <DollarSign className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                          <span>{trip.currency} {trip.budget.toLocaleString()}</span>
+                        <div className="absolute top-3 right-3">
+                          <Badge
+                            variant="secondary"
+                            className={`text-[10px] uppercase tracking-wider ${cfg.className} no-default-hover-elevate no-default-active-elevate`}
+                          >
+                            {cfg.label}
+                          </Badge>
                         </div>
-                      )}
-                      {trip.description && (
-                        <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{trip.description}</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                </Link>
-              </motion.div>
-            ))}
+                      </div>
+
+                      <CardContent className="p-4 space-y-2.5">
+                        {trip.clientName && (
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <User className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                            <span className="truncate" data-testid={`text-trip-client-${trip.id}`}>{trip.clientName}</span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-4 flex-wrap">
+                          {trip.startDate && (
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Calendar className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                              <span>
+                                {format(new Date(trip.startDate), "MMM d")}
+                                {trip.endDate && ` - ${format(new Date(trip.endDate), "MMM d, yyyy")}`}
+                              </span>
+                            </div>
+                          )}
+                          {duration && (
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Clock className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                              <span>{duration}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {trip.budget && (
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <DollarSign className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                            <span>{trip.currency} {trip.budget.toLocaleString()}</span>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </Link>
+                </motion.div>
+              );
+            })}
+          </div>
+        ) : searchQuery || activeFilter !== "all" ? (
+          <div className="py-20 text-center">
+            <p className="font-serif text-xl text-muted-foreground/50 mb-1 tracking-tight">
+              No matching trips
+            </p>
+            <p className="text-sm text-muted-foreground/40">Try adjusting your search or filters.</p>
           </div>
         ) : (
-          <Card>
-            <CardContent className="p-10 text-center">
-              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                <MapPin className="w-6 h-6 text-primary" strokeWidth={1.5} />
-              </div>
-              <h3 className="font-serif text-lg mb-2">
-                {searchQuery || statusFilter !== "all" ? "No matching trips" : "No trips yet"}
-              </h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                {searchQuery || statusFilter !== "all"
-                  ? "Try adjusting your search or filters."
-                  : "Create your first trip to begin planning."}
-              </p>
-              {!searchQuery && statusFilter === "all" && (
-                <Button onClick={() => setShowNewTrip(true)} data-testid="button-create-first-trip-empty">
-                  <Plus className="w-4 h-4 mr-1" />
-                  Create Trip
-                </Button>
-              )}
-            </CardContent>
-          </Card>
+          <div className="py-24 text-center">
+            <p className="font-serif text-3xl text-muted-foreground/40 mb-2 tracking-tight" data-testid="text-empty-state">
+              Your journeys begin here.
+            </p>
+            <p className="text-sm text-muted-foreground/35 mb-8 max-w-md mx-auto">
+              Create your first trip to start planning extraordinary travel experiences.
+            </p>
+            <Link href="/trips/new">
+              <Button variant="outline" data-testid="button-create-first-trip-empty">
+                <Plus className="w-4 h-4" />
+                Create Your First Trip
+              </Button>
+            </Link>
+          </div>
         )}
-
-        <Dialog open={showNewTrip} onOpenChange={setShowNewTrip}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle className="font-serif text-xl">New Trip</DialogTitle>
-            </DialogHeader>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit((d) => createTripMutation.mutate(d))} className="space-y-4">
-                <FormField
-                  control={form.control}
-                  name="title"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Trip Title</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g. Amalfi Coast Honeymoon" data-testid="input-trip-title" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="destination"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Destination</FormLabel>
-                      <FormControl>
-                        <Input placeholder="e.g. Italy" data-testid="input-trip-destination" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="description"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Description</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          placeholder="Brief description of this trip..."
-                          className="resize-none"
-                          rows={3}
-                          data-testid="input-trip-description"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField
-                    control={form.control}
-                    name="startDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Start Date</FormLabel>
-                        <FormControl>
-                          <Input type="date" data-testid="input-trip-start-date" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="endDate"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>End Date</FormLabel>
-                        <FormControl>
-                          <Input type="date" data-testid="input-trip-end-date" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <FormField
-                    control={form.control}
-                    name="budget"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Budget</FormLabel>
-                        <FormControl>
-                          <Input type="number" placeholder="5000" data-testid="input-trip-budget" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="status"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Status</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
-                          <FormControl>
-                            <SelectTrigger data-testid="select-trip-status">
-                              <SelectValue placeholder="Status" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {statusOptions.map((s) => (
-                              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <Button type="button" variant="outline" onClick={() => setShowNewTrip(false)} data-testid="button-cancel-trip">
-                    Cancel
-                  </Button>
-                  <Button type="submit" disabled={createTripMutation.isPending} data-testid="button-submit-trip">
-                    {createTripMutation.isPending ? "Creating..." : "Create Trip"}
-                  </Button>
-                </div>
-              </form>
-            </Form>
-          </DialogContent>
-        </Dialog>
       </div>
     </div>
   );
