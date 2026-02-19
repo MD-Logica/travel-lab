@@ -1,3 +1,4 @@
+import React from "react";
 import ReactPDF, { Document, Page, Text, View, StyleSheet, Font } from "@react-pdf/renderer";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { formatDestinations } from "@shared/schema";
@@ -5,16 +6,16 @@ import { formatDestinations } from "@shared/schema";
 Font.register({
   family: "Serif",
   fonts: [
-    { src: "https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKd3vXDXbtU.ttf", fontWeight: 400 },
-    { src: "https://fonts.gstatic.com/s/playfairdisplay/v37/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFu3DXbtU.ttf", fontWeight: 700 },
+    { src: "https://fonts.gstatic.com/s/playfairdisplay/v40/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKdFvUDQ.ttf", fontWeight: 400 },
+    { src: "https://fonts.gstatic.com/s/playfairdisplay/v40/nuFvD-vYSZviVYUb_rj3ij__anPXJzDwcbmjWBN2PKeiukDQ.ttf", fontWeight: 700 },
   ],
 });
 
 Font.register({
   family: "Sans",
   fonts: [
-    { src: "https://fonts.gstatic.com/s/dmsans/v15/rP2Hp2ywxg089UriCZOIHTWEBlw.ttf", fontWeight: 400 },
-    { src: "https://fonts.gstatic.com/s/dmsans/v15/rP2Hp2ywxg089UriCZ2NHjWEBlwu8Q.ttf", fontWeight: 600 },
+    { src: "https://fonts.gstatic.com/s/dmsans/v17/rP2tp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAopxhTg.ttf", fontWeight: 400 },
+    { src: "https://fonts.gstatic.com/s/dmsans/v17/rP2tp2ywxg089UriI5-g4vlH9VoD8CmcqZG40F9JadbnoEwAfJthTg.ttf", fontWeight: 600 },
   ],
 });
 

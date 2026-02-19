@@ -17,6 +17,9 @@ import {
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Drawer, DrawerContent, DrawerTrigger, DrawerClose,
+} from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -31,10 +34,11 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown, RefreshCw, Bookmark, Check, Diamond,
+  ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { SegmentEditor, type TemplateData } from "@/components/segment-editor";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
@@ -865,12 +869,14 @@ export default function TripEditPage() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const [segmentDialogOpen, setSegmentDialogOpen] = useState(false);
   const [editingSegment, setEditingSegment] = useState<TripSegment | null>(null);
   const [addSegmentDay, setAddSegmentDay] = useState(1);
   const [templateForEditor, setTemplateForEditor] = useState<TemplateData | null>(null);
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
 
   const { data: tripData, isLoading: tripLoading } = useQuery<TripFull>({
     queryKey: ["/api/trips", id, "full"],
@@ -1005,6 +1011,40 @@ export default function TripEditPage() {
     },
   });
 
+  const handlePreview = () => {
+    window.open(`/trip/${id}`, "_blank");
+  };
+
+  const handleDownloadPdf = () => {
+    const url = `/api/export/pdf?tripId=${id}&versionId=${currentVersionId}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${trip?.title || "Itinerary"} — Itinerary.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleExportCalendar = () => {
+    const url = `/api/export/calendar?tripId=${id}&versionId=${currentVersionId}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${trip?.title || "Trip"}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleShare = async () => {
+    const portalUrl = `${window.location.origin}/trip/${id}`;
+    try {
+      await navigator.clipboard.writeText(portalUrl);
+      toast({ title: "Link copied to clipboard" });
+    } catch {
+      toast({ title: "Could not copy link", variant: "destructive" });
+    }
+  };
+
   const [addSegmentType, setAddSegmentType] = useState<string | null>(null);
 
   const openAddSegment = (day: number, type?: string) => {
@@ -1124,6 +1164,78 @@ export default function TripEditPage() {
                 {(trip.currency || "USD")} {totalCost.toLocaleString()}
               </Badge>
             )}
+
+            {!isMobile && (
+              <>
+                <Button variant="ghost" size="sm" onClick={handlePreview} data-testid="button-preview-trip">
+                  <Eye className="w-3.5 h-3.5 mr-1" /> Preview
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleDownloadPdf} data-testid="button-download-pdf">
+                  <Download className="w-3.5 h-3.5 mr-1" /> PDF
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleExportCalendar} data-testid="button-export-calendar">
+                  <Calendar className="w-3.5 h-3.5 mr-1" /> Calendar
+                </Button>
+                <Button variant="ghost" size="sm" onClick={handleShare} data-testid="button-share-trip">
+                  <Share2 className="w-3.5 h-3.5 mr-1" /> Share
+                </Button>
+              </>
+            )}
+
+            {isMobile && (
+              <Drawer open={mobileActionsOpen} onOpenChange={setMobileActionsOpen}>
+                <DrawerTrigger asChild>
+                  <Button variant="ghost" size="icon" data-testid="button-trip-actions-overflow">
+                    <MoreHorizontal className="w-4 h-4" />
+                  </Button>
+                </DrawerTrigger>
+                <DrawerContent>
+                  <div className="p-4 space-y-1">
+                    <DrawerClose asChild>
+                      <button
+                        onClick={handlePreview}
+                        className="flex items-center gap-3 w-full px-3 py-3 rounded-md hover-elevate text-sm"
+                        data-testid="button-preview-trip-mobile"
+                      >
+                        <Eye className="w-4 h-4 text-muted-foreground" />
+                        Preview
+                      </button>
+                    </DrawerClose>
+                    <DrawerClose asChild>
+                      <button
+                        onClick={handleDownloadPdf}
+                        className="flex items-center gap-3 w-full px-3 py-3 rounded-md hover-elevate text-sm"
+                        data-testid="button-download-pdf-mobile"
+                      >
+                        <Download className="w-4 h-4 text-muted-foreground" />
+                        Download PDF
+                      </button>
+                    </DrawerClose>
+                    <DrawerClose asChild>
+                      <button
+                        onClick={handleExportCalendar}
+                        className="flex items-center gap-3 w-full px-3 py-3 rounded-md hover-elevate text-sm"
+                        data-testid="button-export-calendar-mobile"
+                      >
+                        <Calendar className="w-4 h-4 text-muted-foreground" />
+                        Export to Calendar
+                      </button>
+                    </DrawerClose>
+                    <DrawerClose asChild>
+                      <button
+                        onClick={handleShare}
+                        className="flex items-center gap-3 w-full px-3 py-3 rounded-md hover-elevate text-sm"
+                        data-testid="button-share-trip-mobile"
+                      >
+                        <Share2 className="w-4 h-4 text-muted-foreground" />
+                        Share Link
+                      </button>
+                    </DrawerClose>
+                  </div>
+                </DrawerContent>
+              </Drawer>
+            )}
+
             <Button
               variant="outline"
               size="sm"
