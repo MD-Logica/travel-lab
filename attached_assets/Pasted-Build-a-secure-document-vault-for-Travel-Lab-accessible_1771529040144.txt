@@ -1,0 +1,72 @@
+Build a secure document vault for Travel Lab — accessible to both
+advisors (upload) and clients (view their own documents only).
+
+─── WHERE IT LIVES ───────────────────────────────────────────────────────────
+
+ADVISOR SIDE:
+  A "Documents" tab on each client detail page (/dashboard/clients/[id])
+  and within each trip editor (/dashboard/trips/[id]/edit) — both surfaces
+  show relevant documents for that client or trip respectively.
+
+CLIENT SIDE (mobile app — add this when building the mobile app):
+  A "Documents" tab within each trip detail view.
+  Shows only documents attached to that specific trip.
+
+─── FILE TYPES ───────────────────────────────────────────────────────────────
+
+Accept: PDF, JPG, JPEG, PNG, WebP
+Reject all other file types with a clear friendly message.
+Max file size: 20MB per file.
+
+─── DATA MODEL ───────────────────────────────────────────────────────────────
+
+trip_documents table:
+  id · org_id · trip_id · client_id · uploaded_by (profile id)
+  file_name · file_type · file_size · storage_path · label
+  (label: advisor-assigned name e.g. "Flight Ticket", "Hotel Voucher",
+  "Travel Insurance", "Visa Letter", "Transfer Confirmation")
+  is_visible_to_client (boolean, default: true)
+  created_at
+
+─── SECURITY — THIS IS CRITICAL ─────────────────────────────────────────────
+
+Every document access — upload, fetch, view, download — must verify
+server-side that the requesting user is authorised. Never trust URL
+parameters or storage paths alone.
+
+Authorisation rules:
+  Advisors: can access documents where trip.org_id = their org_id
+  Clients: can access documents where client.profile_id = their user id
+    AND is_visible_to_client = true
+  No exceptions. Enforce at the API/server level on every request.
+
+Storage paths must not be guessable or sequential.
+Use random UUIDs in all storage paths — never expose client_id or
+trip_id directly in the file path.
+
+Advisors can toggle is_visible_to_client per document — some internal
+documents (e.g. supplier invoices) should not be visible to clients.
+
+─── ADVISOR UPLOAD EXPERIENCE ────────────────────────────────────────────────
+
+Clean drag-and-drop upload area with a "Browse files" fallback.
+After selecting a file:
+  - Show filename + size
+  - Label input: "What is this document?" (required)
+    Suggestions as user types: Flight Ticket · Hotel Voucher ·
+    Transfer Confirmation · Travel Insurance · Visa Letter · Other
+  - Toggle: "Visible to client" (default: on)
+  - Upload button
+
+Uploaded documents shown as a clean list:
+  File icon (PDF or image thumbnail) · Label · File size · Upload date ·
+  Uploaded by (advisor name) · Visibility toggle · Download · Delete
+
+─── CLIENT VIEW (mobile — implement when building mobile app) ────────────────
+
+Documents tab inside trip detail.
+Clean list: label, file type icon, download/view button.
+Tapping a PDF: opens in-app PDF viewer (expo-file-system + expo-sharing).
+Tapping an image: opens full-screen image viewer.
+Only shows documents where is_visible_to_client = true.
+Never shows internal advisor documents.

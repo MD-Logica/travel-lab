@@ -58,6 +58,9 @@ export interface IStorage {
 
   getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined>;
 
+  updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined>;
+  updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined>;
+
   getTripFullView(tripId: string): Promise<{
     trip: Trip;
     organization: { id: string; name: string; logoUrl: string | null };
@@ -371,6 +374,24 @@ export class DatabaseStorage implements IStorage {
         .set({ sortOrder: i })
         .where(and(eq(tripSegments.id, segmentIds[i]), eq(tripSegments.orgId, orgId)));
     }
+  }
+
+  async updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined> {
+    const [result] = await db
+      .update(profiles)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(profiles.id, userId))
+      .returning();
+    return result;
+  }
+
+  async updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined> {
+    const [result] = await db
+      .update(organizations)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(organizations.id, id))
+      .returning();
+    return result;
   }
 
   async getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined> {

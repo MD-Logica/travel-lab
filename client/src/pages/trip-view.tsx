@@ -13,7 +13,7 @@ import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   Clock, MapPin, Hash, ChevronDown, Calendar, Download, Star,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Users,
-  ArrowRight,
+  ArrowRight, FileDown, CalendarPlus,
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
@@ -515,6 +515,25 @@ export default function TripViewPage() {
                   </SelectContent>
                 </Select>
               )}
+              <Separator orientation="vertical" className="h-5" />
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => window.open(`/api/export/pdf?tripId=${trip.id}&versionId=${activeVersion?.id || ""}`, "_blank")}
+                data-testid="button-floating-pdf"
+              >
+                <FileDown className="w-3 h-3 mr-1" /> PDF
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => window.open(`/api/export/calendar?tripId=${trip.id}&versionId=${activeVersion?.id || ""}`, "_blank")}
+                data-testid="button-floating-calendar"
+              >
+                <CalendarPlus className="w-3 h-3 mr-1" /> Cal
+              </Button>
             </div>
           </motion.div>
         )}

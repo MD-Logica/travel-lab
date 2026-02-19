@@ -1,0 +1,68 @@
+Build a dedicated analytics page at /dashboard/analytics for Travel Lab.
+
+Add "Analytics" to the dashboard sidebar navigation (BarChart2 icon).
+
+─── DESIGN DIRECTION ─────────────────────────────────────────────────────────
+
+This page should feel like a beautifully designed business report —
+not a generic SaaS metrics dashboard. Think: the kind of clean, considered
+data visualization you'd see in a premium finance or editorial product.
+Generous whitespace. Elegant typography. Restrained use of color.
+Charts should be minimal and readable — not colorful for the sake of it.
+
+─── DATE RANGE SELECTOR ──────────────────────────────────────────────────────
+
+Top right: date range selector.
+Options: Last 30 days · Last 3 months · Last 12 months · All time
+Default: Last 12 months.
+All metrics on the page update when range changes.
+
+─── METRICS TO DISPLAY ───────────────────────────────────────────────────────
+
+ROW 1 — SUMMARY STAT CARDS (4 cards):
+  Total Trips Created (in period)
+  Active Trips (current, not date-filtered)
+  Total Clients
+  Portfolio Value — sum of budget_total across all trips in period
+    where budget_total is set. Show currency (default USD).
+    Label: "Total Trip Value" with a subtle note "(trips with budget set)"
+
+ROW 2 — CHARTS:
+
+  TRIPS OVER TIME (line or bar chart, full width):
+    Monthly trip creation volume over the selected period.
+    X axis: months. Y axis: trip count.
+    Minimal, clean — single line or single color bars.
+
+  TOP DESTINATIONS (horizontal bar chart, half width):
+    Most frequent destinations across all trips in period.
+    Derived from trip titles or segment location data.
+    Top 8 destinations. Clean horizontal bars.
+
+  TRIPS BY STATUS (donut chart, half width):
+    Breakdown: Draft / Active / Completed / Archived.
+    Minimal legend. Warm, restrained color palette.
+
+ROW 3 — TABLES:
+
+  MOST ACTIVE CLIENTS (table, half width):
+    Client name · Total trips · Most recent trip · Total trip value
+    Sorted by total trips descending. Show top 10.
+    Each row links to that client's profile.
+
+  ADVISOR ACTIVITY (table, half width — only visible to org owners):
+    Advisor name · Trips created · Clients managed
+    Sorted by trips created. Shows all advisors in org.
+
+─── EMPTY / PARTIAL STATES ───────────────────────────────────────────────────
+
+If an org is new and has little data: show the page gracefully.
+Each chart/table shows a minimal empty state rather than broken visuals.
+"Not enough data yet — this will populate as you create trips."
+Keep the layout intact so advisors can see what's coming.
+
+─── TECHNICAL ────────────────────────────────────────────────────────────────
+
+Use Recharts for all charts (already in the project from earlier prompts).
+All data fetched server-side, passed as props.
+No real-time updates needed — a page refresh is fine for analytics.

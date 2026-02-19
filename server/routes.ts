@@ -5,6 +5,8 @@ import { storage } from "./storage";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { generateTripPdf } from "./pdf-generator";
+import { generateCalendar } from "./calendar-generator";
 
 function slugify(text: string): string {
   return text
@@ -208,6 +210,22 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/profile", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const updateSchema = z.object({
+        fullName: z.string().min(1, "Name is required"),
+      });
+      const parsed = updateSchema.parse(req.body);
+      const profile = await storage.updateProfile(userId, parsed);
+      if (!profile) return res.status(404).json({ message: "Profile not found" });
+      res.json(profile);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
   app.get("/api/organization", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const org = await storage.getOrganization(req._orgId);
@@ -215,6 +233,28 @@ export async function registerRoutes(
       res.json(org);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch organization" });
+    }
+  });
+
+  app.patch("/api/organization", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      if (req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only the organization owner can update settings" });
+      }
+      const updateSchema = z.object({
+        name: z.string().min(1, "Organization name is required").optional(),
+        logoUrl: z.string().url().optional().nullable().or(z.literal("")),
+      });
+      const parsed = updateSchema.parse(req.body);
+      const updateData: any = {};
+      if (parsed.name !== undefined) updateData.name = parsed.name;
+      if (parsed.logoUrl !== undefined) updateData.logoUrl = parsed.logoUrl || null;
+      const org = await storage.updateOrganization(req._orgId, updateData);
+      if (!org) return res.status(404).json({ message: "Organization not found" });
+      res.json(org);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to update organization" });
     }
   });
 
@@ -663,6 +703,78 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete version" });
+    }
+  });
+
+  app.get("/api/export/pdf", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { tripId, versionId } = req.query;
+      if (!tripId) return res.status(400).json({ message: "tripId is required" });
+
+      const fullData = await storage.getTripFullView(tripId as string);
+      if (!fullData) return res.status(404).json({ message: "Trip not found" });
+      if (fullData.trip.orgId !== req._orgId) return res.status(403).json({ message: "Access denied" });
+
+      let selectedVersion = fullData.versions.find(v => v.isPrimary);
+      if (versionId) {
+        const v = fullData.versions.find(v => v.id === versionId);
+        if (v) selectedVersion = v;
+      }
+      if (!selectedVersion) return res.status(404).json({ message: "No version found" });
+
+      const segments = (selectedVersion as any).segments || [];
+
+      const pdfStream = await generateTripPdf({
+        trip: fullData.trip,
+        organization: fullData.organization,
+        advisor: fullData.advisor,
+        client: fullData.client,
+        version: selectedVersion,
+        segments,
+      });
+
+      const filename = `${fullData.trip.title.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "_")}_Itinerary.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      (pdfStream as any).pipe(res);
+    } catch (error) {
+      console.error("PDF export error:", error);
+      res.status(500).json({ message: "Failed to generate PDF" });
+    }
+  });
+
+  app.get("/api/export/calendar", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { tripId, versionId } = req.query;
+      if (!tripId) return res.status(400).json({ message: "tripId is required" });
+
+      const fullData = await storage.getTripFullView(tripId as string);
+      if (!fullData) return res.status(404).json({ message: "Trip not found" });
+      if (fullData.trip.orgId !== req._orgId) return res.status(403).json({ message: "Access denied" });
+
+      let selectedVersion = fullData.versions.find(v => v.isPrimary);
+      if (versionId) {
+        const v = fullData.versions.find(v => v.id === versionId);
+        if (v) selectedVersion = v;
+      }
+      if (!selectedVersion) return res.status(404).json({ message: "No version found" });
+
+      const segments = (selectedVersion as any).segments || [];
+
+      const ics = generateCalendar({
+        trip: fullData.trip,
+        organization: fullData.organization,
+        version: selectedVersion,
+        segments,
+      });
+
+      const filename = `${fullData.trip.title.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "_")}.ics`;
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(ics);
+    } catch (error) {
+      console.error("Calendar export error:", error);
+      res.status(500).json({ message: "Failed to generate calendar" });
     }
   });
 

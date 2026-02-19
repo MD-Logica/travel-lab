@@ -1,0 +1,94 @@
+Build a dedicated Preferences tab on the client detail page
+at /dashboard/clients/[id].
+
+─── WHERE IT LIVES ───────────────────────────────────────────────────────────
+
+Add a tab bar to the client detail page with three tabs:
+  Overview (existing content) · Preferences · Documents (built later)
+
+The Preferences tab is what we're building here.
+
+─── PHILOSOPHY ───────────────────────────────────────────────────────────────
+
+This is a living reference sheet Dalila's team keeps on each client.
+It should feel like the guest profile a great hotel concierge maintains —
+structured enough to be useful, but never so rigid it can't hold nuance.
+
+Every section has structured fields for the common 80% of information,
+plus a freeform notes field for the exceptions and outliers that no
+dropdown will ever capture. Ultra-high-net-worth clients have highly
+specific preferences that must be preserved verbatim.
+
+─── SECTIONS & FIELDS ────────────────────────────────────────────────────────
+
+TRAVEL STYLE
+  Preferred tier (select): Ultra-luxury · Luxury · Boutique · Adventure ·
+    Cultural · Mixed
+  Pace (select): Relaxed · Moderate · Packed
+  Freeform notes: "Additional style notes..."
+
+FLIGHTS
+  Preferred cabin (select): First · Business · Premium Economy · Economy
+  Preferred airlines (tag input — add multiple)
+  Seat preference (select): Window · Aisle · No preference
+  Avoid airlines (tag input)
+  Frequent flyer numbers (repeatable rows: Airline + Number)
+  Freeform notes: "e.g. always books bulkhead, never red-eyes"
+
+HOTELS
+  Preferred tier (select): Ultra-luxury (7-star) · 5-star · 4-star · Boutique
+  Preferred brands/groups (tag input — e.g. Aman, Four Seasons, Rosewood)
+  Room preferences (freeform — this must be a generous textarea):
+    "e.g. High floor, away from elevator, king bed, bathtub not shower only.
+    At Cipriani Venice: Room 207 preferred. If unavailable, Room 310."
+  Avoid hotels (tag input)
+  Freeform notes
+
+DINING
+  Dietary requirements (multi-select checkboxes):
+    Vegetarian · Vegan · Halal · Kosher · Gluten-free · Dairy-free · 
+    Nut allergy · Shellfish allergy · Other
+  Cuisine preferences (tag input — cuisines they love)
+  Avoid cuisines (tag input)
+  Dining style (select): Fine dining · Casual · Local/authentic · Mixed
+  Freeform notes: "e.g. always requests corner table, no sharing plates"
+
+INTERESTS & EXPERIENCES
+  Interests (multi-select, elegant checkbox grid):
+    Art & museums · Wine & gastronomy · Golf · Tennis · Wellness & spa ·
+    Hiking · Water sports · Shopping · Nightlife · Architecture ·
+    History & culture · Wildlife · Family activities · Music & performance
+  Avoid experiences (tag input)
+  Freeform notes
+
+IMPORTANT DATES
+  Repeatable rows: Label (e.g. "Birthday") + Date
+  These surface as reminders when building trips near these dates.
+  Examples: Birthday, Anniversary, Children's birthdays
+
+LOYALTY & MEMBERSHIPS
+  Repeatable rows: Program name + Member number + Tier/status
+  Examples: airline FFNs, hotel loyalty, credit card concierge programs
+
+GENERAL NOTES
+  Large freeform textarea — the catch-all for anything that doesn't
+  fit the structured fields above. No character limit.
+
+─── EDIT BEHAVIOUR ───────────────────────────────────────────────────────────
+
+The entire tab is in view mode by default.
+Single "Edit Preferences" button top right enters edit mode for all sections.
+Save / Cancel buttons appear. Saving updates the client record in the database.
+All preference data stored as structured JSON on the client record.
+Show last updated timestamp below the section header in small text.
+
+─── SURFACING PREFERENCES IN THE TRIP EDITOR ────────────────────────────────
+
+When an advisor opens the trip editor for a client who has preferences saved,
+show a slim collapsible panel on the right side (or accessible via a button):
+  "Client Preferences — [Client Name]"
+  Shows a clean read-only summary: travel style, cabin class, dietary needs,
+  key interests, and the general notes field.
+  This is a reference panel only — no automation, no auto-suggestions.
+  The advisor reads it and uses their own judgment.
+  Panel can be collapsed to save space.
