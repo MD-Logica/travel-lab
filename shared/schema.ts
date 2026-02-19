@@ -108,6 +108,44 @@ export const tripSegments = pgTable("trip_segments", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const tripDocuments = pgTable("trip_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  tripId: varchar("trip_id").notNull().references(() => trips.id, { onDelete: "cascade" }),
+  clientId: varchar("client_id").references(() => clients.id),
+  uploadedBy: varchar("uploaded_by").notNull(),
+  fileName: text("file_name").notNull(),
+  fileType: text("file_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  storagePath: text("storage_path").notNull(),
+  label: text("label").notNull(),
+  isVisibleToClient: boolean("is_visible_to_client").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const tripDocumentsRelations = relations(tripDocuments, ({ one }) => ({
+  trip: one(trips, {
+    fields: [tripDocuments.tripId],
+    references: [trips.id],
+  }),
+  client: one(clients, {
+    fields: [tripDocuments.clientId],
+    references: [clients.id],
+  }),
+  organization: one(organizations, {
+    fields: [tripDocuments.orgId],
+    references: [organizations.id],
+  }),
+}));
+
+export const insertTripDocumentSchema = createInsertSchema(tripDocuments).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type TripDocument = typeof tripDocuments.$inferSelect;
+export type InsertTripDocument = z.infer<typeof insertTripDocumentSchema>;
+
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   profiles: many(profiles),
   clients: many(clients),
