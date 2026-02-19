@@ -82,6 +82,28 @@ export const tripVersions = pgTable("trip_versions", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const segmentTypeEnum = pgEnum("segment_type", ["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]);
+
+export const tripSegments = pgTable("trip_segments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  versionId: varchar("version_id").notNull().references(() => tripVersions.id, { onDelete: "cascade" }),
+  tripId: varchar("trip_id").notNull().references(() => trips.id, { onDelete: "cascade" }),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  dayNumber: integer("day_number").notNull().default(1),
+  sortOrder: integer("sort_order").notNull().default(0),
+  type: segmentTypeEnum("type").notNull().default("activity"),
+  title: text("title").notNull(),
+  subtitle: text("subtitle"),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
+  confirmationNumber: text("confirmation_number"),
+  cost: integer("cost"),
+  currency: text("currency").default("USD"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   profiles: many(profiles),
   clients: many(clients),
@@ -115,13 +137,29 @@ export const tripsRelations = relations(trips, ({ one, many }) => ({
   versions: many(tripVersions),
 }));
 
-export const tripVersionsRelations = relations(tripVersions, ({ one }) => ({
+export const tripVersionsRelations = relations(tripVersions, ({ one, many }) => ({
   trip: one(trips, {
     fields: [tripVersions.tripId],
     references: [trips.id],
   }),
   organization: one(organizations, {
     fields: [tripVersions.orgId],
+    references: [organizations.id],
+  }),
+  segments: many(tripSegments),
+}));
+
+export const tripSegmentsRelations = relations(tripSegments, ({ one }) => ({
+  version: one(tripVersions, {
+    fields: [tripSegments.versionId],
+    references: [tripVersions.id],
+  }),
+  trip: one(trips, {
+    fields: [tripSegments.tripId],
+    references: [trips.id],
+  }),
+  organization: one(organizations, {
+    fields: [tripSegments.orgId],
     references: [organizations.id],
   }),
 }));
@@ -161,7 +199,15 @@ export const insertTripVersionSchema = createInsertSchema(tripVersions).omit({
   updatedAt: true,
 });
 
+export const insertTripSegmentSchema = createInsertSchema(tripSegments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
 export type TripVersion = typeof tripVersions.$inferSelect;
 export type InsertTripVersion = z.infer<typeof insertTripVersionSchema>;
+export type TripSegment = typeof tripSegments.$inferSelect;
+export type InsertTripSegment = z.infer<typeof insertTripSegmentSchema>;

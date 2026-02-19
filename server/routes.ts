@@ -479,6 +479,159 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/trips/:id/full", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const trip = await storage.getTripWithClient(req.params.id, req._orgId);
+      if (!trip) return res.status(404).json({ message: "Trip not found" });
+      const versions = await storage.getTripVersions(req.params.id, req._orgId);
+      res.json({ trip, versions });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch trip" });
+    }
+  });
+
+  app.get("/api/trips/:tripId/versions/:versionId/segments", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const segments = await storage.getTripSegments(req.params.versionId, req._orgId);
+      res.json(segments);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch segments" });
+    }
+  });
+
+  app.post("/api/trips/:tripId/versions/:versionId/segments", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const segmentSchema = z.object({
+        dayNumber: z.number().int().min(1),
+        sortOrder: z.number().int().optional().default(0),
+        type: z.enum(["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]),
+        title: z.string().min(1, "Title is required"),
+        subtitle: z.string().optional().nullable(),
+        startTime: z.string().optional().nullable(),
+        endTime: z.string().optional().nullable(),
+        confirmationNumber: z.string().optional().nullable(),
+        cost: z.number().optional().nullable(),
+        currency: z.string().optional().default("USD"),
+        notes: z.string().optional().nullable(),
+      });
+      const parsed = segmentSchema.parse(req.body);
+      const segment = await storage.createTripSegment({
+        ...parsed,
+        versionId: req.params.versionId,
+        tripId: req.params.tripId,
+        orgId: req._orgId,
+      });
+      res.status(201).json(segment);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      console.error("Create segment error:", error);
+      res.status(500).json({ message: "Failed to create segment" });
+    }
+  });
+
+  app.patch("/api/trips/:tripId/segments/:segmentId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const updateSchema = z.object({
+        dayNumber: z.number().int().min(1).optional(),
+        sortOrder: z.number().int().optional(),
+        type: z.enum(["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]).optional(),
+        title: z.string().min(1).optional(),
+        subtitle: z.string().optional().nullable(),
+        startTime: z.string().optional().nullable(),
+        endTime: z.string().optional().nullable(),
+        confirmationNumber: z.string().optional().nullable(),
+        cost: z.number().optional().nullable(),
+        currency: z.string().optional(),
+        notes: z.string().optional().nullable(),
+      });
+      const parsed = updateSchema.parse(req.body);
+      const segment = await storage.updateTripSegment(req.params.segmentId, req._orgId, parsed);
+      if (!segment) return res.status(404).json({ message: "Segment not found" });
+      res.json(segment);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      res.status(500).json({ message: "Failed to update segment" });
+    }
+  });
+
+  app.delete("/api/trips/:tripId/segments/:segmentId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const deleted = await storage.deleteTripSegment(req.params.segmentId, req._orgId);
+      if (!deleted) return res.status(404).json({ message: "Segment not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete segment" });
+    }
+  });
+
+  app.post("/api/trips/:tripId/versions/:versionId/segments/reorder", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { segmentIds } = z.object({ segmentIds: z.array(z.string()) }).parse(req.body);
+      await storage.reorderTripSegments(req.params.versionId, req._orgId, segmentIds);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: "Invalid segment IDs" });
+      res.status(500).json({ message: "Failed to reorder segments" });
+    }
+  });
+
+  app.post("/api/trips/:tripId/versions", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { sourceVersionId, name } = z.object({
+        sourceVersionId: z.string(),
+        name: z.string().min(1, "Version name is required"),
+      }).parse(req.body);
+      const newVersion = await storage.duplicateTripVersion(sourceVersionId, req.params.tripId, req._orgId, name);
+      res.status(201).json(newVersion);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      console.error("Duplicate version error:", error);
+      res.status(500).json({ message: "Failed to create version" });
+    }
+  });
+
+  app.patch("/api/trips/:tripId/versions/:versionId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const updateSchema = z.object({
+        name: z.string().min(1).optional(),
+        isPrimary: z.boolean().optional(),
+      });
+      const parsed = updateSchema.parse(req.body);
+
+      if (parsed.isPrimary) {
+        await storage.setTripVersionPrimary(req.params.versionId, req.params.tripId, req._orgId);
+      }
+      const version = await storage.updateTripVersion(req.params.versionId, req._orgId, parsed);
+      if (!version) return res.status(404).json({ message: "Version not found" });
+      res.json(version);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to update version" });
+    }
+  });
+
+  app.delete("/api/trips/:tripId/versions/:versionId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const versions = await storage.getTripVersions(req.params.tripId, req._orgId);
+      if (versions.length <= 1) {
+        return res.status(400).json({ message: "Cannot delete the only version" });
+      }
+      const targetVersion = versions.find(v => v.id === req.params.versionId);
+      if (targetVersion?.isPrimary) {
+        return res.status(400).json({ message: "Cannot delete the primary version. Set another version as primary first." });
+      }
+      const deleted = await storage.deleteTripVersion(req.params.versionId, req._orgId);
+      if (!deleted) return res.status(404).json({ message: "Version not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete version" });
+    }
+  });
+
   app.get("/api/members", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const members = await storage.getProfilesByOrg(req._orgId);

@@ -1,10 +1,11 @@
 import {
-  organizations, profiles, clients, trips, tripVersions,
+  organizations, profiles, clients, trips, tripVersions, tripSegments,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
   type Trip, type InsertTrip,
   type TripVersion, type InsertTripVersion,
+  type TripSegment, type InsertTripSegment,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike } from "drizzle-orm";
@@ -44,6 +45,18 @@ export interface IStorage {
 
   createTripVersion(version: InsertTripVersion): Promise<TripVersion>;
   getTripVersions(tripId: string, orgId: string): Promise<TripVersion[]>;
+  updateTripVersion(id: string, orgId: string, data: Partial<InsertTripVersion>): Promise<TripVersion | undefined>;
+  deleteTripVersion(id: string, orgId: string): Promise<boolean>;
+  duplicateTripVersion(sourceVersionId: string, tripId: string, orgId: string, newName: string): Promise<TripVersion>;
+  setTripVersionPrimary(versionId: string, tripId: string, orgId: string): Promise<void>;
+
+  createTripSegment(segment: InsertTripSegment): Promise<TripSegment>;
+  getTripSegments(versionId: string, orgId: string): Promise<TripSegment[]>;
+  updateTripSegment(id: string, orgId: string, data: Partial<InsertTripSegment>): Promise<TripSegment | undefined>;
+  deleteTripSegment(id: string, orgId: string): Promise<boolean>;
+  reorderTripSegments(versionId: string, orgId: string, segmentIds: string[]): Promise<void>;
+
+  getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -248,6 +261,119 @@ export class DatabaseStorage implements IStorage {
       this.countClientsByOrgNew(orgId),
     ]);
     return { totalTrips, activeTrips, completedTrips, totalClients };
+  }
+
+  async updateTripVersion(id: string, orgId: string, data: Partial<InsertTripVersion>): Promise<TripVersion | undefined> {
+    const [result] = await db
+      .update(tripVersions)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(tripVersions.id, id), eq(tripVersions.orgId, orgId)))
+      .returning();
+    return result;
+  }
+
+  async deleteTripVersion(id: string, orgId: string): Promise<boolean> {
+    const result = await db.delete(tripVersions).where(
+      and(eq(tripVersions.id, id), eq(tripVersions.orgId, orgId))
+    ).returning();
+    return result.length > 0;
+  }
+
+  async duplicateTripVersion(sourceVersionId: string, tripId: string, orgId: string, newName: string): Promise<TripVersion> {
+    const existingVersions = await this.getTripVersions(tripId, orgId);
+    const nextNumber = existingVersions.length > 0
+      ? Math.max(...existingVersions.map(v => v.versionNumber)) + 1
+      : 1;
+
+    const newVersion = await this.createTripVersion({
+      tripId,
+      orgId,
+      versionNumber: nextNumber,
+      name: newName,
+      isPrimary: false,
+    });
+
+    const sourceSegments = await this.getTripSegments(sourceVersionId, orgId);
+    for (const seg of sourceSegments) {
+      await this.createTripSegment({
+        versionId: newVersion.id,
+        tripId,
+        orgId,
+        dayNumber: seg.dayNumber,
+        sortOrder: seg.sortOrder,
+        type: seg.type,
+        title: seg.title,
+        subtitle: seg.subtitle,
+        startTime: seg.startTime,
+        endTime: seg.endTime,
+        confirmationNumber: seg.confirmationNumber,
+        cost: seg.cost,
+        currency: seg.currency,
+        notes: seg.notes,
+      });
+    }
+
+    return newVersion;
+  }
+
+  async setTripVersionPrimary(versionId: string, tripId: string, orgId: string): Promise<void> {
+    await db
+      .update(tripVersions)
+      .set({ isPrimary: false })
+      .where(and(eq(tripVersions.tripId, tripId), eq(tripVersions.orgId, orgId)));
+    await db
+      .update(tripVersions)
+      .set({ isPrimary: true })
+      .where(and(eq(tripVersions.id, versionId), eq(tripVersions.orgId, orgId)));
+  }
+
+  async createTripSegment(segment: InsertTripSegment): Promise<TripSegment> {
+    const [result] = await db.insert(tripSegments).values(segment).returning();
+    return result;
+  }
+
+  async getTripSegments(versionId: string, orgId: string): Promise<TripSegment[]> {
+    return db.select().from(tripSegments).where(
+      and(eq(tripSegments.versionId, versionId), eq(tripSegments.orgId, orgId))
+    ).orderBy(sql`${tripSegments.dayNumber} ASC, ${tripSegments.sortOrder} ASC`);
+  }
+
+  async updateTripSegment(id: string, orgId: string, data: Partial<InsertTripSegment>): Promise<TripSegment | undefined> {
+    const [result] = await db
+      .update(tripSegments)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(tripSegments.id, id), eq(tripSegments.orgId, orgId)))
+      .returning();
+    return result;
+  }
+
+  async deleteTripSegment(id: string, orgId: string): Promise<boolean> {
+    const result = await db.delete(tripSegments).where(
+      and(eq(tripSegments.id, id), eq(tripSegments.orgId, orgId))
+    ).returning();
+    return result.length > 0;
+  }
+
+  async reorderTripSegments(versionId: string, orgId: string, segmentIds: string[]): Promise<void> {
+    for (let i = 0; i < segmentIds.length; i++) {
+      await db
+        .update(tripSegments)
+        .set({ sortOrder: i })
+        .where(and(eq(tripSegments.id, segmentIds[i]), eq(tripSegments.orgId, orgId)));
+    }
+  }
+
+  async getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined> {
+    const rows = await db
+      .select({
+        trip: trips,
+        clientName: clients.fullName,
+      })
+      .from(trips)
+      .leftJoin(clients, eq(trips.clientId, clients.id))
+      .where(and(eq(trips.id, id), eq(trips.orgId, orgId)));
+    if (rows.length === 0) return undefined;
+    return { ...rows[0].trip, clientName: rows[0].clientName };
   }
 }
 
