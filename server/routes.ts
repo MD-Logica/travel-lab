@@ -1540,7 +1540,15 @@ export async function registerRoutes(
     }
   });
 
-  // ── Google Places API proxy endpoints ──
+  // ── Google Places API (New) proxy endpoints ──
+
+  const placesTypeMap: Record<string, string[]> = {
+    "lodging": ["lodging"],
+    "restaurant": ["restaurant"],
+    "establishment": ["establishment"],
+    "(cities)": ["locality", "administrative_area_level_3", "postal_town"],
+  };
+
   app.get("/api/places/autocomplete", isAuthenticated, async (req: any, res) => {
     try {
       const apiKey = process.env.GOOGLE_PLACES_API_KEY;
@@ -1552,18 +1560,42 @@ export async function registerRoutes(
       if (!input || typeof input !== "string" || input.length < 2) {
         return res.json({ predictions: [] });
       }
-      const params = new URLSearchParams({
-        input,
-        key: apiKey,
-        ...(types && typeof types === "string" ? { types } : {}),
-      });
-      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`;
-      const apiRes = await fetch(url);
-      const data = await apiRes.json();
-      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-        console.warn("[Places] Autocomplete API status:", data.status, data.error_message);
+
+      const body: any = { input };
+      if (types && typeof types === "string" && placesTypeMap[types]) {
+        body.includedPrimaryTypes = placesTypeMap[types];
       }
-      res.json({ predictions: data.predictions || [] });
+
+      const apiRes = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": apiKey,
+        },
+        body: JSON.stringify(body),
+      });
+      const data = await apiRes.json();
+
+      if (data.error) {
+        console.warn("[Places] Autocomplete API error:", data.error.message);
+        return res.json({ predictions: [] });
+      }
+
+      const predictions = (data.suggestions || [])
+        .filter((s: any) => s.placePrediction)
+        .map((s: any) => {
+          const p = s.placePrediction;
+          return {
+            place_id: p.placeId,
+            description: p.text?.text || "",
+            structured_formatting: {
+              main_text: p.structuredFormat?.mainText?.text || "",
+              secondary_text: p.structuredFormat?.secondaryText?.text || "",
+            },
+          };
+        });
+
+      res.json({ predictions });
     } catch (error) {
       console.error("[Places] Autocomplete error:", error);
       res.status(500).json({ message: "Places autocomplete failed" });
@@ -1580,35 +1612,45 @@ export async function registerRoutes(
       if (!placeId || typeof placeId !== "string") {
         return res.status(400).json({ message: "placeId required" });
       }
-      const fields = "name,formatted_address,formatted_phone_number,international_phone_number,website,url,rating,price_level,types,editorial_summary,reviews,photos,geometry";
-      const params = new URLSearchParams({
-        place_id: placeId,
-        fields,
-        key: apiKey,
+
+      const fieldMask = "displayName,formattedAddress,internationalPhoneNumber,websiteUri,googleMapsUri,rating,priceLevel,types,editorialSummary,reviews,photos,location";
+      const url = `https://places.googleapis.com/v1/places/${placeId}?languageCode=en`;
+      const apiRes = await fetch(url, {
+        headers: {
+          "X-Goog-Api-Key": apiKey,
+          "X-Goog-FieldMask": fieldMask,
+        },
       });
-      const url = `https://maps.googleapis.com/maps/api/place/details/json?${params}`;
-      const apiRes = await fetch(url);
-      const data = await apiRes.json();
-      if (data.status !== "OK") {
-        console.warn("[Places] Details API status:", data.status, data.error_message);
+      const result = await apiRes.json();
+
+      if (result.error) {
+        console.warn("[Places] Details API error:", result.error.message);
         return res.status(404).json({ message: "Place not found" });
       }
-      const result = data.result;
-      const photoRefs = (result.photos || []).slice(0, 4).map((p: any) => p.photo_reference);
+
+      const photoRefs = (result.photos || []).slice(0, 4).map((p: any) => p.name);
+      const priceLevelMap: Record<string, number> = {
+        PRICE_LEVEL_FREE: 0,
+        PRICE_LEVEL_INEXPENSIVE: 1,
+        PRICE_LEVEL_MODERATE: 2,
+        PRICE_LEVEL_EXPENSIVE: 3,
+        PRICE_LEVEL_VERY_EXPENSIVE: 4,
+      };
+
       res.json({
-        name: result.name,
-        address: result.formatted_address,
-        phone: result.international_phone_number || result.formatted_phone_number,
-        website: result.website,
-        mapsUrl: result.url,
-        rating: result.rating,
-        priceLevel: result.price_level,
+        name: result.displayName?.text || "",
+        address: result.formattedAddress || "",
+        phone: result.internationalPhoneNumber || "",
+        website: result.websiteUri || "",
+        mapsUrl: result.googleMapsUri || "",
+        rating: result.rating || null,
+        priceLevel: result.priceLevel ? (priceLevelMap[result.priceLevel] ?? null) : null,
         types: result.types || [],
-        editorialSummary: result.editorial_summary?.overview,
-        firstReview: result.reviews?.[0]?.text,
+        editorialSummary: result.editorialSummary?.text || "",
+        firstReview: result.reviews?.[0]?.text?.text || "",
         photoRefs,
-        lat: result.geometry?.location?.lat,
-        lng: result.geometry?.location?.lng,
+        lat: result.location?.latitude || null,
+        lng: result.location?.longitude || null,
       });
     } catch (error) {
       console.error("[Places] Details error:", error);
@@ -1627,12 +1669,7 @@ export async function registerRoutes(
         return res.status(400).send("photo reference required");
       }
       const width = maxwidth && typeof maxwidth === "string" ? maxwidth : "800";
-      const params = new URLSearchParams({
-        photoreference: ref,
-        maxwidth: width,
-        key: apiKey,
-      });
-      const url = `https://maps.googleapis.com/maps/api/place/photo?${params}`;
+      const url = `https://places.googleapis.com/v1/${ref}/media?maxWidthPx=${width}&key=${apiKey}`;
       const apiRes = await fetch(url, { redirect: "follow" });
       if (!apiRes.ok) {
         return res.status(apiRes.status).send("Photo not available");
@@ -1649,6 +1686,24 @@ export async function registerRoutes(
   });
 
   // ── FlightLabs flight search proxy ──
+
+  function parseFlightLabsLocation(locationStr: string): { city: string; iata: string } {
+    const match = locationStr?.match(/^(.+?)\s*\((\w{3})\)$/);
+    if (match) return { city: match[1].trim(), iata: match[2] };
+    return { city: locationStr || "", iata: "" };
+  }
+
+  const flMonths: Record<string, string> = {
+    Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
+    Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
+  };
+  function parseFlightLabsDate(dateStr: string): string {
+    const m = dateStr?.match(/(\d{1,2})\s+(\w{3})\s+(\d{4})/);
+    if (!m) return "";
+    const month = flMonths[m[2]] || "01";
+    return `${m[3]}-${month}-${m[1].padStart(2, "0")}`;
+  }
+
   app.post("/api/flights/search", isAuthenticated, async (req: any, res) => {
     try {
       const apiKey = process.env.FLIGHTLABS_API_KEY;
@@ -1661,76 +1716,123 @@ export async function registerRoutes(
         return res.status(400).json({ message: "flightNumber required" });
       }
       const cleaned = flightNumber.replace(/\s+/g, "").toUpperCase();
-      const flightIata = cleaned;
-      const params = new URLSearchParams({
-        access_key: apiKey,
-        flight_iata: flightIata,
-      });
-      const url = `https://app.goflightlabs.com/advanced-real-time-flights?${params}`;
-      const apiRes = await fetch(url);
-      const data = await apiRes.json();
+      const airlineCode = cleaned.replace(/[0-9]/g, "");
 
-      if (!data || data.error || (!data.data && !Array.isArray(data))) {
-        const schedParams = new URLSearchParams({
-          access_key: apiKey,
-          flight_iata: flightIata,
-        });
-        const schedUrl = `https://app.goflightlabs.com/flights?${schedParams}`;
-        const schedRes = await fetch(schedUrl);
-        const schedData = await schedRes.json();
+      // Strategy 1: Try /flight endpoint (detailed schedule data)
+      try {
+        const params = new URLSearchParams({ access_key: apiKey, flight_number: cleaned });
+        const url = `https://app.goflightlabs.com/flight?${params}`;
+        const apiRes = await fetch(url);
+        const data = await apiRes.json();
 
-        const flights = schedData?.data || (Array.isArray(schedData) ? schedData : []);
-        if (!flights.length) {
-          return res.json({ found: false, flight: null });
+        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+          let flights = data.data;
+          if (date) {
+            const filtered = flights.filter((f: any) => {
+              if (!f.DATE) return false;
+              const parsed = parseFlightLabsDate(f.DATE);
+              return parsed === date;
+            });
+            if (filtered.length > 0) flights = filtered;
+          }
+
+          const today = new Date().toISOString().slice(0, 10);
+          const closestFlight = flights.find((f: any) => {
+            const parsed = parseFlightLabsDate(f.DATE);
+            return parsed >= today;
+          }) || flights[0];
+
+          const f = closestFlight;
+          const dep = parseFlightLabsLocation(f.FROM);
+          const arr = parseFlightLabsLocation(f.TO);
+
+          let departureTime = "";
+          let arrivalTime = "";
+          const dateStr = parseFlightLabsDate(f.DATE);
+          if (dateStr && f.STD && f.STD !== "—") {
+            const timeMatch = f.STD.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+            if (timeMatch) {
+              let hours = parseInt(timeMatch[1]);
+              if (timeMatch[3]?.toUpperCase() === "PM" && hours !== 12) hours += 12;
+              if (timeMatch[3]?.toUpperCase() === "AM" && hours === 12) hours = 0;
+              departureTime = `${dateStr}T${hours.toString().padStart(2, "0")}:${timeMatch[2]}:00`;
+            }
+          }
+          if (dateStr && f.STA && f.STA !== "—") {
+            const timeMatch = f.STA.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+            if (timeMatch) {
+              let hours = parseInt(timeMatch[1]);
+              if (timeMatch[3]?.toUpperCase() === "PM" && hours !== 12) hours += 12;
+              if (timeMatch[3]?.toUpperCase() === "AM" && hours === 12) hours = 0;
+              arrivalTime = `${dateStr}T${hours.toString().padStart(2, "0")}:${timeMatch[2]}:00`;
+            }
+          }
+
+          return res.json({
+            found: true,
+            flight: {
+              airline: airlineCode || "",
+              airlineIata: airlineCode || "",
+              flightNumber: cleaned,
+              departureAirport: dep.city,
+              departureIata: dep.iata,
+              departureTime,
+              departureTerminal: "",
+              departureGate: "",
+              arrivalAirport: arr.city,
+              arrivalIata: arr.iata,
+              arrivalTime,
+              arrivalTerminal: "",
+              arrivalGate: "",
+              status: f.STATUS || "",
+              aircraft: f.AIRCRAFT || "",
+            },
+          });
         }
-        const f = flights[0];
-        return res.json({
-          found: true,
-          flight: {
-            airline: f.airline?.name || "",
-            airlineIata: f.airline?.iata || "",
-            flightNumber: f.flight?.iata || flightIata,
-            departureAirport: f.departure?.airport || "",
-            departureIata: f.departure?.iata || "",
-            departureTime: f.departure?.scheduled || f.departure?.estimated || "",
-            departureTerminal: f.departure?.terminal || "",
-            departureGate: f.departure?.gate || "",
-            arrivalAirport: f.arrival?.airport || "",
-            arrivalIata: f.arrival?.iata || "",
-            arrivalTime: f.arrival?.scheduled || f.arrival?.estimated || "",
-            arrivalTerminal: f.arrival?.terminal || "",
-            arrivalGate: f.arrival?.gate || "",
-            status: f.flight_status || "",
-            aircraft: f.aircraft?.registration || "",
-          },
-        });
+      } catch (e) {
+        console.warn("[FlightSearch] /flight endpoint failed, trying fallback:", e);
       }
 
-      const flights = data.data || (Array.isArray(data) ? data : []);
-      if (!flights.length) {
-        return res.json({ found: false, flight: null });
+      // Strategy 2: Fallback to advanced-real-time-flights (live tracking data)
+      try {
+        const rtParams = new URLSearchParams({ access_key: apiKey, flight_iata: cleaned });
+        const rtUrl = `https://app.goflightlabs.com/advanced-real-time-flights?${rtParams}`;
+        const rtRes = await fetch(rtUrl);
+        const rtData = await rtRes.json();
+
+        const allFlights = rtData?.data || (Array.isArray(rtData) ? rtData : []);
+        const matched = allFlights.filter((f: any) =>
+          f.flight_iata?.toUpperCase() === cleaned
+        );
+
+        if (matched.length > 0) {
+          const f = matched[0];
+          return res.json({
+            found: true,
+            flight: {
+              airline: f.airline_iata || airlineCode || "",
+              airlineIata: f.airline_iata || airlineCode || "",
+              flightNumber: f.flight_iata || cleaned,
+              departureAirport: "",
+              departureIata: f.dep_iata || "",
+              departureTime: "",
+              departureTerminal: "",
+              departureGate: "",
+              arrivalAirport: "",
+              arrivalIata: f.arr_iata || "",
+              arrivalTime: "",
+              arrivalTerminal: "",
+              arrivalGate: "",
+              status: f.status || "",
+              aircraft: f.aircraft_icao || "",
+            },
+          });
+        }
+      } catch (e) {
+        console.warn("[FlightSearch] advanced-real-time fallback also failed:", e);
       }
-      const f = flights[0];
-      res.json({
-        found: true,
-        flight: {
-          airline: f.airline?.name || "",
-          airlineIata: f.airline?.iata || "",
-          flightNumber: f.flight?.iata || flightIata,
-          departureAirport: f.departure?.airport || "",
-          departureIata: f.departure?.iata || "",
-          departureTime: f.departure?.scheduled || f.departure?.estimated || "",
-          departureTerminal: f.departure?.terminal || "",
-          departureGate: f.departure?.gate || "",
-          arrivalAirport: f.arrival?.airport || "",
-          arrivalIata: f.arrival?.iata || "",
-          arrivalTime: f.arrival?.scheduled || f.arrival?.estimated || "",
-          arrivalTerminal: f.arrival?.terminal || "",
-          arrivalGate: f.arrival?.gate || "",
-          status: f.flight_status || "",
-          aircraft: f.aircraft?.registration || "",
-        },
-      });
+
+      res.json({ found: false, flight: null });
     } catch (error) {
       console.error("[FlightSearch] Error:", error);
       res.status(500).json({ message: "Flight search failed" });
