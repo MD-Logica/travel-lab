@@ -107,7 +107,7 @@ export const tripVersions = pgTable("trip_versions", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const segmentTypeEnum = pgEnum("segment_type", ["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]);
+export const segmentTypeEnum = pgEnum("segment_type", ["flight", "charter", "charter_flight", "hotel", "transport", "restaurant", "activity", "note"]);
 
 export const tripSegments = pgTable("trip_segments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

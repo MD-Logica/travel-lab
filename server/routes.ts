@@ -670,7 +670,7 @@ export async function registerRoutes(
       const segmentSchema = z.object({
         dayNumber: z.number().int().min(1),
         sortOrder: z.number().int().optional().default(0),
-        type: z.enum(["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]),
+        type: z.enum(["flight", "charter", "charter_flight", "hotel", "transport", "restaurant", "activity", "note"]),
         title: z.string().min(1, "Title is required"),
         subtitle: z.string().optional().nullable(),
         startTime: z.string().optional().nullable(),
@@ -705,7 +705,7 @@ export async function registerRoutes(
       const updateSchema = z.object({
         dayNumber: z.number().int().min(1).optional(),
         sortOrder: z.number().int().optional(),
-        type: z.enum(["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]).optional(),
+        type: z.enum(["flight", "charter", "charter_flight", "hotel", "transport", "restaurant", "activity", "note"]).optional(),
         title: z.string().min(1).optional(),
         subtitle: z.string().optional().nullable(),
         startTime: z.string().optional().nullable(),
@@ -1073,7 +1073,7 @@ export async function registerRoutes(
   app.post("/api/segment-templates", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const schema = z.object({
-        type: z.enum(["flight", "charter", "hotel", "transport", "restaurant", "activity", "note"]),
+        type: z.enum(["flight", "charter", "charter_flight", "hotel", "transport", "restaurant", "activity", "note"]),
         label: z.string().min(1),
         data: z.record(z.any()),
       });
