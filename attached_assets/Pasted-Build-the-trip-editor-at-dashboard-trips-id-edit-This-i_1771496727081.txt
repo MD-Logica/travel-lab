@@ -1,0 +1,49 @@
+Build the trip editor at /dashboard/trips/[id]/edit.
+
+This is the centrepiece of Travel Lab. It must be a joy to use.
+
+─── TOP BAR (sticky) ────────────────────────────────────────────────────────
+
+Slim, elegant sticky header:
+  Left: ← back, then editable trip title (click to edit inline — feels like
+    a Notion page title)
+  Centre: client name + date range in refined small text
+  Right: "Share" button · "Export PDF" button (subtle, refined)
+
+─── VERSION TABS ────────────────────────────────────────────────────────────
+
+Below top bar: horizontal scrollable version selector.
+  Each version as a pill/tab. Active: filled or underlined in premium color.
+  Small "+" to add version (duplicates current, opens rename dialog).
+  "Primary" badge on the main version.
+  Switching versions updates the timeline below without page reload.
+
+─── DAY TIMELINE (main content) ─────────────────────────────────────────────
+
+Centred, max-width ~860px, generous side padding.
+
+For each day:
+  DAY HEADER:
+    - "Day 1" in large serif (left aligned)
+    - Full date below: "Monday, 2 June 2025" in warm small text
+    - Fine horizontal rule extending right
+
+  SEGMENTS (below day header):
+    Each segment as a refined card:
+      - Fine left border in type-specific color (very subtle)
+      - Type icon (fine line, small, left)
+      - Title (medium weight)
+      - Subtitle or key detail (gray)
+      - Time range (right-aligned, small)
+      - Confirmation # (monospace, very subtle)
+      - Cost (if show_pricing true)
+      - Edit icon · Delete icon (appear on hover only — reduces clutter)
+    Subtle hover state on each card.
+    Drag handle appears on hover for reordering.
+
+  ADD SEGMENT:
+    After last segment of each day, a very refined "+ Add" trigger.
+    Opens an elegant popover/menu with segment type options:
+      ✈ Flight · ✈ Charter · 🏨 Hotel · 🚗 Transport ·
+      🍽 Restaurant · ● Activity · ✎ Note
+    Beautiful icons, clean layout. Not a dropdown — more like a mini palette.

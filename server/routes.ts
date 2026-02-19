@@ -273,6 +273,16 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/recent-trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const limit = Math.min(parseInt(req.query.limit as string) || 5, 10);
+      const recentTrips = await storage.getRecentTripsWithClient(req._orgId, limit);
+      res.json(recentTrips);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch recent trips" });
+    }
+  });
+
   app.get("/api/trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const trips = await storage.getTripsByOrg(req._orgId);

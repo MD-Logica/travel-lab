@@ -27,7 +27,9 @@ export interface IStorage {
   countTripsByOrg(orgId: string): Promise<number>;
   countActiveTripsByOrg(orgId: string): Promise<number>;
 
-  getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; totalClients: number }>;
+  countCompletedTripsByOrg(orgId: string): Promise<number>;
+  getRecentTripsWithClient(orgId: string, limit?: number): Promise<(Trip & { clientName: string | null })[]>;
+  getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; completedTrips: number; totalClients: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -132,13 +134,36 @@ export class DatabaseStorage implements IStorage {
     return result.count;
   }
 
-  async getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; totalClients: number }> {
-    const [totalTrips, activeTrips, totalClients] = await Promise.all([
+  async countCompletedTripsByOrg(orgId: string): Promise<number> {
+    const [result] = await db
+      .select({ count: count() })
+      .from(trips)
+      .where(and(eq(trips.orgId, orgId), eq(trips.status, "completed")));
+    return result.count;
+  }
+
+  async getRecentTripsWithClient(orgId: string, limit = 5): Promise<(Trip & { clientName: string | null })[]> {
+    const rows = await db
+      .select({
+        trip: trips,
+        clientName: profiles.fullName,
+      })
+      .from(trips)
+      .leftJoin(profiles, eq(trips.clientId, profiles.id))
+      .where(eq(trips.orgId, orgId))
+      .orderBy(sql`${trips.createdAt} DESC`)
+      .limit(limit);
+    return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));
+  }
+
+  async getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; completedTrips: number; totalClients: number }> {
+    const [totalTrips, activeTrips, completedTrips, totalClients] = await Promise.all([
       this.countTripsByOrg(orgId),
       this.countActiveTripsByOrg(orgId),
+      this.countCompletedTripsByOrg(orgId),
       this.countClientsByOrg(orgId),
     ]);
-    return { totalTrips, activeTrips, totalClients };
+    return { totalTrips, activeTrips, completedTrips, totalClients };
   }
 }
 
