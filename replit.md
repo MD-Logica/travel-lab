@@ -33,12 +33,20 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 5. Redirect to /dashboard
 
 ## Project Structure
-- client/src/pages/ - Landing, Onboarding, Dashboard, Trips, TripDetail, Clients, Settings
-- client/src/components/ - AppSidebar
+- client/src/pages/ - Landing, Pricing, Onboarding, Dashboard, Trips, TripDetail, Clients, Settings
+- client/src/pages/auth/ - Login, Signup, ForgotPassword, SetPassword
+- client/src/components/ - AppSidebar, MarketingNav, AuthLayout, TrialBanner, UpgradePrompt
 - server/routes.ts - All API routes with auth + org middleware
 - server/storage.ts - DatabaseStorage class with org-scoped queries
 - shared/schema.ts - Drizzle schema + types
 - shared/models/auth.ts - Auth tables (users, sessions)
 
+## Routing
+- Public pages (always accessible): /, /pricing
+- Auth pages (redirect to /dashboard if logged in): /login, /signup, /forgot-password, /set-password
+- Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /clients, /settings
+
 ## Recent Changes
+- 2026-02-19: Built public marketing pages: redesigned landing page with full-bleed hero, social proof, 4 feature sections; new /pricing page with plan cards, comparison table, FAQ; marketing navbar; trial banner; upgrade prompt modal
+- 2026-02-19: Custom email/password auth with bcrypt, 4 auth pages, two-panel layout
 - 2026-02-19: Initial MVP build with multi-tenant architecture, Replit Auth, luxury design system

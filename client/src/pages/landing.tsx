@@ -1,317 +1,301 @@
 import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Compass, Globe, Shield, ArrowRight, MapPin, Star } from "lucide-react";
+import { MarketingNav } from "@/components/marketing-nav";
+import { ArrowRight, Check } from "lucide-react";
 
 const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
+  hidden: { opacity: 0, y: 24 },
   visible: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { delay: i * 0.12, duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] },
+    transition: { delay: i * 0.12, duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] },
   }),
 };
 
-const heroImages = [
-  "/images/hero-santorini.png",
-  "/images/hero-maldives.png",
-  "/images/hero-kyoto.png",
-];
+const fadeIn = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.8, ease: "easeOut" } },
+};
 
 const features = [
   {
-    icon: Compass,
-    title: "Itinerary Design",
-    description: "Craft bespoke travel experiences with an elegant planning interface built for discerning advisors.",
+    label: "Itinerary Builder",
+    title: "Build itineraries your clients will treasure.",
+    description:
+      "Design stunning day-by-day timelines with rich segment types, cover images, and personalized notes. Every itinerary becomes a keepsake your clients will return to long after they've unpacked.",
+    image: "/images/feature-itinerary.png",
   },
   {
-    icon: Globe,
-    title: "Client Management",
-    description: "Organize your client portfolio with profiles, preferences, and trip histories in one refined workspace.",
+    label: "Client Portal",
+    title: "A private travel portal, just for them.",
+    description:
+      "Give each client a beautiful, read-only view of their upcoming journey. They'll see every detail — flights, hotels, experiences — presented with the same care you put into planning it.",
+    image: "/images/feature-portal.png",
   },
   {
-    icon: Shield,
-    title: "Agency Platform",
-    description: "Multi-tenant architecture keeps every agency's data secure, private, and beautifully organized.",
+    label: "Multi-Advisor Teams",
+    title: "Built for agencies, not just solo advisors.",
+    description:
+      "Manage your team with flexible roles, shared client rosters, and org-wide visibility. Everyone stays aligned while maintaining their own client relationships.",
+    image: "/images/feature-team.png",
+  },
+  {
+    label: "Export & Share",
+    title: "PDF itineraries. Calendar exports. One tap.",
+    description:
+      "Generate polished PDF documents your clients can print or save. Push trips straight to their calendar so every reservation and transfer is right where they need it.",
+    image: "/images/feature-export.png",
   },
 ];
 
-const destinations = [
-  { name: "Santorini", country: "Greece", image: "/images/hero-santorini.png" },
-  { name: "Maldives", country: "Indian Ocean", image: "/images/hero-maldives.png" },
-  { name: "Kyoto", country: "Japan", image: "/images/hero-kyoto.png" },
+const logoPlaceholders = [
+  "Wanderlust Co.",
+  "Magellan Travel",
+  "Azure Voyages",
+  "Meridian Luxe",
+  "Pinnacle Journeys",
+  "Atlas & Co.",
 ];
 
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-background">
-      <nav className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-background/80 border-b border-border/50">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <MapPin className="w-5 h-5 text-primary" strokeWidth={1.5} />
-            <span className="font-serif text-xl tracking-tight" data-testid="text-logo">Travel Lab</span>
-          </div>
-          <div className="hidden md:flex items-center gap-8">
-            <a href="#features" className="text-sm text-muted-foreground transition-colors duration-200" data-testid="link-features">Features</a>
-            <a href="#destinations" className="text-sm text-muted-foreground transition-colors duration-200" data-testid="link-destinations">Destinations</a>
-            <a href="#pricing" className="text-sm text-muted-foreground transition-colors duration-200" data-testid="link-pricing">Pricing</a>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" asChild>
-              <Link href="/login" data-testid="button-login">Sign In</Link>
-            </Button>
-            <Button asChild>
-              <Link href="/signup" data-testid="button-get-started">
-                Get Started
-                <ArrowRight className="w-4 h-4 ml-1" />
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </nav>
+      <MarketingNav />
 
-      <section className="relative pt-32 pb-20 md:pt-44 md:pb-32 overflow-hidden">
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-primary/5 blur-3xl" />
-          <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-primary/3 blur-3xl" />
+      <section className="relative min-h-[90vh] flex items-center overflow-hidden" data-testid="section-hero">
+        <div className="absolute inset-0">
+          <img
+            src="/images/hero-editorial.png"
+            alt="Luxury coastal destination"
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/50 to-black/30" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/20" />
         </div>
 
-        <div className="max-w-7xl mx-auto px-6 relative">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-            <div>
-              <motion.div
-                custom={0}
-                initial="hidden"
-                animate="visible"
-                variants={fadeUp}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-border/60 bg-card/50 text-xs text-muted-foreground mb-6"
-              >
-                <Star className="w-3 h-3 text-primary" strokeWidth={1.5} />
-                <span>Built for luxury travel agencies</span>
-              </motion.div>
+        <div className="relative max-w-7xl mx-auto px-6 py-32 md:py-40 w-full">
+          <div className="max-w-2xl">
+            <motion.p
+              custom={0}
+              initial="hidden"
+              animate="visible"
+              variants={fadeUp}
+              className="text-xs uppercase tracking-[0.3em] text-white/60 mb-6"
+            >
+              For luxury travel advisors
+            </motion.p>
 
-              <motion.h1
-                custom={1}
-                initial="hidden"
-                animate="visible"
-                variants={fadeUp}
-                className="font-serif text-5xl md:text-6xl lg:text-7xl leading-[1.08] tracking-tight mb-6"
-              >
-                Where travel
-                <br />
-                becomes <span className="italic text-primary/90">art</span>
-              </motion.h1>
+            <motion.h1
+              custom={1}
+              initial="hidden"
+              animate="visible"
+              variants={fadeUp}
+              className="font-serif text-4xl md:text-5xl lg:text-6xl xl:text-7xl leading-[1.1] tracking-tight text-white mb-6"
+              data-testid="text-hero-headline"
+            >
+              The itinerary platform your clients will never forget.
+            </motion.h1>
 
-              <motion.p
-                custom={2}
-                initial="hidden"
-                animate="visible"
-                variants={fadeUp}
-                className="text-lg text-muted-foreground leading-relaxed max-w-md mb-8"
-              >
-                The all-in-one platform for travel advisors who craft extraordinary journeys. Manage clients, design itineraries, and grow your agency.
-              </motion.p>
-
-              <motion.div
-                custom={3}
-                initial="hidden"
-                animate="visible"
-                variants={fadeUp}
-                className="flex flex-wrap items-center gap-3"
-              >
-                <Button size="lg" asChild>
-                  <Link href="/signup" data-testid="button-hero-cta">
-                    Start Your Free Trial
-                    <ArrowRight className="w-4 h-4 ml-1" />
-                  </Link>
-                </Button>
-                <Button variant="outline" size="lg" asChild>
-                  <a href="#features" data-testid="button-learn-more">Learn More</a>
-                </Button>
-              </motion.div>
-
-              <motion.div
-                custom={4}
-                initial="hidden"
-                animate="visible"
-                variants={fadeUp}
-                className="flex items-center gap-6 mt-8 text-xs text-muted-foreground"
-              >
-                <span>14-day free trial</span>
-                <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
-                <span>No credit card required</span>
-              </motion.div>
-            </div>
+            <motion.p
+              custom={2}
+              initial="hidden"
+              animate="visible"
+              variants={fadeUp}
+              className="text-lg md:text-xl text-white/70 leading-relaxed max-w-lg mb-10"
+              data-testid="text-hero-subheading"
+            >
+              Design extraordinary travel experiences, manage your clients, and
+              grow your agency — all in one refined workspace.
+            </motion.p>
 
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.3, duration: 0.7, ease: [0.25, 0.46, 0.45, 0.94] }}
-              className="relative hidden lg:block"
+              custom={3}
+              initial="hidden"
+              animate="visible"
+              variants={fadeUp}
+              className="flex flex-wrap items-center gap-4"
             >
-              <div className="relative aspect-[4/3] rounded-md overflow-hidden ring-1 ring-black/5 dark:ring-white/5">
-                <img
-                  src={heroImages[0]}
-                  alt="Luxury travel destination"
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
-                <div className="absolute bottom-6 left-6 text-white">
-                  <p className="text-xs uppercase tracking-widest opacity-70 mb-1">Featured Destination</p>
-                  <p className="font-serif text-2xl">Santorini, Greece</p>
-                </div>
-              </div>
+              <Button size="lg" asChild>
+                <Link href="/signup" data-testid="button-hero-cta">
+                  Start free trial
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Link>
+              </Button>
+              <Button
+                variant="outline"
+                size="lg"
+                className="bg-white/10 backdrop-blur-sm border-white/20 text-white"
+                asChild
+              >
+                <a href="#features" data-testid="button-hero-secondary">
+                  See a sample itinerary
+                </a>
+              </Button>
+            </motion.div>
+
+            <motion.div
+              custom={4}
+              initial="hidden"
+              animate="visible"
+              variants={fadeUp}
+              className="flex items-center gap-6 mt-8 text-sm text-white/50"
+            >
+              <span className="flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5" />
+                14-day free trial
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5" />
+                No credit card required
+              </span>
             </motion.div>
           </div>
         </div>
       </section>
 
-      <section id="features" className="py-20 md:py-28">
+      <section className="py-10 border-b border-border/40" data-testid="section-social-proof">
+        <div className="max-w-7xl mx-auto px-6">
+          <motion.div
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, margin: "-40px" }}
+            variants={fadeIn}
+            className="text-center"
+          >
+            <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-8">
+              Trusted by luxury travel advisors in 12 countries
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-8 md:gap-12">
+              {logoPlaceholders.map((name) => (
+                <span
+                  key={name}
+                  className="text-sm font-serif text-muted-foreground/50 tracking-wide"
+                  data-testid={`text-logo-${name.toLowerCase().replace(/[^a-z]/g, "-")}`}
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      <section id="features" className="py-20 md:py-28" data-testid="section-features">
         <div className="max-w-7xl mx-auto px-6">
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true, margin: "-80px" }}
             transition={{ duration: 0.5 }}
-            className="text-center mb-16"
+            className="text-center mb-20"
           >
             <p className="text-xs uppercase tracking-[0.2em] text-primary mb-3">Platform</p>
-            <h2 className="font-serif text-3xl md:text-4xl tracking-tight mb-4">Everything your agency needs</h2>
-            <p className="text-muted-foreground max-w-lg mx-auto">
+            <h2 className="font-serif text-3xl md:text-4xl lg:text-5xl tracking-tight mb-4">
+              Everything your agency needs
+            </h2>
+            <p className="text-muted-foreground max-w-lg mx-auto text-lg">
               A refined suite of tools designed to elevate your travel advisory practice.
             </p>
           </motion.div>
 
-          <div className="grid md:grid-cols-3 gap-6">
-            {features.map((feature, i) => (
-              <motion.div
-                key={feature.title}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ delay: i * 0.1, duration: 0.5 }}
-                className="group p-6 rounded-md border border-border/50 bg-card/50 hover-elevate"
-                data-testid={`card-feature-${i}`}
-              >
-                <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center mb-4">
-                  <feature.icon className="w-5 h-5 text-primary" strokeWidth={1.5} />
-                </div>
-                <h3 className="font-serif text-lg mb-2">{feature.title}</h3>
-                <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="destinations" className="py-20 md:py-28 bg-card/30">
-        <div className="max-w-7xl mx-auto px-6">
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
-            transition={{ duration: 0.5 }}
-            className="text-center mb-16"
-          >
-            <p className="text-xs uppercase tracking-[0.2em] text-primary mb-3">Inspiration</p>
-            <h2 className="font-serif text-3xl md:text-4xl tracking-tight mb-4">Curated destinations</h2>
-            <p className="text-muted-foreground max-w-lg mx-auto">
-              From Mediterranean sunsets to Asian serenity, plan trips to the world's most extraordinary places.
-            </p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-4">
-            {destinations.map((dest, i) => (
-              <motion.div
-                key={dest.name}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ delay: i * 0.1, duration: 0.5 }}
-                className="group relative aspect-[3/4] rounded-md overflow-hidden"
-                data-testid={`card-destination-${i}`}
-              >
-                <img
-                  src={dest.image}
-                  alt={dest.name}
-                  className="w-full h-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/10 to-transparent" />
-                <div className="absolute bottom-6 left-6 text-white">
-                  <p className="text-xs uppercase tracking-widest opacity-70 mb-1">{dest.country}</p>
-                  <p className="font-serif text-xl">{dest.name}</p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="pricing" className="py-20 md:py-28">
-        <div className="max-w-7xl mx-auto px-6">
-          <motion.div
-            initial={{ opacity: 0, y: 16 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, margin: "-80px" }}
-            transition={{ duration: 0.5 }}
-            className="text-center mb-16"
-          >
-            <p className="text-xs uppercase tracking-[0.2em] text-primary mb-3">Pricing</p>
-            <h2 className="font-serif text-3xl md:text-4xl tracking-tight mb-4">Simple, transparent plans</h2>
-            <p className="text-muted-foreground max-w-lg mx-auto">
-              Start free and scale as your agency grows.
-            </p>
-          </motion.div>
-
-          <div className="grid md:grid-cols-3 gap-6 max-w-4xl mx-auto">
-            {[
-              { name: "Trial", price: "Free", period: "14 days", advisors: "3 advisors", clients: "50 clients", trips: "20 trips" },
-              { name: "Pro", price: "$49", period: "/month", advisors: "10 advisors", clients: "500 clients", trips: "Unlimited trips", featured: true },
-              { name: "Enterprise", price: "Custom", period: "", advisors: "Unlimited", clients: "Unlimited", trips: "Unlimited", enterprise: true },
-            ].map((plan, i) => (
-              <motion.div
-                key={plan.name}
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true, margin: "-60px" }}
-                transition={{ delay: i * 0.1, duration: 0.5 }}
-                className={`p-6 rounded-md border ${plan.featured ? 'border-primary/30 bg-primary/5' : 'border-border/50 bg-card/50'}`}
-                data-testid={`card-pricing-${plan.name.toLowerCase()}`}
-              >
-                <p className="text-xs uppercase tracking-widest text-muted-foreground mb-2">{plan.name}</p>
-                <div className="flex items-baseline gap-1 mb-4">
-                  <span className="font-serif text-3xl">{plan.price}</span>
-                  {plan.period && <span className="text-sm text-muted-foreground">{plan.period}</span>}
-                </div>
-                <div className="space-y-2 mb-6">
-                  {[plan.advisors, plan.clients, plan.trips].map((feature, idx) => (
-                    <p key={idx} className="text-sm text-muted-foreground">{feature}</p>
-                  ))}
-                </div>
-                <Button
-                  variant={plan.featured ? "default" : "outline"}
-                  className="w-full"
-                  asChild
+          <div className="space-y-24 md:space-y-32">
+            {features.map((feature, i) => {
+              const isEven = i % 2 === 0;
+              return (
+                <motion.div
+                  key={feature.label}
+                  initial={{ opacity: 0, y: 32 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: "-80px" }}
+                  transition={{ duration: 0.6 }}
+                  className={`grid md:grid-cols-2 gap-10 md:gap-16 items-center ${
+                    isEven ? "" : "md:[direction:rtl]"
+                  }`}
+                  data-testid={`feature-section-${i}`}
                 >
-                  <Link href="/signup" data-testid={`button-pricing-${plan.name.toLowerCase()}`}>
-                    {plan.enterprise ? "Contact Us" : "Get Started"}
-                  </Link>
-                </Button>
-              </motion.div>
-            ))}
+                  <div className={isEven ? "" : "md:[direction:ltr]"}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-primary mb-3">
+                      {feature.label}
+                    </p>
+                    <h3 className="font-serif text-2xl md:text-3xl lg:text-4xl tracking-tight mb-4 leading-tight">
+                      {feature.title}
+                    </h3>
+                    <p className="text-muted-foreground leading-relaxed text-base md:text-lg">
+                      {feature.description}
+                    </p>
+                  </div>
+                  <div className={isEven ? "" : "md:[direction:ltr]"}>
+                    <div className="relative rounded-md overflow-hidden ring-1 ring-border/30">
+                      <img
+                        src={feature.image}
+                        alt={feature.label}
+                        className="w-full h-auto object-cover"
+                        loading="lazy"
+                      />
+                    </div>
+                  </div>
+                </motion.div>
+              );
+            })}
           </div>
         </div>
       </section>
 
-      <footer className="border-t border-border/50 py-8">
-        <div className="max-w-7xl mx-auto px-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-primary" strokeWidth={1.5} />
-            <span className="font-serif text-sm">Travel Lab</span>
+      <section className="py-20 md:py-28 bg-card/40 border-t border-border/30" data-testid="section-cta">
+        <div className="max-w-3xl mx-auto px-6 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-60px" }}
+            transition={{ duration: 0.6 }}
+          >
+            <h2 className="font-serif text-3xl md:text-4xl lg:text-5xl tracking-tight mb-4">
+              Ready to elevate your practice?
+            </h2>
+            <p className="text-muted-foreground text-lg mb-8 max-w-md mx-auto">
+              Join hundreds of luxury travel advisors already using Travel Lab to delight their clients.
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-4">
+              <Button size="lg" asChild>
+                <Link href="/signup" data-testid="button-cta-trial">
+                  Start your free trial
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </Link>
+              </Button>
+              <Button variant="outline" size="lg" asChild>
+                <Link href="/pricing" data-testid="button-cta-pricing">
+                  View pricing
+                </Link>
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      </section>
+
+      <footer className="border-t border-border/40 py-10" data-testid="footer">
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="flex flex-wrap items-center justify-between gap-6">
+            <span className="font-serif text-sm tracking-wide uppercase text-muted-foreground">
+              Travel Lab
+            </span>
+            <div className="flex flex-wrap items-center gap-6">
+              <Link href="/pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-pricing">
+                Pricing
+              </Link>
+              <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-login">
+                Log in
+              </Link>
+              <Link href="/signup" className="text-sm text-muted-foreground hover:text-foreground transition-colors" data-testid="link-footer-signup">
+                Sign up
+              </Link>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            &copy; {new Date().getFullYear()} Travel Lab. All rights reserved.
-          </p>
+          <div className="mt-6 pt-6 border-t border-border/30">
+            <p className="text-xs text-muted-foreground/60">
+              &copy; {new Date().getFullYear()} Travel Lab. All rights reserved.
+            </p>
+          </div>
         </div>
       </footer>
     </div>

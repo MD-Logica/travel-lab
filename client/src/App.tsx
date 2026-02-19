@@ -5,11 +5,13 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { TrialBanner } from "@/components/trial-banner";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
+import PricingPage from "@/pages/pricing";
 import OnboardingPage from "@/pages/onboarding";
 import DashboardPage from "@/pages/dashboard";
 import TripsPage from "@/pages/trips";
@@ -23,6 +25,7 @@ import SetPasswordPage from "@/pages/auth/set-password";
 import type { Profile } from "@shared/schema";
 
 const AUTH_ROUTES = ["/login", "/signup", "/forgot-password", "/set-password"];
+const ALWAYS_PUBLIC_ROUTES = ["/pricing"];
 
 function AuthenticatedLayout() {
   const style = {
@@ -35,6 +38,7 @@ function AuthenticatedLayout() {
       <div className="flex h-screen w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
+          <TrialBanner />
           <header className="flex items-center gap-3 p-3 border-b border-border/50 sticky top-0 z-50 bg-background/80 backdrop-blur-xl">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
           </header>
@@ -81,13 +85,27 @@ function AppRouter() {
     );
   }
 
+  if (ALWAYS_PUBLIC_ROUTES.some(r => location.startsWith(r))) {
+    return (
+      <Switch>
+        <Route path="/pricing" component={PricingPage} />
+        <Route component={NotFound} />
+      </Switch>
+    );
+  }
+
   if (AUTH_ROUTES.some(r => location.startsWith(r))) {
+    if (user) {
+      navigate("/dashboard", { replace: true });
+      return null;
+    }
     return (
       <Switch>
         <Route path="/login" component={LoginPage} />
         <Route path="/signup" component={SignupPage} />
         <Route path="/forgot-password" component={ForgotPasswordPage} />
         <Route path="/set-password" component={SetPasswordPage} />
+        <Route component={NotFound} />
       </Switch>
     );
   }
