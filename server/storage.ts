@@ -310,6 +310,8 @@ export class DatabaseStorage implements IStorage {
         cost: seg.cost,
         currency: seg.currency,
         notes: seg.notes,
+        photos: seg.photos,
+        metadata: seg.metadata,
       });
     }
 

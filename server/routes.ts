@@ -513,6 +513,8 @@ export async function registerRoutes(
         cost: z.number().optional().nullable(),
         currency: z.string().optional().default("USD"),
         notes: z.string().optional().nullable(),
+        photos: z.array(z.string()).optional().nullable(),
+        metadata: z.record(z.any()).optional().nullable(),
       });
       const parsed = segmentSchema.parse(req.body);
       const segment = await storage.createTripSegment({
@@ -545,6 +547,8 @@ export async function registerRoutes(
         cost: z.number().optional().nullable(),
         currency: z.string().optional(),
         notes: z.string().optional().nullable(),
+        photos: z.array(z.string()).optional().nullable(),
+        metadata: z.record(z.any()).optional().nullable(),
       });
       const parsed = updateSchema.parse(req.body);
       const segment = await storage.updateTripSegment(req.params.segmentId, req._orgId, parsed);
