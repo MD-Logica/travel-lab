@@ -48,6 +48,8 @@ export const clients = pgTable("clients", {
   avatarUrl: text("avatar_url"),
   invited: text("invited").default("no"),
   invitedAt: timestamp("invited_at"),
+  preferences: jsonb("preferences"),
+  preferencesUpdatedAt: timestamp("preferences_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
