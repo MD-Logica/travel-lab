@@ -1376,6 +1376,70 @@ function DocumentsTab({ clientId, trips: clientTrips }: { clientId: string; trip
   );
 }
 
+function InlineNotes({ clientId, initialNotes }: { clientId: string; initialNotes: string }) {
+  const { toast } = useToast();
+  const [notes, setNotes] = useState(initialNotes);
+  const [isFocused, setIsFocused] = useState(false);
+  const lastSavedRef = useRef(initialNotes);
+
+  useEffect(() => {
+    setNotes(initialNotes);
+    lastSavedRef.current = initialNotes;
+  }, [initialNotes]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (value: string) => {
+      const res = await apiRequest("PATCH", `/api/clients/${clientId}`, { notes: value || null });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId] });
+    },
+    onError: () => {
+      toast({ title: "Failed to save notes", variant: "destructive" });
+    },
+  });
+
+  const handleBlur = () => {
+    setIsFocused(false);
+    if (notes !== lastSavedRef.current) {
+      lastSavedRef.current = notes;
+      saveMutation.mutate(notes);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-2" data-testid="text-notes-label">
+        Advisor notes (internal only)
+      </h2>
+      <Textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={handleBlur}
+        placeholder="Relationship context, communication preferences, anything that doesn't belong in structured fields..."
+        className={`text-sm min-h-[80px] resize-none transition-colors ${
+          isFocused ? "" : "border-transparent bg-transparent"
+        }`}
+        data-testid="textarea-advisor-notes"
+      />
+      {saveMutation.isPending && (
+        <p className="text-[10px] text-muted-foreground/40 mt-1">Saving...</p>
+      )}
+    </div>
+  );
+}
+
+function SnapshotStat({ label, value, testId }: { label: string; value: string | number; testId: string }) {
+  return (
+    <div className="text-center">
+      <p className="font-serif text-xl tracking-tight" data-testid={testId}>{value}</p>
+      <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/50 font-medium mt-0.5">{label}</p>
+    </div>
+  );
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -1388,10 +1452,6 @@ export default function ClientDetailPage() {
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editPhone, setEditPhone] = useState("");
-  const [editNotes, setEditNotes] = useState("");
-  const [editTags, setEditTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
-  const tagInputRef = useRef<HTMLInputElement>(null);
 
   const { data: client, isLoading } = useQuery<Client>({
     queryKey: ["/api/clients", id],
@@ -1406,8 +1466,6 @@ export default function ClientDetailPage() {
       setEditName(client.fullName);
       setEditEmail(client.email || "");
       setEditPhone(client.phone || "");
-      setEditNotes(client.notes || "");
-      setEditTags(client.tags || []);
     }
   }, [client, isEditing]);
 
@@ -1447,14 +1505,11 @@ export default function ClientDetailPage() {
     setEditName(client.fullName);
     setEditEmail(client.email || "");
     setEditPhone(client.phone || "");
-    setEditNotes(client.notes || "");
-    setEditTags(client.tags || []);
     setIsEditing(true);
   }
 
   function cancelEditing() {
     setIsEditing(false);
-    setTagInput("");
   }
 
   function saveEdits() {
@@ -1463,27 +1518,7 @@ export default function ClientDetailPage() {
       fullName: editName.trim(),
       email: editEmail.trim() || null,
       phone: editPhone.trim() || null,
-      notes: editNotes.trim() || null,
-      tags: editTags.length > 0 ? editTags : null,
     });
-  }
-
-  function handleTagKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if ((e.key === "Enter" || e.key === ",") && tagInput.trim()) {
-      e.preventDefault();
-      const newTag = tagInput.trim().replace(/,$/g, "");
-      if (newTag && !editTags.includes(newTag) && editTags.length < 5) {
-        setEditTags([...editTags, newTag]);
-      }
-      setTagInput("");
-    }
-    if (e.key === "Backspace" && !tagInput && editTags.length > 0) {
-      setEditTags(editTags.slice(0, -1));
-    }
-  }
-
-  function removeTag(tag: string) {
-    setEditTags(editTags.filter((t) => t !== tag));
   }
 
   if (isLoading) {
@@ -1498,7 +1533,7 @@ export default function ClientDetailPage() {
               <Skeleton className="h-4 w-40" />
             </div>
           </div>
-          <Skeleton className="h-24 w-full mb-8" />
+          <Skeleton className="h-10 w-full mb-8" />
           <Skeleton className="h-32 w-full" />
         </div>
       </div>
@@ -1528,6 +1563,36 @@ export default function ClientDetailPage() {
     { id: "preferences", label: "Preferences", icon: Heart },
     { id: "documents", label: "Documents", icon: FileText },
   ];
+
+  const activeTrips = clientTrips.filter(
+    (t) => t.status === "planning" || t.status === "confirmed" || t.status === "in_progress"
+  );
+  const totalTrips = clientTrips.length;
+  const activeCount = activeTrips.length;
+  const lastTripDate = clientTrips.reduce((latest: string | null, t) => {
+    const d = t.startDate || t.endDate;
+    if (!d) return latest;
+    if (!latest) return d;
+    return new Date(d).getTime() > new Date(latest).getTime() ? d : latest;
+  }, null);
+  const memberSince = client.createdAt ? format(new Date(client.createdAt), "MMM yyyy") : "—";
+
+  const imminentTrip = activeTrips.length > 0
+    ? activeTrips.reduce((closest, t) => {
+        if (!closest) return t;
+        const tDate = t.startDate ? new Date(t.startDate).getTime() : Infinity;
+        const cDate = closest.startDate ? new Date(closest.startDate).getTime() : Infinity;
+        const tDiff = Math.abs(tDate - Date.now());
+        const cDiff = Math.abs(cDate - Date.now());
+        return tDiff < cDiff ? t : closest;
+      }, null as Trip | null)
+    : null;
+
+  const sortedTrips = [...clientTrips].sort((a, b) => {
+    const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return bDate - aDate;
+  });
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -1613,11 +1678,6 @@ export default function ClientDetailPage() {
                     </>
                   )}
                 </div>
-                {client.invited === "yes" && !isEditing && (
-                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-2 inline-block" data-testid="text-invited-status">
-                    Portal invitation sent{client.invitedAt ? ` ${format(new Date(client.invitedAt), "MMM d")}` : ""}
-                  </span>
-                )}
               </div>
             </div>
 
@@ -1649,7 +1709,7 @@ export default function ClientDetailPage() {
                       {updateMutation.isPending ? "Saving..." : "Save"}
                     </Button>
                   </motion.div>
-                ) : activeTab === "overview" ? (
+                ) : (
                   <motion.div
                     key="view-actions"
                     initial={{ opacity: 0, scale: 0.95 }}
@@ -1665,18 +1725,29 @@ export default function ClientDetailPage() {
                     >
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowInviteModal(true)}
-                      disabled={!client.email}
-                      data-testid="button-invite-portal"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      Invite to Portal
-                    </Button>
+                    {client.invited === "yes" ? (
+                      <Badge
+                        variant="secondary"
+                        className="text-xs font-normal no-default-hover-elevate no-default-active-elevate"
+                        data-testid="badge-portal-active"
+                      >
+                        <Check className="w-3 h-3 text-emerald-500 mr-1" />
+                        Portal active
+                      </Badge>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowInviteModal(true)}
+                        disabled={!client.email}
+                        data-testid="button-invite-portal"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        Invite to Portal
+                      </Button>
+                    )}
                   </motion.div>
-                ) : null}
+                )}
               </AnimatePresence>
             </div>
           </div>
@@ -1688,7 +1759,7 @@ export default function ClientDetailPage() {
           transition={{ delay: 0.08, duration: 0.35 }}
           className="mb-8"
         >
-          <div className="flex items-center gap-1 border-b border-border/40">
+          <div className="flex items-center gap-1 border-b border-border/40 overflow-x-auto">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -1696,7 +1767,7 @@ export default function ClientDetailPage() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors relative ${
+                  className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap ${
                     isActive
                       ? "text-foreground"
                       : "text-muted-foreground/60 hover:text-muted-foreground"
@@ -1727,161 +1798,128 @@ export default function ClientDetailPage() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.25 }}
             >
-              <div className="mb-10">
-                <h2 className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/60 font-medium mb-3" data-testid="text-tags-label">
-                  Tags
-                </h2>
-                {isEditing ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {editTags.map((tag) => (
-                        <Badge
-                          key={tag}
-                          variant="secondary"
-                          className="text-xs font-normal gap-1"
-                        >
-                          {tag}
-                          <button
-                            onClick={() => removeTag(tag)}
-                            className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
-                            data-testid={`button-remove-tag-${tag}`}
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                    <Input
-                      ref={tagInputRef}
-                      value={tagInput}
-                      onChange={(e) => setTagInput(e.target.value)}
-                      onKeyDown={handleTagKeyDown}
-                      placeholder={editTags.length >= 5 ? "Maximum tags reached" : "Add a tag and press Enter"}
-                      disabled={editTags.length >= 5}
-                      className="text-sm"
-                      data-testid="input-edit-tags"
+              <Card className="mb-8">
+                <CardContent className="py-5 px-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-6">
+                    <SnapshotStat label="Total Trips" value={totalTrips} testId="stat-total-trips" />
+                    <SnapshotStat label="Active Trips" value={activeCount} testId="stat-active-trips" />
+                    <SnapshotStat
+                      label="Last Trip"
+                      value={lastTripDate ? format(new Date(lastTripDate), "MMM d, yy") : "—"}
+                      testId="stat-last-trip"
                     />
+                    <SnapshotStat label="Member Since" value={memberSince} testId="stat-member-since" />
                   </div>
-                ) : (
-                  <div className="flex items-center gap-1.5 flex-wrap min-h-[28px]">
-                    {client.tags && client.tags.length > 0 ? (
-                      client.tags.map((tag) => (
-                        <Badge
-                          key={tag}
-                          variant="secondary"
-                          className="text-xs font-normal no-default-hover-elevate no-default-active-elevate"
-                          data-testid={`badge-tag-${tag}`}
-                        >
-                          {tag}
-                        </Badge>
-                      ))
-                    ) : (
-                      <span className="text-sm text-muted-foreground/40 italic">No tags set</span>
-                    )}
-                  </div>
-                )}
-              </div>
+                </CardContent>
+              </Card>
 
-              <div className="mb-12">
-                <h2 className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/60 font-medium mb-3" data-testid="text-notes-label">
-                  Notes
-                </h2>
-                {isEditing ? (
-                  <Textarea
-                    value={editNotes}
-                    onChange={(e) => setEditNotes(e.target.value)}
-                    placeholder="Add notes about this client..."
-                    className="text-sm min-h-[120px] resize-none"
-                    data-testid="input-edit-notes"
-                  />
-                ) : (
-                  <div className="min-h-[40px]">
-                    {client.notes ? (
-                      <p
-                        className="text-sm text-foreground/80 leading-relaxed whitespace-pre-wrap pl-3 border-l-2 border-border/30"
-                        data-testid="text-client-notes"
-                      >
-                        {client.notes}
-                      </p>
-                    ) : (
-                      <span className="text-sm text-muted-foreground/40 italic">No notes yet</span>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between gap-4 mb-5 flex-wrap">
-                  <div className="flex items-center gap-2.5">
-                    <Plane className="w-4 h-4 text-muted-foreground/40" strokeWidth={1.5} />
-                    <h2 className="font-serif text-lg tracking-tight" data-testid="text-trips-heading">
-                      Trips
-                    </h2>
-                    <span className="text-xs text-muted-foreground/50">({clientTrips.length})</span>
-                  </div>
+              {imminentTrip && (
+                <div className="mb-8">
+                  <Link href={`/trips/${imminentTrip.id}`}>
+                    <Card
+                      className="hover-elevate cursor-pointer overflow-visible"
+                      data-testid={`card-active-trip-${imminentTrip.id}`}
+                    >
+                      <CardContent className="p-5 flex items-center gap-5 flex-wrap">
+                        {imminentTrip.coverImageUrl ? (
+                          <img
+                            src={imminentTrip.coverImageUrl}
+                            alt={imminentTrip.title}
+                            className="w-20 h-14 object-cover rounded-md shrink-0"
+                          />
+                        ) : (
+                          <div className="w-20 h-14 rounded-md bg-muted/50 flex items-center justify-center shrink-0">
+                            <Plane className="w-5 h-5 text-muted-foreground/30" strokeWidth={1.5} />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <h3 className="font-serif text-base tracking-tight">{imminentTrip.title}</h3>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] uppercase tracking-wider font-normal border-border/50 no-default-hover-elevate no-default-active-elevate"
+                            >
+                              {imminentTrip.status.replace("_", " ")}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground/60">{imminentTrip.destination}</p>
+                          {imminentTrip.startDate && (
+                            <p className="text-xs text-muted-foreground/50 mt-1 flex items-center gap-1">
+                              <Calendar className="w-3 h-3" strokeWidth={1.5} />
+                              {format(new Date(imminentTrip.startDate), "MMM d")}
+                              {imminentTrip.endDate && ` – ${format(new Date(imminentTrip.endDate), "MMM d, yyyy")}`}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground/50 shrink-0 flex items-center gap-1">
+                          Open trip <ArrowLeft className="w-3 h-3 rotate-180" strokeWidth={1.5} />
+                        </span>
+                      </CardContent>
+                    </Card>
+                  </Link>
                 </div>
+              )}
+
+              <div className="mb-10">
+                <h2 className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-4" data-testid="text-trips-heading">
+                  All Trips
+                </h2>
 
                 {tripsLoading ? (
                   <div className="space-y-3">
-                    <Skeleton className="h-16 w-full" />
-                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-14 w-full" />
+                    <Skeleton className="h-14 w-full" />
                   </div>
-                ) : clientTrips.length > 0 ? (
-                  <div className="space-y-2">
-                    {clientTrips.map((trip) => (
+                ) : sortedTrips.length > 0 ? (
+                  <div className="space-y-1.5">
+                    {sortedTrips.map((trip) => (
                       <Link key={trip.id} href={`/trips/${trip.id}`}>
-                        <Card
-                          className="hover-elevate cursor-pointer border-border/30"
-                          data-testid={`card-trip-${trip.id}`}
+                        <div
+                          className="flex items-center justify-between gap-4 px-3 py-2.5 rounded-md hover-elevate cursor-pointer flex-wrap"
+                          data-testid={`row-trip-${trip.id}`}
                         >
-                          <CardContent className="px-4 py-3.5 flex items-center justify-between gap-4 flex-wrap">
-                            <div className="min-w-0 flex-1">
-                              <h3 className="font-serif text-sm tracking-tight truncate">{trip.title}</h3>
-                              <p className="text-xs text-muted-foreground/60 mt-0.5">{trip.destination}</p>
-                            </div>
-                            <div className="flex items-center gap-3 shrink-0">
-                              {trip.startDate && trip.endDate && (
-                                <span className="text-[11px] text-muted-foreground/50 flex items-center gap-1.5">
-                                  <Calendar className="w-3 h-3" strokeWidth={1.5} />
-                                  {format(new Date(trip.startDate), "MMM d")} – {format(new Date(trip.endDate), "MMM d, yyyy")}
-                                </span>
-                              )}
-                              {trip.startDate && !trip.endDate && (
-                                <span className="text-[11px] text-muted-foreground/50 flex items-center gap-1.5">
-                                  <Calendar className="w-3 h-3" strokeWidth={1.5} />
-                                  {format(new Date(trip.startDate), "MMM d, yyyy")}
-                                </span>
-                              )}
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] uppercase tracking-wider font-normal border-border/50 no-default-hover-elevate no-default-active-elevate"
-                              >
-                                {trip.status.replace("_", " ")}
-                              </Badge>
-                            </div>
-                          </CardContent>
-                        </Card>
+                          <div className="min-w-0 flex-1">
+                            <h3 className="text-sm font-medium truncate">{trip.title}</h3>
+                            <p className="text-xs text-muted-foreground/50 mt-0.5">{trip.destination}</p>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            {trip.startDate && (
+                              <span className="text-[11px] text-muted-foreground/40">
+                                {format(new Date(trip.startDate), "MMM d")}
+                                {trip.endDate && ` – ${format(new Date(trip.endDate), "MMM d, yy")}`}
+                              </span>
+                            )}
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] uppercase tracking-wider font-normal border-border/50 no-default-hover-elevate no-default-active-elevate"
+                            >
+                              {trip.status.replace("_", " ")}
+                            </Badge>
+                          </div>
+                        </div>
                       </Link>
                     ))}
                   </div>
                 ) : (
-                  <div className="py-10 text-center">
-                    <p className="text-sm text-muted-foreground/40">No trips yet</p>
+                  <div className="py-8 text-center">
+                    <p className="text-sm text-muted-foreground/40 italic">No trips yet</p>
                   </div>
                 )}
 
                 <div className="mt-4">
-                  <Link href={`/trips?newFor=${id}`}>
+                  <Link href={`/trips/new?clientId=${id}`}>
                     <button
-                      className="text-[13px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5"
+                      className="text-[13px] text-muted-foreground/60 hover:text-foreground transition-colors inline-flex items-center gap-1.5"
                       data-testid="button-create-trip-for-client"
                     >
                       <Plus className="w-3 h-3" strokeWidth={1.5} />
-                      Create Trip for {client.fullName.split(" ")[0]}
+                      Create new trip for {client.fullName.split(" ")[0]}
                     </button>
                   </Link>
                 </div>
               </div>
+
+              <InlineNotes clientId={client.id} initialNotes={client.notes || ""} />
             </motion.div>
           )}
 
