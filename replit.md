@@ -19,6 +19,8 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - **organizations**: id, name, slug, plan (trial/pro/enterprise), plan_status, trial_ends_at, max_advisors, max_clients
 - **profiles**: id (= auth user id), org_id, role (owner/advisor/assistant/client), full_name, email, phone, avatar_url
 - **trips**: id, org_id, title, destination, description, cover_image_url, start_date, end_date, status, budget, currency, notes
+- **trip_versions**: id, trip_id, org_id, version_number, name, is_primary
+- **trip_segments**: id, version_id, trip_id, org_id, day_number, sort_order, type (flight/charter/hotel/transport/restaurant/activity/note), title, subtitle, start_time, end_time, confirmation_number, cost, currency, notes
 
 ## Plan Limits
 - Trial: 3 advisors, 50 clients, 20 trips
@@ -33,7 +35,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 5. Redirect to /dashboard
 
 ## Project Structure
-- client/src/pages/ - Landing, Pricing, Onboarding, Dashboard, Trips, TripDetail, Clients, Settings
+- client/src/pages/ - Landing, Pricing, Onboarding, Dashboard, Trips, TripDetail, TripNew, TripEdit, Clients, ClientDetail, Settings
 - client/src/pages/auth/ - Login, Signup, ForgotPassword, SetPassword
 - client/src/components/ - AppSidebar, MarketingNav, AuthLayout, TrialBanner, UpgradePrompt
 - server/routes.ts - All API routes with auth + org middleware
@@ -44,9 +46,11 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 ## Routing
 - Public pages (always accessible): /, /pricing
 - Auth pages (redirect to /dashboard if logged in): /login, /signup, /forgot-password, /set-password
-- Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /clients, /settings
+- Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
 
 ## Recent Changes
+- 2026-02-19: Trip editor (/trips/:id/edit) with version tabs, day timeline, segment CRUD (add/edit/delete dialog), version management (duplicate, set primary, delete)
+- 2026-02-19: Added trip_segments and trip_versions tables; segment/version API routes; storage CRUD methods
 - 2026-02-19: Built public marketing pages: redesigned landing page with full-bleed hero, social proof, 4 feature sections; new /pricing page with plan cards, comparison table, FAQ; marketing navbar; trial banner; upgrade prompt modal
 - 2026-02-19: Custom email/password auth with bcrypt, 4 auth pages, two-panel layout
 - 2026-02-19: Initial MVP build with multi-tenant architecture, Replit Auth, luxury design system

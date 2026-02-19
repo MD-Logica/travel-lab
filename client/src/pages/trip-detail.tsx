@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import {
-  ArrowLeft, MapPin, Calendar, DollarSign, Edit2, Save, X, Trash2,
+  ArrowLeft, MapPin, Calendar, DollarSign, Edit2, Save, X, Trash2, Layers,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -272,6 +272,9 @@ export default function TripDetailPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={() => navigate(`/trips/${id}/edit`)} data-testid="button-design-itinerary">
+                    <Layers className="w-3.5 h-3.5 mr-1" /> Design Itinerary
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => setEditing(true)} data-testid="button-edit-trip">
                     <Edit2 className="w-3.5 h-3.5 mr-1" /> Edit
                   </Button>
