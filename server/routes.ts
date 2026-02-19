@@ -1,12 +1,24 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { ObjectStorageService, ObjectNotFoundError } from "./replit_integrations/object_storage";
 import { storage } from "./storage";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
+
+const objectStorageService = new ObjectStorageService();
+
+const ALLOWED_FILE_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+];
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 function slugify(text: string): string {
   return text
@@ -801,6 +813,121 @@ export async function registerRoutes(
       res.json(members);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch members" });
+    }
+  });
+
+  // ──── DOCUMENT VAULT ──────────────────────────────────────────────
+
+  app.post("/api/documents/request-upload", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const schema = z.object({
+        fileName: z.string().min(1),
+        fileType: z.string().min(1),
+        fileSize: z.number().int().positive().max(MAX_FILE_SIZE, "File size exceeds 20MB limit"),
+        tripId: z.string().min(1),
+        clientId: z.string().optional().nullable(),
+        label: z.string().min(1, "Label is required"),
+        isVisibleToClient: z.boolean().default(true),
+      });
+      const parsed = schema.parse(req.body);
+
+      if (!ALLOWED_FILE_TYPES.includes(parsed.fileType)) {
+        return res.status(400).json({
+          message: "File type not allowed. Accepted: PDF, JPG, PNG, WebP",
+        });
+      }
+
+      const trip = await storage.getTrip(parsed.tripId, req._orgId);
+      if (!trip) return res.status(404).json({ message: "Trip not found" });
+
+      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+
+      const doc = await storage.createTripDocument({
+        orgId: req._orgId,
+        tripId: parsed.tripId,
+        clientId: parsed.clientId || trip.clientId || null,
+        uploadedBy: req._profile.id,
+        fileName: parsed.fileName,
+        fileType: parsed.fileType,
+        fileSize: parsed.fileSize,
+        storagePath: objectPath,
+        label: parsed.label,
+        isVisibleToClient: parsed.isVisibleToClient,
+      });
+
+      res.json({ uploadURL, document: doc });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      console.error("Document upload error:", error);
+      res.status(500).json({ message: "Failed to initiate upload" });
+    }
+  });
+
+  app.get("/api/trips/:tripId/documents", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const trip = await storage.getTrip(req.params.tripId, req._orgId);
+      if (!trip) return res.status(404).json({ message: "Trip not found" });
+      const docs = await storage.getTripDocuments(req.params.tripId, req._orgId);
+      res.json(docs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch documents" });
+    }
+  });
+
+  app.get("/api/clients/:clientId/documents", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const client = await storage.getClient(req.params.clientId, req._orgId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+      const docs = await storage.getClientDocuments(req.params.clientId, req._orgId);
+      res.json(docs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch documents" });
+    }
+  });
+
+  app.get("/api/documents/:id/download", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const doc = await storage.getTripDocument(req.params.id, req._orgId);
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+
+      const objectFile = await objectStorageService.getObjectEntityFile(doc.storagePath);
+      res.setHeader("Content-Disposition", `attachment; filename="${doc.fileName}"`);
+      await objectStorageService.downloadObject(objectFile, res, 60);
+    } catch (error) {
+      if (error instanceof ObjectNotFoundError) {
+        return res.status(404).json({ message: "File not found in storage" });
+      }
+      console.error("Download error:", error);
+      res.status(500).json({ message: "Failed to download document" });
+    }
+  });
+
+  app.patch("/api/documents/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const updateSchema = z.object({
+        label: z.string().min(1).optional(),
+        isVisibleToClient: z.boolean().optional(),
+      });
+      const parsed = updateSchema.parse(req.body);
+      const doc = await storage.updateTripDocument(req.params.id, req._orgId, parsed);
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      res.json(doc);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to update document" });
+    }
+  });
+
+  app.delete("/api/documents/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const doc = await storage.deleteTripDocument(req.params.id, req._orgId);
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete document" });
     }
   });
 

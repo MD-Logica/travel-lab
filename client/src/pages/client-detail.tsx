@@ -38,9 +38,17 @@ import {
   FileText,
   Heart,
   User,
+  Upload,
+  Download,
+  Eye,
+  EyeOff,
+  File,
+  Image,
+  Loader2,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { Link, useParams, useLocation } from "wouter";
-import type { Client, Trip } from "@shared/schema";
+import type { Client, Trip, TripDocument } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1042,6 +1050,332 @@ function PreferencesTab({
   );
 }
 
+const LABEL_SUGGESTIONS = [
+  "Flight Ticket",
+  "Hotel Voucher",
+  "Transfer Confirmation",
+  "Travel Insurance",
+  "Visa Letter",
+  "Passport Copy",
+  "Booking Confirmation",
+  "Invoice",
+  "Other",
+];
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getFileIcon(fileType: string) {
+  if (fileType === "application/pdf") return <File className="w-5 h-5 text-red-500" />;
+  return <Image className="w-5 h-5 text-blue-500" />;
+}
+
+type DocWithMeta = TripDocument & { uploaderName: string | null; tripTitle?: string | null };
+
+function DocumentsTab({ clientId, trips: clientTrips }: { clientId: string; trips: Trip[] }) {
+  const { toast } = useToast();
+  const [dragOver, setDragOver] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<globalThis.File | null>(null);
+  const [label, setLabel] = useState("");
+  const [showLabelSuggestions, setShowLabelSuggestions] = useState(false);
+  const [selectedTripId, setSelectedTripId] = useState<string>("");
+  const [isVisibleToClient, setIsVisibleToClient] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: documents = [], isLoading } = useQuery<DocWithMeta[]>({
+    queryKey: ["/api/clients", clientId, "documents"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (docId: string) => {
+      await apiRequest("DELETE", `/api/documents/${docId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "documents"] });
+      toast({ title: "Document deleted" });
+    },
+  });
+
+  const toggleVisibilityMutation = useMutation({
+    mutationFn: async ({ docId, visible }: { docId: string; visible: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/documents/${docId}`, { isVisibleToClient: visible });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "documents"] });
+    },
+  });
+
+  const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"];
+  const MAX_SIZE = 20 * 1024 * 1024;
+
+  const validateFile = (file: globalThis.File): string | null => {
+    if (!ALLOWED_TYPES.includes(file.type)) return "Only PDF, JPG, PNG, and WebP files are accepted.";
+    if (file.size > MAX_SIZE) return "File size must be under 20MB.";
+    return null;
+  };
+
+  const handleFileSelect = (file: globalThis.File) => {
+    const error = validateFile(file);
+    if (error) {
+      toast({ title: "Invalid file", description: error, variant: "destructive" });
+      return;
+    }
+    setSelectedFile(file);
+    if (!selectedTripId && clientTrips.length === 1) {
+      setSelectedTripId(clientTrips[0].id);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelect(file);
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile || !label.trim() || !selectedTripId) return;
+    setUploading(true);
+    try {
+      const res = await apiRequest("POST", "/api/documents/request-upload", {
+        fileName: selectedFile.name,
+        fileType: selectedFile.type,
+        fileSize: selectedFile.size,
+        tripId: selectedTripId,
+        clientId,
+        label: label.trim(),
+        isVisibleToClient,
+      });
+      const { uploadURL } = await res.json();
+      await fetch(uploadURL, {
+        method: "PUT",
+        body: selectedFile,
+        headers: { "Content-Type": selectedFile.type },
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "documents"] });
+      // also invalidate trip documents if trip editor has them open
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", selectedTripId, "documents"] });
+      toast({ title: "Document uploaded" });
+      setSelectedFile(null);
+      setLabel("");
+      setSelectedTripId("");
+      setIsVisibleToClient(true);
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message || "Something went wrong", variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const filteredSuggestions = LABEL_SUGGESTIONS.filter(s =>
+    s.toLowerCase().includes(label.toLowerCase())
+  );
+
+  return (
+    <div className="space-y-6">
+      <div
+        className={`border-2 border-dashed rounded-md p-8 text-center transition-colors ${
+          dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/20"
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        data-testid="dropzone-documents"
+      >
+        {!selectedFile ? (
+          <>
+            <Upload className="w-8 h-8 text-muted-foreground/40 mx-auto mb-3" strokeWidth={1.5} />
+            <p className="text-sm text-muted-foreground mb-2">
+              Drag and drop a file here, or
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              data-testid="button-browse-files"
+            >
+              Browse files
+            </Button>
+            <p className="text-xs text-muted-foreground/50 mt-2">
+              PDF, JPG, PNG, WebP up to 20MB
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,.webp"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFileSelect(f);
+                e.target.value = "";
+              }}
+              data-testid="input-file-upload"
+            />
+          </>
+        ) : (
+          <div className="space-y-4 text-left max-w-md mx-auto">
+            <div className="flex items-center gap-3">
+              {getFileIcon(selectedFile.type)}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium truncate" data-testid="text-selected-filename">{selectedFile.name}</p>
+                <p className="text-xs text-muted-foreground">{formatFileSize(selectedFile.size)}</p>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setSelectedFile(null)} data-testid="button-clear-file">
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+
+            {clientTrips.length > 0 && (
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/60 font-medium mb-1.5 block">
+                  Attach to trip
+                </label>
+                <Select value={selectedTripId} onValueChange={setSelectedTripId}>
+                  <SelectTrigger data-testid="select-trip-for-doc">
+                    <SelectValue placeholder="Select a trip" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clientTrips.map(t => (
+                      <SelectItem key={t.id} value={t.id}>{t.title} — {t.destination}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="relative">
+              <label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/60 font-medium mb-1.5 block">
+                What is this document?
+              </label>
+              <Input
+                value={label}
+                onChange={(e) => { setLabel(e.target.value); setShowLabelSuggestions(true); }}
+                onFocus={() => setShowLabelSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowLabelSuggestions(false), 200)}
+                placeholder="e.g. Flight Ticket, Hotel Voucher..."
+                data-testid="input-document-label"
+              />
+              {showLabelSuggestions && label.length > 0 && filteredSuggestions.length > 0 && (
+                <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-md max-h-40 overflow-y-auto">
+                  {filteredSuggestions.map(s => (
+                    <button
+                      key={s}
+                      className="w-full text-left px-3 py-1.5 text-sm hover-elevate"
+                      onMouseDown={(e) => { e.preventDefault(); setLabel(s); setShowLabelSuggestions(false); }}
+                      data-testid={`suggestion-${s.toLowerCase().replace(/\s+/g, "-")}`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-muted-foreground" htmlFor="visible-toggle">
+                Visible to client
+              </label>
+              <Switch
+                id="visible-toggle"
+                checked={isVisibleToClient}
+                onCheckedChange={setIsVisibleToClient}
+                data-testid="switch-visible-to-client"
+              />
+            </div>
+
+            <Button
+              onClick={handleUpload}
+              disabled={uploading || !label.trim() || !selectedTripId}
+              className="w-full"
+              data-testid="button-upload-document"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4" />
+                  Upload Document
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 rounded-md" />)}
+        </div>
+      ) : documents.length === 0 ? (
+        <div className="py-10 text-center">
+          <div className="w-12 h-12 rounded-full bg-muted/60 flex items-center justify-center mx-auto mb-3">
+            <FileText className="w-6 h-6 text-muted-foreground" strokeWidth={1.5} />
+          </div>
+          <p className="text-sm text-muted-foreground">No documents uploaded yet</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {documents.map((doc) => (
+            <Card key={doc.id} className="p-0" data-testid={`document-row-${doc.id}`}>
+              <div className="flex items-center gap-3 p-3">
+                <div className="shrink-0">{getFileIcon(doc.fileType)}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-medium" data-testid={`text-doc-label-${doc.id}`}>{doc.label}</p>
+                    {doc.tripTitle && (
+                      <Badge variant="secondary" className="text-[10px]">{doc.tripTitle}</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                    <span>{doc.fileName}</span>
+                    <span>{formatFileSize(doc.fileSize)}</span>
+                    {doc.createdAt && <span>{format(new Date(doc.createdAt), "MMM d, yyyy")}</span>}
+                    {doc.uploaderName && <span>by {doc.uploaderName}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => toggleVisibilityMutation.mutate({ docId: doc.id, visible: !doc.isVisibleToClient })}
+                    title={doc.isVisibleToClient ? "Visible to client" : "Hidden from client"}
+                    data-testid={`button-toggle-visibility-${doc.id}`}
+                  >
+                    {doc.isVisibleToClient ? <Eye className="w-4 h-4 text-emerald-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}
+                  </Button>
+                  <a href={`/api/documents/${doc.id}/download`} target="_blank" rel="noopener noreferrer">
+                    <Button variant="ghost" size="icon" data-testid={`button-download-${doc.id}`}>
+                      <Download className="w-4 h-4" />
+                    </Button>
+                  </a>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      if (confirm("Delete this document?")) deleteMutation.mutate(doc.id);
+                    }}
+                    data-testid={`button-delete-doc-${doc.id}`}
+                  >
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
@@ -1574,15 +1908,7 @@ export default function ClientDetailPage() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.25 }}
             >
-              <div className="py-16 text-center">
-                <div className="w-16 h-16 rounded-full bg-muted/60 flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-7 h-7 text-muted-foreground" strokeWidth={1.5} />
-                </div>
-                <h3 className="font-serif text-lg mb-1">Documents coming soon</h3>
-                <p className="text-sm text-muted-foreground max-w-sm mx-auto">
-                  Attach passports, visas, insurance documents, and other travel paperwork for easy reference.
-                </p>
-              </div>
+              <DocumentsTab clientId={id!} trips={clientTrips} />
             </motion.div>
           )}
         </AnimatePresence>

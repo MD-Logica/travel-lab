@@ -1,11 +1,12 @@
 import {
-  organizations, profiles, clients, trips, tripVersions, tripSegments,
+  organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
   type Trip, type InsertTrip,
   type TripVersion, type InsertTripVersion,
   type TripSegment, type InsertTripSegment,
+  type TripDocument, type InsertTripDocument,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike } from "drizzle-orm";
@@ -57,6 +58,13 @@ export interface IStorage {
   reorderTripSegments(versionId: string, orgId: string, segmentIds: string[]): Promise<void>;
 
   getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined>;
+
+  createTripDocument(doc: InsertTripDocument): Promise<TripDocument>;
+  getTripDocuments(tripId: string, orgId: string): Promise<(TripDocument & { uploaderName: string | null })[]>;
+  getClientDocuments(clientId: string, orgId: string): Promise<(TripDocument & { uploaderName: string | null; tripTitle: string | null })[]>;
+  getTripDocument(id: string, orgId: string): Promise<TripDocument | undefined>;
+  updateTripDocument(id: string, orgId: string, data: Partial<InsertTripDocument>): Promise<TripDocument | undefined>;
+  deleteTripDocument(id: string, orgId: string): Promise<TripDocument | undefined>;
 
   updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined>;
   updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined>;
@@ -462,6 +470,63 @@ export class DatabaseStorage implements IStorage {
       client,
       versions: versionsWithSegments,
     };
+  }
+
+  async createTripDocument(doc: InsertTripDocument): Promise<TripDocument> {
+    const [result] = await db.insert(tripDocuments).values(doc).returning();
+    return result;
+  }
+
+  async getTripDocuments(tripId: string, orgId: string): Promise<(TripDocument & { uploaderName: string | null })[]> {
+    const rows = await db
+      .select({
+        doc: tripDocuments,
+        uploaderName: profiles.fullName,
+      })
+      .from(tripDocuments)
+      .leftJoin(profiles, eq(tripDocuments.uploadedBy, profiles.id))
+      .where(and(eq(tripDocuments.tripId, tripId), eq(tripDocuments.orgId, orgId)))
+      .orderBy(sql`${tripDocuments.createdAt} DESC`);
+    return rows.map(r => ({ ...r.doc, uploaderName: r.uploaderName }));
+  }
+
+  async getClientDocuments(clientId: string, orgId: string): Promise<(TripDocument & { uploaderName: string | null; tripTitle: string | null })[]> {
+    const rows = await db
+      .select({
+        doc: tripDocuments,
+        uploaderName: profiles.fullName,
+        tripTitle: trips.title,
+      })
+      .from(tripDocuments)
+      .leftJoin(profiles, eq(tripDocuments.uploadedBy, profiles.id))
+      .leftJoin(trips, eq(tripDocuments.tripId, trips.id))
+      .where(and(eq(tripDocuments.clientId, clientId), eq(tripDocuments.orgId, orgId)))
+      .orderBy(sql`${tripDocuments.createdAt} DESC`);
+    return rows.map(r => ({ ...r.doc, uploaderName: r.uploaderName, tripTitle: r.tripTitle }));
+  }
+
+  async getTripDocument(id: string, orgId: string): Promise<TripDocument | undefined> {
+    const [result] = await db.select().from(tripDocuments).where(
+      and(eq(tripDocuments.id, id), eq(tripDocuments.orgId, orgId))
+    );
+    return result;
+  }
+
+  async updateTripDocument(id: string, orgId: string, data: Partial<InsertTripDocument>): Promise<TripDocument | undefined> {
+    const [result] = await db
+      .update(tripDocuments)
+      .set(data)
+      .where(and(eq(tripDocuments.id, id), eq(tripDocuments.orgId, orgId)))
+      .returning();
+    return result;
+  }
+
+  async deleteTripDocument(id: string, orgId: string): Promise<TripDocument | undefined> {
+    const [result] = await db
+      .delete(tripDocuments)
+      .where(and(eq(tripDocuments.id, id), eq(tripDocuments.orgId, orgId)))
+      .returning();
+    return result;
   }
 }
 

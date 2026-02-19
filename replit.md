@@ -22,6 +22,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - **trips**: id, org_id, title, destination, description, cover_image_url, start_date, end_date, status, budget, currency, notes
 - **trip_versions**: id, trip_id, org_id, version_number, name, is_primary
 - **trip_segments**: id, version_id, trip_id, org_id, day_number, sort_order, type (flight/charter/hotel/transport/restaurant/activity/note), title, subtitle, start_time, end_time, confirmation_number, cost, currency, notes
+- **trip_documents**: id, org_id, trip_id, client_id, uploaded_by, file_name, file_type, file_size, storage_path, label, is_visible_to_client, created_at
 
 ## Plan Limits
 - Trial: 3 advisors, 50 clients, 20 trips
@@ -50,6 +51,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
 
 ## Recent Changes
+- 2026-02-19: Secure document vault — trip_documents table, file upload via Replit Object Storage (presigned URL flow), drag-drop upload on client detail Documents tab and trip editor; label suggestions, visibility toggle, download/delete; org-scoped security on all document routes
 - 2026-02-19: Client preferences system — tab bar on client detail page (Overview/Preferences/Documents), structured preferences editor with travel style, flights, hotels, dining, interests, important dates, loyalty, general notes; view/edit modes; preferences reference panel in trip editor
 - 2026-02-19: Trip editor (/trips/:id/edit) with version tabs, day timeline, segment CRUD (add/edit/delete dialog), version management (duplicate, set primary, delete)
 - 2026-02-19: Added trip_segments and trip_versions tables; segment/version API routes; storage CRUD methods

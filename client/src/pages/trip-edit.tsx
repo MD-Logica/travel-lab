@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -10,15 +10,26 @@ import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   ArrowLeft, Plus, Plane, Ship, Hotel, Car, UtensilsCrossed, Activity,
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
+  Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
+  ChevronDown,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SegmentEditor } from "@/components/segment-editor";
-import type { Trip, TripVersion, TripSegment, Client } from "@shared/schema";
+import type { Trip, TripVersion, TripSegment, Client, TripDocument } from "@shared/schema";
 import { format } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
@@ -149,6 +160,224 @@ function SegmentCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+const DOC_LABEL_SUGGESTIONS = [
+  "Flight Ticket", "Hotel Voucher", "Transfer Confirmation", "Travel Insurance",
+  "Visa Letter", "Passport Copy", "Booking Confirmation", "Invoice", "Other",
+];
+
+function formatDocSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getDocFileIcon(fileType: string) {
+  if (fileType === "application/pdf") return <File className="w-4 h-4 text-red-500" />;
+  return <Image className="w-4 h-4 text-blue-500" />;
+}
+
+type TripDocWithMeta = TripDocument & { uploaderName: string | null };
+
+function TripDocumentsSection({ tripId, clientId }: { tripId: string; clientId?: string | null }) {
+  const { toast } = useToast();
+  const [isOpen, setIsOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<globalThis.File | null>(null);
+  const [label, setLabel] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isVisibleToClient, setIsVisibleToClient] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { data: documents = [], isLoading } = useQuery<TripDocWithMeta[]>({
+    queryKey: ["/api/trips", tripId, "documents"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (docId: string) => {
+      await apiRequest("DELETE", `/api/documents/${docId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "documents"] });
+      toast({ title: "Document deleted" });
+    },
+  });
+
+  const toggleVisibility = useMutation({
+    mutationFn: async ({ docId, visible }: { docId: string; visible: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/documents/${docId}`, { isVisibleToClient: visible });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "documents"] });
+    },
+  });
+
+  const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"];
+
+  const handleFileSelect = (file: globalThis.File) => {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      toast({ title: "Invalid file", description: "Only PDF, JPG, PNG, and WebP files are accepted.", variant: "destructive" });
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Max file size is 20MB.", variant: "destructive" });
+      return;
+    }
+    setSelectedFile(file);
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile || !label.trim()) return;
+    setUploading(true);
+    try {
+      const res = await apiRequest("POST", "/api/documents/request-upload", {
+        fileName: selectedFile.name,
+        fileType: selectedFile.type,
+        fileSize: selectedFile.size,
+        tripId,
+        clientId: clientId || null,
+        label: label.trim(),
+        isVisibleToClient,
+      });
+      const { uploadURL } = await res.json();
+      await fetch(uploadURL, {
+        method: "PUT",
+        body: selectedFile,
+        headers: { "Content-Type": selectedFile.type },
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "documents"] });
+      if (clientId) queryClient.invalidateQueries({ queryKey: ["/api/clients", clientId, "documents"] });
+      toast({ title: "Document uploaded" });
+      setSelectedFile(null);
+      setLabel("");
+      setIsVisibleToClient(true);
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const filteredSuggestions = DOC_LABEL_SUGGESTIONS.filter(s => s.toLowerCase().includes(label.toLowerCase()));
+
+  return (
+    <div className="mt-6">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 w-full text-left mb-3"
+        data-testid="button-toggle-trip-documents"
+      >
+        <FileText className="w-4 h-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Documents</span>
+        <Badge variant="secondary" className="text-[10px] ml-1">{documents.length}</Badge>
+        <ChevronDown className={`w-3.5 h-3.5 ml-auto text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+
+      {isOpen && (
+        <div className="space-y-4 pl-6">
+          <div
+            className={`border border-dashed rounded-md p-4 text-center transition-colors ${dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/20"}`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFileSelect(f); }}
+            data-testid="dropzone-trip-documents"
+          >
+            {!selectedFile ? (
+              <>
+                <Upload className="w-5 h-5 text-muted-foreground/40 mx-auto mb-2" strokeWidth={1.5} />
+                <p className="text-xs text-muted-foreground mb-1">Drop a file or</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const input = document.createElement("input");
+                    input.type = "file";
+                    input.accept = ".pdf,.jpg,.jpeg,.png,.webp";
+                    input.onchange = (e) => {
+                      const f = (e.target as HTMLInputElement).files?.[0];
+                      if (f) handleFileSelect(f);
+                    };
+                    input.click();
+                  }}
+                  data-testid="button-browse-trip-files"
+                >
+                  Browse
+                </Button>
+              </>
+            ) : (
+              <div className="space-y-3 text-left">
+                <div className="flex items-center gap-2">
+                  {getDocFileIcon(selectedFile.type)}
+                  <span className="text-xs truncate flex-1">{selectedFile.name}</span>
+                  <span className="text-xs text-muted-foreground">{formatDocSize(selectedFile.size)}</span>
+                  <Button variant="ghost" size="icon" onClick={() => setSelectedFile(null)} data-testid="button-clear-trip-file">
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+                <div className="relative">
+                  <Input
+                    value={label}
+                    onChange={(e) => { setLabel(e.target.value); setShowSuggestions(true); }}
+                    onFocus={() => setShowSuggestions(true)}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                    placeholder="Label (e.g. Flight Ticket)"
+                    className="text-xs h-8"
+                    data-testid="input-trip-doc-label"
+                  />
+                  {showSuggestions && label.length > 0 && filteredSuggestions.length > 0 && (
+                    <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-md max-h-32 overflow-y-auto">
+                      {filteredSuggestions.map(s => (
+                        <button key={s} className="w-full text-left px-2 py-1 text-xs hover-elevate" onMouseDown={(e) => { e.preventDefault(); setLabel(s); setShowSuggestions(false); }}>
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">Visible to client</span>
+                  <Switch checked={isVisibleToClient} onCheckedChange={setIsVisibleToClient} data-testid="switch-trip-doc-visibility" />
+                </div>
+                <Button size="sm" onClick={handleUpload} disabled={uploading || !label.trim()} className="w-full" data-testid="button-upload-trip-doc">
+                  {uploading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading...</> : <><Upload className="w-3.5 h-3.5" /> Upload</>}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {isLoading ? (
+            <Skeleton className="h-10 rounded-md" />
+          ) : documents.length > 0 && (
+            <div className="space-y-1.5">
+              {documents.map(doc => (
+                <div key={doc.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/30" data-testid={`trip-doc-row-${doc.id}`}>
+                  {getDocFileIcon(doc.fileType)}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-medium truncate">{doc.label}</p>
+                    <p className="text-[10px] text-muted-foreground">{doc.fileName} · {formatDocSize(doc.fileSize)}</p>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => toggleVisibility.mutate({ docId: doc.id, visible: !doc.isVisibleToClient })} data-testid={`trip-doc-visibility-${doc.id}`}>
+                    {doc.isVisibleToClient ? <Eye className="w-3.5 h-3.5 text-emerald-500" /> : <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />}
+                  </Button>
+                  <a href={`/api/documents/${doc.id}/download`} target="_blank" rel="noopener noreferrer">
+                    <Button variant="ghost" size="icon" data-testid={`trip-doc-download-${doc.id}`}>
+                      <Download className="w-3.5 h-3.5" />
+                    </Button>
+                  </a>
+                  <Button variant="ghost" size="icon" onClick={() => { if (confirm("Delete this document?")) deleteMutation.mutate(doc.id); }} data-testid={`trip-doc-delete-${doc.id}`}>
+                    <Trash2 className="w-3.5 h-3.5 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -614,6 +843,8 @@ export default function TripEditPage() {
               </div>
             </div>
           )}
+
+          <TripDocumentsSection tripId={id!} clientId={trip.clientId} />
           </div>
         </div>
 
