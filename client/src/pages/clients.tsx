@@ -19,6 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Search, Plus, Mail, Phone, Plane, X } from "lucide-react";
 import { Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { Client } from "@shared/schema";
 
 type ClientWithTripCount = Client & { tripCount: number };
@@ -61,6 +62,7 @@ export default function ClientsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   const { data: clients, isLoading } = useQuery<ClientWithTripCount[]>({
     queryKey: ["/api/clients"],
@@ -80,32 +82,36 @@ export default function ClientsPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-5xl mx-auto px-6 md:px-10 py-10 md:py-14">
+      <div className={`max-w-5xl mx-auto ${isMobile ? 'px-4 py-4' : 'px-6 md:px-10 py-10 md:py-14'}`}>
 
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-10"
+          className={isMobile ? "mb-4" : "mb-10"}
         >
           <div className="flex items-end justify-between gap-4 flex-wrap">
             <div>
-              <h1 className="font-serif text-4xl md:text-5xl tracking-tight" data-testid="text-clients-title">
+              <h1 className={`font-serif tracking-tight ${isMobile ? 'text-2xl' : 'text-4xl md:text-5xl'}`} data-testid="text-clients-title">
                 Clients
               </h1>
-              <p className="text-muted-foreground mt-2 text-base">
-                {clients ? `${clients.length} client${clients.length !== 1 ? "s" : ""}` : "Loading..."}
-              </p>
+              {!isMobile && (
+                <p className="text-muted-foreground mt-2 text-base">
+                  {clients ? `${clients.length} client${clients.length !== 1 ? "s" : ""}` : "Loading..."}
+                </p>
+              )}
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDialogOpen(true)}
-              data-testid="button-add-client"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Add Client
-            </Button>
+            {!isMobile && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDialogOpen(true)}
+                data-testid="button-add-client"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Client
+              </Button>
+            )}
           </div>
         </motion.div>
 
@@ -113,18 +119,18 @@ export default function ClientsPage() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.4 }}
-          className="mb-8"
+          className={isMobile ? "mb-4" : "mb-8"}
         >
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" strokeWidth={1.5} />
             <Input
-              placeholder="Search by name, email, or tag..."
+              placeholder={isMobile ? "Search clients..." : "Search by name, email, or tag..."}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
               className={`pl-10 transition-all duration-300 border-border/50 ${
-                searchFocused ? "w-full md:w-96" : "w-full md:w-64"
+                isMobile ? "w-full" : (searchFocused ? "w-full md:w-96" : "w-full md:w-64")
               }`}
               data-testid="input-search-clients"
             />

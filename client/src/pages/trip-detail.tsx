@@ -14,10 +14,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import {
-  ArrowLeft, MapPin, Calendar, DollarSign, Edit2, Save, X, Trash2, Layers, Eye, FileDown, CalendarPlus,
+  ArrowLeft, MapPin, Calendar, DollarSign, Edit2, Save, X, Trash2, Layers, Eye, FileDown, CalendarPlus, Monitor,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { Trip } from "@shared/schema";
 import { format } from "date-fns";
 
@@ -57,6 +58,7 @@ export default function TripDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
 
   const { data: trip, isLoading } = useQuery<Trip>({
@@ -160,7 +162,7 @@ export default function TripDetailPage() {
             </Button>
           </div>
 
-          {editing ? (
+          {editing && !isMobile ? (
             <Form {...form}>
               <form onSubmit={form.handleSubmit((d) => updateMutation.mutate(d))} className="space-y-4">
                 <FormField control={form.control} name="title" render={({ field }) => (
@@ -243,10 +245,17 @@ export default function TripDetailPage() {
             </Form>
           ) : (
             <>
+              {isMobile && (
+                <div className="flex items-center gap-2 px-3 py-2 mb-4 rounded-md bg-muted/50 text-xs text-muted-foreground" data-testid="mobile-readonly-banner">
+                  <Monitor className="w-3.5 h-3.5 shrink-0" strokeWidth={1.5} />
+                  <span>View only on mobile. Use desktop to edit trips.</span>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
                 <div>
                   <div className="flex flex-wrap items-center gap-3 mb-2">
-                    <h1 className="font-serif text-3xl tracking-tight" data-testid="text-trip-detail-title">{trip.title}</h1>
+                    <h1 className={`font-serif tracking-tight ${isMobile ? 'text-2xl' : 'text-3xl'}`} data-testid="text-trip-detail-title">{trip.title}</h1>
                     <Badge variant="secondary" className={`text-[10px] uppercase tracking-wider ${statusColors[trip.status] || ''}`}>
                       {trip.status.replace("_", " ")}
                     </Badge>
@@ -271,31 +280,33 @@ export default function TripDetailPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button size="sm" onClick={() => navigate(`/trips/${id}/edit`)} data-testid="button-design-itinerary">
-                    <Layers className="w-3.5 h-3.5 mr-1" /> Design Itinerary
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => window.open(`/trip/${id}`, "_blank")} data-testid="button-preview-trip">
-                    <Eye className="w-3.5 h-3.5 mr-1" /> Preview
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => window.open(`/api/export/pdf?tripId=${id}`, "_blank")} data-testid="button-export-pdf">
-                    <FileDown className="w-3.5 h-3.5 mr-1" /> PDF
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => window.open(`/api/export/calendar?tripId=${id}`, "_blank")} data-testid="button-export-calendar">
-                    <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Calendar
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => setEditing(true)} data-testid="button-edit-trip">
-                    <Edit2 className="w-3.5 h-3.5 mr-1" /> Edit
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => { if (confirm("Delete this trip?")) deleteMutation.mutate(); }}
-                    data-testid="button-delete-trip"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
-                  </Button>
-                </div>
+                {!isMobile && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button size="sm" onClick={() => navigate(`/trips/${id}/edit`)} data-testid="button-design-itinerary">
+                      <Layers className="w-3.5 h-3.5 mr-1" /> Design Itinerary
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => window.open(`/trip/${id}`, "_blank")} data-testid="button-preview-trip">
+                      <Eye className="w-3.5 h-3.5 mr-1" /> Preview
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => window.open(`/api/export/pdf?tripId=${id}`, "_blank")} data-testid="button-export-pdf">
+                      <FileDown className="w-3.5 h-3.5 mr-1" /> PDF
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => window.open(`/api/export/calendar?tripId=${id}`, "_blank")} data-testid="button-export-calendar">
+                      <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Calendar
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setEditing(true)} data-testid="button-edit-trip">
+                      <Edit2 className="w-3.5 h-3.5 mr-1" /> Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { if (confirm("Delete this trip?")) deleteMutation.mutate(); }}
+                      data-testid="button-delete-trip"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {trip.description && (
@@ -320,9 +331,11 @@ export default function TripDetailPage() {
                 <Card>
                   <CardContent className="p-8 text-center">
                     <p className="text-sm text-muted-foreground">No description or notes yet.</p>
-                    <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditing(true)}>
-                      <Edit2 className="w-3.5 h-3.5 mr-1" /> Add details
-                    </Button>
+                    {!isMobile && (
+                      <Button variant="outline" size="sm" className="mt-3" onClick={() => setEditing(true)}>
+                        <Edit2 className="w-3.5 h-3.5 mr-1" /> Add details
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               )}

@@ -9,8 +9,33 @@ import crypto from "crypto";
 import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
 import { checkSingleFlight } from "./flight-tracker";
+import webpush from "web-push";
 
 const objectStorageService = new ObjectStorageService();
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:admin@travellab.app",
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+
+async function sendPushToOrg(orgId: string, payload: { title: string; body: string; url?: string }, excludeProfileId?: string) {
+  try {
+    const subs = await storage.getPushSubscriptionsForOrg(orgId);
+    const filtered = excludeProfileId ? subs.filter(s => s.profileId !== excludeProfileId) : subs;
+    const payloadStr = JSON.stringify(payload);
+    await Promise.allSettled(
+      filtered.map(sub =>
+        webpush.sendNotification({
+          endpoint: sub.endpoint,
+          keys: { p256dh: sub.p256dh, auth: sub.auth },
+        }, payloadStr).catch(() => {})
+      )
+    );
+  } catch {}
+}
 
 const ALLOWED_FILE_TYPES = [
   "application/pdf",
@@ -1223,6 +1248,130 @@ export async function registerRoutes(
       });
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch plan limits" });
+    }
+  });
+
+  // ── Messaging routes ──
+  app.get("/api/conversations", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const convos = await storage.getConversationsByOrg(req._orgId);
+      res.json(convos);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch conversations" });
+    }
+  });
+
+  app.post("/api/conversations", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { clientId } = req.body;
+      if (!clientId) return res.status(400).json({ message: "clientId required" });
+      const client = await storage.getClient(clientId, req._orgId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+      const convo = await storage.getOrCreateConversation(req._orgId, clientId);
+      res.json(convo);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create conversation" });
+    }
+  });
+
+  app.get("/api/conversations/:id/messages", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const msgs = await storage.getMessages(req.params.id, req._orgId);
+      res.json(msgs);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/conversations/:id/messages", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const convo = await storage.getConversation(req.params.id, req._orgId);
+      if (!convo) return res.status(404).json({ message: "Conversation not found" });
+
+      const profile = await storage.getProfile(req._userId);
+      const msg = await storage.createMessage({
+        conversationId: req.params.id,
+        orgId: req._orgId,
+        senderType: "advisor",
+        senderId: req._userId,
+        senderName: profile?.fullName || "Advisor",
+        content: req.body.content,
+        isRead: false,
+      });
+      sendPushToOrg(req._orgId, {
+        title: `New message from ${profile?.fullName || "Advisor"}`,
+        body: req.body.content?.substring(0, 100) || "New message",
+        url: `/dashboard/messages?id=${req.params.id}`,
+      }, req._userId).catch(() => {});
+      res.json(msg);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
+  app.post("/api/conversations/:id/read", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      await storage.markMessagesRead(req.params.id, req._orgId);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to mark messages as read" });
+    }
+  });
+
+  app.get("/api/messages/unread-count", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const unreadCount = await storage.getUnreadMessageCount(req._orgId);
+      res.json({ unreadCount });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  // ── Flight tracking for trip cards (mobile) ──
+  app.get("/api/trips/flight-status", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const activeFlights = await storage.getActiveFlightTrackingForDate(today);
+      const orgFlights = activeFlights.filter((f: any) => f.orgId === req._orgId);
+      const result: Record<string, { count: number; hasActive: boolean }> = {};
+      for (const f of orgFlights) {
+        if (!result[(f as any).tripId]) {
+          result[(f as any).tripId] = { count: 0, hasActive: false };
+        }
+        result[(f as any).tripId].count++;
+        result[(f as any).tripId].hasActive = true;
+      }
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch flight status" });
+    }
+  });
+
+  app.get("/api/push/vapid-key", (req, res) => {
+    res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || "" });
+  });
+
+  app.post("/api/push/subscribe", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { endpoint, keys } = req.body;
+      if (!endpoint || !keys?.p256dh || !keys?.auth) {
+        return res.status(400).json({ message: "Invalid subscription" });
+      }
+      await storage.savePushSubscription(req.userId, req.orgId, endpoint, keys.p256dh, keys.auth);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to save push subscription" });
+    }
+  });
+
+  app.post("/api/push/unsubscribe", isAuthenticated, async (req: any, res) => {
+    try {
+      const { endpoint } = req.body;
+      if (!endpoint) return res.status(400).json({ message: "Missing endpoint" });
+      await storage.removePushSubscription(req.userId, endpoint);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to remove push subscription" });
     }
   });
 

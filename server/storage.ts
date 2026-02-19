@@ -1,6 +1,6 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
-  flightTracking, notifications, segmentTemplates,
+  flightTracking, notifications, segmentTemplates, conversations, messages, pushSubscriptions,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -11,6 +11,9 @@ import {
   type FlightTracking, type InsertFlightTracking,
   type Notification, type InsertNotification,
   type SegmentTemplate, type InsertSegmentTemplate,
+  type Conversation, type InsertConversation,
+  type Message, type InsertMessage,
+  type PushSubscription,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike, desc } from "drizzle-orm";
@@ -94,6 +97,14 @@ export interface IStorage {
 
   updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined>;
   updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined>;
+
+  getConversationsByOrg(orgId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]>;
+  getOrCreateConversation(orgId: string, clientId: string): Promise<Conversation>;
+  getConversation(id: string, orgId: string): Promise<Conversation | undefined>;
+  getMessages(conversationId: string, orgId: string, limit?: number): Promise<Message[]>;
+  createMessage(data: InsertMessage): Promise<Message>;
+  markMessagesRead(conversationId: string, orgId: string): Promise<void>;
+  getUnreadMessageCount(orgId: string): Promise<number>;
 
   getTripFullView(tripId: string): Promise<{
     trip: Trip;
@@ -817,6 +828,108 @@ export class DatabaseStorage implements IStorage {
         clientsManaged: r.clients_managed,
       })),
     };
+  }
+
+  async getConversationsByOrg(orgId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]> {
+    const rows = await db.execute(sql`
+      SELECT c.*,
+        cl.full_name AS client_name,
+        cl.avatar_url AS client_avatar_url,
+        COALESCE((SELECT COUNT(*)::int FROM messages m WHERE m.conversation_id = c.id AND m.is_read = false AND m.sender_type = 'client'), 0) AS unread_count
+      FROM conversations c
+      JOIN clients cl ON cl.id = c.client_id
+      WHERE c.org_id = ${orgId}
+      ORDER BY c.last_message_at DESC NULLS LAST
+    `);
+    return ((rows as any).rows || rows || []).map((r: any) => ({
+      id: r.id,
+      orgId: r.org_id,
+      clientId: r.client_id,
+      lastMessageAt: r.last_message_at,
+      lastMessagePreview: r.last_message_preview,
+      createdAt: r.created_at,
+      clientName: r.client_name,
+      clientAvatarUrl: r.client_avatar_url,
+      unreadCount: Number(r.unread_count),
+    }));
+  }
+
+  async getOrCreateConversation(orgId: string, clientId: string): Promise<Conversation> {
+    const [existing] = await db.select().from(conversations)
+      .where(and(eq(conversations.orgId, orgId), eq(conversations.clientId, clientId)));
+    if (existing) return existing;
+    const [created] = await db.insert(conversations)
+      .values({ orgId, clientId })
+      .returning();
+    return created;
+  }
+
+  async getConversation(id: string, orgId: string): Promise<Conversation | undefined> {
+    const [result] = await db.select().from(conversations)
+      .where(and(eq(conversations.id, id), eq(conversations.orgId, orgId)));
+    return result;
+  }
+
+  async getMessages(conversationId: string, orgId: string, limit = 100): Promise<Message[]> {
+    return db.select().from(messages)
+      .where(and(eq(messages.conversationId, conversationId), eq(messages.orgId, orgId)))
+      .orderBy(messages.createdAt)
+      .limit(limit);
+  }
+
+  async createMessage(data: InsertMessage): Promise<Message> {
+    const [msg] = await db.insert(messages).values(data).returning();
+    await db.update(conversations)
+      .set({
+        lastMessageAt: new Date(),
+        lastMessagePreview: data.content.slice(0, 100),
+      })
+      .where(eq(conversations.id, data.conversationId));
+    return msg;
+  }
+
+  async markMessagesRead(conversationId: string, orgId: string): Promise<void> {
+    await db.update(messages)
+      .set({ isRead: true })
+      .where(and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.orgId, orgId),
+        eq(messages.senderType, "client"),
+        eq(messages.isRead, false),
+      ));
+  }
+
+  async getUnreadMessageCount(orgId: string): Promise<number> {
+    const result = await db.select({ count: count() }).from(messages)
+      .where(and(
+        eq(messages.orgId, orgId),
+        eq(messages.senderType, "client"),
+        eq(messages.isRead, false),
+      ));
+    return result[0]?.count || 0;
+  }
+
+  async savePushSubscription(profileId: string, orgId: string, endpoint: string, p256dh: string, auth: string): Promise<PushSubscription> {
+    const existing = await db.select().from(pushSubscriptions)
+      .where(and(eq(pushSubscriptions.profileId, profileId), eq(pushSubscriptions.endpoint, endpoint)));
+    if (existing.length > 0) {
+      const [updated] = await db.update(pushSubscriptions)
+        .set({ p256dh, auth })
+        .where(eq(pushSubscriptions.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+    const [sub] = await db.insert(pushSubscriptions).values({ profileId, orgId, endpoint, p256dh, auth }).returning();
+    return sub;
+  }
+
+  async removePushSubscription(profileId: string, endpoint: string): Promise<void> {
+    await db.delete(pushSubscriptions)
+      .where(and(eq(pushSubscriptions.profileId, profileId), eq(pushSubscriptions.endpoint, endpoint)));
+  }
+
+  async getPushSubscriptionsForOrg(orgId: string): Promise<PushSubscription[]> {
+    return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.orgId, orgId));
   }
 }
 

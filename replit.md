@@ -23,6 +23,9 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - **trip_versions**: id, trip_id, org_id, version_number, name, is_primary
 - **trip_segments**: id, version_id, trip_id, org_id, day_number, sort_order, type (flight/charter/hotel/transport/restaurant/activity/note), title, subtitle, start_time, end_time, confirmation_number, cost, currency, notes
 - **trip_documents**: id, org_id, trip_id, client_id, uploaded_by, file_name, file_type, file_size, storage_path, label, is_visible_to_client, created_at
+- **conversations**: id, org_id, client_id, last_message_at, created_at
+- **messages**: id, conversation_id, org_id, sender_type (advisor/client), sender_id, sender_name, content, is_read, created_at
+- **push_subscriptions**: id, profile_id, org_id, endpoint, p256dh, auth, created_at
 
 ## Plan Limits
 - Trial: 3 advisors, 50 clients, 20 trips
@@ -37,18 +40,28 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 5. Redirect to /dashboard
 
 ## Project Structure
-- client/src/pages/ - Landing, Pricing, Onboarding, Dashboard, Trips, TripDetail, TripNew, TripEdit, Clients, ClientDetail, Settings
+- client/src/pages/ - Landing, Pricing, Onboarding, Dashboard, Trips, TripDetail, TripNew, TripEdit, Clients, ClientDetail, Settings, Messages
 - client/src/pages/auth/ - Login, Signup, ForgotPassword, SetPassword
-- client/src/components/ - AppSidebar, MarketingNav, AuthLayout, TrialBanner, UpgradePrompt
+- client/src/components/ - AppSidebar, MarketingNav, AuthLayout, TrialBanner, UpgradePrompt, MobileTabBar, PwaInstallPrompt
+- client/src/hooks/ - use-auth, use-mobile, use-toast, use-push-notifications
 - server/routes.ts - All API routes with auth + org middleware
 - server/storage.ts - DatabaseStorage class with org-scoped queries
 - shared/schema.ts - Drizzle schema + types
 - shared/models/auth.ts - Auth tables (users, sessions)
+- client/public/sw.js - Service worker (caching, push notifications)
+- client/public/manifest.json - PWA manifest
 
 ## Routing
 - Public pages (always accessible): /, /pricing
 - Auth pages (redirect to /dashboard if logged in): /login, /signup, /forgot-password, /set-password
-- Authenticated pages (redirect to /login if not logged in): /dashboard, /dashboard/analytics, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
+- Authenticated pages (redirect to /login if not logged in): /dashboard, /dashboard/analytics, /dashboard/messages, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
+
+## PWA
+- Service worker: cache-first for static assets, stale-while-revalidate for API
+- Push notifications: web-push library, VAPID keys in env, push_subscriptions table
+- Mobile breakpoint: 768px (useIsMobile hook)
+- Bottom tab bar on mobile: Trips, Messages, Clients, More
+- Install prompt: shows after 30s on first mobile visit
 
 ## Recent Changes
 - 2026-02-19: Analytics page (/dashboard/analytics) — premium editorial design with Recharts; date range selector (30d/3m/12m/all time); 4 summary stat cards (total trips, active trips, total clients, portfolio value); trips-over-time area chart; top destinations horizontal bar chart; trips-by-status donut chart; most active clients table (clickable to profile); advisor activity table (owner only); graceful empty states; sidebar navigation with BarChart2 icon

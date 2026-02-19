@@ -41,3 +41,10 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_log_in_with_replit:2.0.0", "javascript_database:1.0.0", "javascript_object_storage:2.0.0"]
+
+[userenv]
+
+[userenv.shared]
+VAPID_PUBLIC_KEY = "BCr7re44YfZC03QVkzkVTt8QkSd7n_jksTY8VX0m81sWgbOA_-R_2E7_erKr65e5HKHecXD5483fn__Eyewk8BM"
+VAPID_PRIVATE_KEY = "GR39eCzgYEpfaUgxbwv7boLG1dzuAGDEi6IXDjXIGng"
+VAPID_SUBJECT = "mailto:admin@travellab.app"

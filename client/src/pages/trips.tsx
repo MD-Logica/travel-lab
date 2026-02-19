@@ -8,9 +8,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
   Plus, Search, MapPin, Calendar, User,
-  DollarSign, Clock,
+  DollarSign, Clock, Plane,
 } from "lucide-react";
 import { Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { Trip } from "@shared/schema";
 import { format, differenceInDays } from "date-fns";
 
@@ -67,11 +68,66 @@ const fadeUp = {
   }),
 };
 
+type FlightStatusMap = Record<string, { count: number; hasActive: boolean }>;
+
+function MobileTripRow({ trip, flightStatus }: { trip: TripWithClient; flightStatus?: { count: number; hasActive: boolean } }) {
+  const cfg = statusConfig[trip.status] || statusConfig.draft;
+  return (
+    <Link href={`/trips/${trip.id}`}>
+      <div
+        className="flex items-center gap-3 px-4 py-3 hover-elevate cursor-pointer border-b border-border/30 last:border-b-0"
+        data-testid={`mobile-trip-${trip.id}`}
+      >
+        <div className="w-[72px] h-[72px] rounded-md overflow-hidden shrink-0">
+          {trip.coverImageUrl ? (
+            <img src={trip.coverImageUrl} alt={trip.title} className="w-full h-full object-cover" />
+          ) : (
+            <div className={`w-full h-full bg-gradient-to-br ${getGradient(trip.title)}`} />
+          )}
+        </div>
+        <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-serif text-sm font-medium truncate flex-1">{trip.title}</h3>
+            <Badge
+              variant="secondary"
+              className={`text-[9px] uppercase tracking-wider shrink-0 ${cfg.className} no-default-hover-elevate no-default-active-elevate`}
+            >
+              {cfg.label}
+            </Badge>
+          </div>
+          {trip.clientName && (
+            <p className="text-xs text-muted-foreground truncate">{trip.clientName}</p>
+          )}
+          <div className="flex items-center gap-3 flex-wrap">
+            {trip.startDate && (
+              <span className="text-[11px] text-muted-foreground">
+                {format(new Date(trip.startDate), "MMM d")}
+                {trip.endDate && ` – ${format(new Date(trip.endDate), "MMM d")}`}
+              </span>
+            )}
+            {flightStatus && flightStatus.hasActive && (
+              <span className="flex items-center gap-1 text-[11px] text-emerald-600">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                {flightStatus.count} flight{flightStatus.count !== 1 ? "s" : ""} active
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export default function TripsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
+  const isMobile = useIsMobile();
 
   const { data: trips, isLoading } = useQuery<TripWithClient[]>({ queryKey: ["/api/trips"] });
+  const { data: flightStatusMap } = useQuery<FlightStatusMap>({
+    queryKey: ["/api/trips/flight-status"],
+    refetchInterval: 60000,
+  });
 
   const filtered = useMemo(() => {
     if (!trips) return [];
@@ -96,28 +152,32 @@ export default function TripsPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-6xl mx-auto px-6 md:px-10 py-10 md:py-14">
+      <div className={`max-w-6xl mx-auto ${isMobile ? 'px-4 py-4' : 'px-6 md:px-10 py-10 md:py-14'}`}>
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-10"
+          className={isMobile ? "mb-4" : "mb-10"}
         >
           <div className="flex items-end justify-between gap-4 flex-wrap">
             <div>
-              <h1 className="font-serif text-4xl md:text-5xl tracking-tight" data-testid="text-trips-title">
+              <h1 className={`font-serif tracking-tight ${isMobile ? 'text-2xl' : 'text-4xl md:text-5xl'}`} data-testid="text-trips-title">
                 Trips
               </h1>
-              <p className="text-muted-foreground mt-2 text-base">
-                {trips ? `${trips.length} trip${trips.length !== 1 ? "s" : ""}` : "Loading..."}
-              </p>
+              {!isMobile && (
+                <p className="text-muted-foreground mt-2 text-base">
+                  {trips ? `${trips.length} trip${trips.length !== 1 ? "s" : ""}` : "Loading..."}
+                </p>
+              )}
             </div>
-            <Link href="/trips/new">
-              <Button variant="outline" size="sm" data-testid="button-new-trip">
-                <Plus className="w-3.5 h-3.5" />
-                New Trip
-              </Button>
-            </Link>
+            {!isMobile && (
+              <Link href="/trips/new">
+                <Button variant="outline" size="sm" data-testid="button-new-trip">
+                  <Plus className="w-3.5 h-3.5" />
+                  New Trip
+                </Button>
+              </Link>
+            )}
           </div>
         </motion.div>
 
@@ -125,12 +185,12 @@ export default function TripsPage() {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.4 }}
-          className="flex flex-col gap-5 mb-8"
+          className={`flex flex-col gap-4 ${isMobile ? 'mb-4' : 'gap-5 mb-8'}`}
         >
-          <div className="relative max-w-sm">
+          <div className={`relative ${isMobile ? 'w-full' : 'max-w-sm'}`}>
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/50" strokeWidth={1.5} />
             <Input
-              placeholder="Search trips, destinations, clients..."
+              placeholder="Search trips..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10 border-border/50"
@@ -138,7 +198,7 @@ export default function TripsPage() {
             />
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className={`flex items-center gap-2 ${isMobile ? 'overflow-x-auto pb-1 -mx-4 px-4 no-scrollbar' : 'flex-wrap'}`}>
             {filterTabs.map((tab) => {
               const count = statusCounts[tab.value] || 0;
               const isActive = activeFilter === tab.value;
@@ -147,7 +207,7 @@ export default function TripsPage() {
                   key={tab.value}
                   onClick={() => setActiveFilter(tab.value)}
                   className={`
-                    px-3 py-1.5 rounded-full text-xs font-medium transition-colors
+                    px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap shrink-0
                     ${isActive
                       ? "bg-foreground text-background"
                       : "bg-muted/50 text-muted-foreground hover:bg-muted"
@@ -168,103 +228,130 @@ export default function TripsPage() {
         </motion.div>
 
         {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <Card key={i}>
-                <Skeleton className="aspect-[16/10] rounded-t-md" />
-                <CardContent className="p-5 space-y-3">
-                  <Skeleton className="h-5 w-3/4" />
-                  <Skeleton className="h-4 w-1/2" />
-                  <Skeleton className="h-3 w-2/3" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          isMobile ? (
+            <div className="space-y-0">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-border/30">
+                  <Skeleton className="w-[72px] h-[72px] rounded-md shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-3 w-1/2" />
+                    <Skeleton className="h-3 w-1/3" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <Card key={i}>
+                  <Skeleton className="aspect-[16/10] rounded-t-md" />
+                  <CardContent className="p-5 space-y-3">
+                    <Skeleton className="h-5 w-3/4" />
+                    <Skeleton className="h-4 w-1/2" />
+                    <Skeleton className="h-3 w-2/3" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )
         ) : filtered.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filtered.map((trip, i) => {
-              const duration = getDuration(trip.startDate, trip.endDate);
-              const cfg = statusConfig[trip.status] || statusConfig.draft;
-
-              return (
-                <motion.div
+          isMobile ? (
+            <Card className="overflow-visible">
+              {filtered.map((trip) => (
+                <MobileTripRow
                   key={trip.id}
-                  custom={i}
-                  initial="hidden"
-                  animate="visible"
-                  variants={fadeUp}
-                >
-                  <Link href={`/trips/${trip.id}`}>
-                    <Card className="hover-elevate cursor-pointer h-full overflow-visible" data-testid={`card-trip-${trip.id}`}>
-                      <div className="relative aspect-[16/10] overflow-hidden rounded-t-md">
-                        {trip.coverImageUrl ? (
-                          <img
-                            src={trip.coverImageUrl}
-                            alt={trip.title}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className={`w-full h-full bg-gradient-to-br ${getGradient(trip.title)}`} />
-                        )}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
-                        <div className="absolute bottom-3 left-4 right-4">
-                          <h3 className="text-white text-base font-medium line-clamp-1 drop-shadow-sm" data-testid={`text-trip-card-title-${trip.id}`}>
-                            {trip.title}
-                          </h3>
-                          <div className="flex items-center gap-1.5 mt-1">
-                            <MapPin className="w-3 h-3 text-white/80 shrink-0" strokeWidth={1.5} />
-                            <span className="text-white/80 text-xs truncate">{trip.destination}</span>
+                  trip={trip}
+                  flightStatus={flightStatusMap?.[trip.id]}
+                />
+              ))}
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filtered.map((trip, i) => {
+                const duration = getDuration(trip.startDate, trip.endDate);
+                const cfg = statusConfig[trip.status] || statusConfig.draft;
+
+                return (
+                  <motion.div
+                    key={trip.id}
+                    custom={i}
+                    initial="hidden"
+                    animate="visible"
+                    variants={fadeUp}
+                  >
+                    <Link href={`/trips/${trip.id}`}>
+                      <Card className="hover-elevate cursor-pointer h-full overflow-visible" data-testid={`card-trip-${trip.id}`}>
+                        <div className="relative aspect-[16/10] overflow-hidden rounded-t-md">
+                          {trip.coverImageUrl ? (
+                            <img
+                              src={trip.coverImageUrl}
+                              alt={trip.title}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className={`w-full h-full bg-gradient-to-br ${getGradient(trip.title)}`} />
+                          )}
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
+                          <div className="absolute bottom-3 left-4 right-4">
+                            <h3 className="text-white text-base font-medium line-clamp-1 drop-shadow-sm" data-testid={`text-trip-card-title-${trip.id}`}>
+                              {trip.title}
+                            </h3>
+                            <div className="flex items-center gap-1.5 mt-1">
+                              <MapPin className="w-3 h-3 text-white/80 shrink-0" strokeWidth={1.5} />
+                              <span className="text-white/80 text-xs truncate">{trip.destination}</span>
+                            </div>
+                          </div>
+                          <div className="absolute top-3 right-3">
+                            <Badge
+                              variant="secondary"
+                              className={`text-[10px] uppercase tracking-wider ${cfg.className} no-default-hover-elevate no-default-active-elevate`}
+                            >
+                              {cfg.label}
+                            </Badge>
                           </div>
                         </div>
-                        <div className="absolute top-3 right-3">
-                          <Badge
-                            variant="secondary"
-                            className={`text-[10px] uppercase tracking-wider ${cfg.className} no-default-hover-elevate no-default-active-elevate`}
-                          >
-                            {cfg.label}
-                          </Badge>
-                        </div>
-                      </div>
 
-                      <CardContent className="p-4 space-y-2.5">
-                        {trip.clientName && (
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <User className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                            <span className="truncate" data-testid={`text-trip-client-${trip.id}`}>{trip.clientName}</span>
-                          </div>
-                        )}
-
-                        <div className="flex items-center gap-4 flex-wrap">
-                          {trip.startDate && (
+                        <CardContent className="p-4 space-y-2.5">
+                          {trip.clientName && (
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Calendar className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                              <span>
-                                {format(new Date(trip.startDate), "MMM d")}
-                                {trip.endDate && ` - ${format(new Date(trip.endDate), "MMM d, yyyy")}`}
-                              </span>
+                              <User className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                              <span className="truncate" data-testid={`text-trip-client-${trip.id}`}>{trip.clientName}</span>
                             </div>
                           )}
-                          {duration && (
+
+                          <div className="flex items-center gap-4 flex-wrap">
+                            {trip.startDate && (
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <Calendar className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                                <span>
+                                  {format(new Date(trip.startDate), "MMM d")}
+                                  {trip.endDate && ` - ${format(new Date(trip.endDate), "MMM d, yyyy")}`}
+                                </span>
+                              </div>
+                            )}
+                            {duration && (
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <Clock className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                                <span>{duration}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {trip.budget && (
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Clock className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                              <span>{duration}</span>
+                              <DollarSign className="w-3 h-3 shrink-0" strokeWidth={1.5} />
+                              <span>{trip.currency} {trip.budget.toLocaleString()}</span>
                             </div>
                           )}
-                        </div>
-
-                        {trip.budget && (
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <DollarSign className="w-3 h-3 shrink-0" strokeWidth={1.5} />
-                            <span>{trip.currency} {trip.budget.toLocaleString()}</span>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </Link>
-                </motion.div>
-              );
-            })}
-          </div>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  </motion.div>
+                );
+              })}
+            </div>
+          )
         ) : searchQuery || activeFilter !== "all" ? (
           <div className="py-20 text-center">
             <p className="font-serif text-xl text-muted-foreground/50 mb-1 tracking-tight">

@@ -25,10 +25,12 @@ import {
   MapPin,
   Building2,
   BarChart2,
+  MessageCircle,
 } from "lucide-react";
 
 const navItems = [
   { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { title: "Messages", path: "/dashboard/messages", icon: MessageCircle },
   { title: "Analytics", path: "/dashboard/analytics", icon: BarChart2 },
   { title: "Trips", path: "/trips", icon: Map },
   { title: "Clients", path: "/clients", icon: Users },
