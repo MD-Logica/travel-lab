@@ -303,10 +303,14 @@ export async function registerRoutes(
     try {
       const userId = req.user.claims.sub;
       const updateSchema = z.object({
-        fullName: z.string().min(1, "Name is required"),
+        fullName: z.string().min(1, "Name is required").optional(),
+        phone: z.string().optional().nullable(),
       });
       const parsed = updateSchema.parse(req.body);
-      const profile = await storage.updateProfile(userId, parsed);
+      const updateData: any = {};
+      if (parsed.fullName !== undefined) updateData.fullName = parsed.fullName;
+      if (parsed.phone !== undefined) updateData.phone = parsed.phone || null;
+      const profile = await storage.updateProfile(userId, updateData);
       if (!profile) return res.status(404).json({ message: "Profile not found" });
       res.json(profile);
     } catch (error: any) {
@@ -893,6 +897,184 @@ export async function registerRoutes(
       res.json(members);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch members" });
+    }
+  });
+
+  // ──── TEAM MANAGEMENT ──────────────────────────────────────────────
+
+  app.patch("/api/members/:memberId/role", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      if (req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only the owner can change roles" });
+      }
+      const schema = z.object({ role: z.enum(["owner", "advisor", "assistant"]) });
+      const { role } = schema.parse(req.body);
+      const memberId = req.params.memberId;
+      if (memberId === req._profile.id) {
+        return res.status(400).json({ message: "You cannot change your own role" });
+      }
+      const member = await storage.getProfile(memberId);
+      if (!member || member.orgId !== req._orgId) {
+        return res.status(404).json({ message: "Member not found" });
+      }
+      const updated = await storage.updateProfile(memberId, { role });
+      res.json(updated);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      res.status(500).json({ message: "Failed to update role" });
+    }
+  });
+
+  app.delete("/api/members/:memberId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      if (req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only the owner can remove members" });
+      }
+      const memberId = req.params.memberId;
+      if (memberId === req._profile.id) {
+        return res.status(400).json({ message: "You cannot remove yourself" });
+      }
+      const member = await storage.getProfile(memberId);
+      if (!member || member.orgId !== req._orgId) {
+        return res.status(404).json({ message: "Member not found" });
+      }
+      await storage.deleteProfile(memberId);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to remove member" });
+    }
+  });
+
+  app.get("/api/invitations", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const invites = await storage.getInvitationsByOrg(req._orgId);
+      res.json(invites);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch invitations" });
+    }
+  });
+
+  app.post("/api/invitations", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      if (req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only the owner can invite members" });
+      }
+      const schema = z.object({
+        email: z.string().email("Valid email required"),
+        role: z.enum(["advisor", "assistant"]),
+      });
+      const { email, role } = schema.parse(req.body);
+
+      const org = await storage.getOrganization(req._orgId);
+      if (!org) return res.status(404).json({ message: "Organization not found" });
+
+      const advisorCount = await storage.countAdvisorsByOrg(req._orgId);
+      if (advisorCount >= org.maxAdvisors) {
+        return res.status(403).json({
+          message: "plan_limit",
+          detail: `You've reached the ${org.plan} plan limit of ${org.maxAdvisors} team members.`,
+        });
+      }
+
+      const existing = await storage.getInvitationByEmail(email, req._orgId);
+      if (existing) {
+        return res.status(409).json({ message: "An invitation for this email is already pending" });
+      }
+
+      const existingMembers = await storage.getProfilesByOrg(req._orgId);
+      if (existingMembers.some((m) => m.email === email)) {
+        return res.status(409).json({ message: "This person is already a member" });
+      }
+
+      const crypto = await import("crypto");
+      const token = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+
+      const invitation = await storage.createInvitation({
+        orgId: req._orgId,
+        email,
+        role,
+        token,
+        status: "pending",
+        invitedBy: req._profile.id,
+        expiresAt,
+      });
+
+      res.status(201).json(invitation);
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      console.error("Create invitation error:", error);
+      res.status(500).json({ message: "Failed to create invitation" });
+    }
+  });
+
+  app.post("/api/invitations/:id/resend", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      if (req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only the owner can resend invitations" });
+      }
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+      const updated = await storage.updateInvitation(req.params.id, { expiresAt, status: "pending" });
+      if (!updated) return res.status(404).json({ message: "Invitation not found" });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to resend invitation" });
+    }
+  });
+
+  app.delete("/api/invitations/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      if (req._profile.role !== "owner") {
+        return res.status(403).json({ message: "Only the owner can cancel invitations" });
+      }
+      const deleted = await storage.deleteInvitation(req.params.id, req._orgId);
+      if (!deleted) return res.status(404).json({ message: "Invitation not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to cancel invitation" });
+    }
+  });
+
+  app.post("/api/invitations/accept", isAuthenticated, async (req: any, res) => {
+    try {
+      const schema = z.object({ token: z.string().min(1) });
+      const { token } = schema.parse(req.body);
+      const invitation = await storage.getInvitationByToken(token);
+      if (!invitation) return res.status(404).json({ message: "Invitation not found" });
+      if (invitation.status !== "pending") return res.status(400).json({ message: "Invitation is no longer valid" });
+      if (new Date(invitation.expiresAt) < new Date()) {
+        await storage.updateInvitation(invitation.id, { status: "expired" });
+        return res.status(400).json({ message: "Invitation has expired" });
+      }
+
+      const userId = req.user.claims.sub;
+      const existingProfile = await storage.getProfile(userId);
+      if (existingProfile) {
+        return res.status(400).json({ message: "You already belong to an organization" });
+      }
+
+      const profile = await storage.createProfile({
+        id: userId,
+        orgId: invitation.orgId,
+        role: invitation.role as any,
+        fullName: req.user.claims.first_name
+          ? `${req.user.claims.first_name} ${req.user.claims.last_name || ""}`.trim()
+          : req.user.claims.email || "Team Member",
+        email: req.user.claims.email || invitation.email,
+        avatarUrl: req.user.claims.profile_image_url || null,
+        invitedBy: invitation.invitedBy,
+      });
+
+      await storage.updateInvitation(invitation.id, { status: "accepted", acceptedAt: new Date() });
+
+      const org = await storage.getOrganization(invitation.orgId);
+      res.json({ organization: org, profile });
+    } catch (error: any) {
+      if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
+      console.error("Accept invitation error:", error);
+      res.status(500).json({ message: "Failed to accept invitation" });
     }
   });
 

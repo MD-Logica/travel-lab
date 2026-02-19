@@ -25,6 +25,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - **trip_documents**: id, org_id, trip_id, client_id, uploaded_by, file_name, file_type, file_size, storage_path, label, is_visible_to_client, created_at
 - **conversations**: id, org_id, client_id, last_message_at, created_at
 - **messages**: id, conversation_id, org_id, sender_type (advisor/client), sender_id, sender_name, content, is_read, created_at
+- **invitations**: id, org_id, email, role, token (unique), status (pending/accepted/expired/cancelled), invited_by, expires_at, accepted_at, created_at
 - **push_subscriptions**: id, profile_id, org_id, endpoint, p256dh, auth, created_at
 
 ## Plan Limits
@@ -64,6 +65,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - Install prompt: shows after 30s on first mobile visit
 
 ## Recent Changes
+- 2026-02-19: Settings page refactor — three-tab layout (Profile/Organisation/Billing); Profile: editable name, read-only email with lock icon+tooltip, phone with PhoneInput country code selector, initials avatar, conditional save button; Organisation: org name/logo editing, team members table with avatar+name/email/role/joined/actions columns, inline role change dropdown (owner only, can't demote self), remove member with confirmation dialog, "Invite team member" modal with email+role selector+descriptions+plan limit enforcement, pending invitations shown in table with Pending badge+expiry+resend/cancel; Billing: plan badge, trial days countdown, disabled "Manage billing" stub; invitations table in DB, invitation CRUD API routes, accept invitation endpoint, team management routes (role change, member removal)
 - 2026-02-19: Multi-city destination system — `destinations` jsonb column on trips for structured multi-destination support; DestinationInput component with Google Places cities autocomplete, free-text entry, tag-style chips, keyboard navigation, blur auto-commit, deduplication; formatDestinations/formatDestinationsShort display helpers; CurrencyInput integrated in trip-new/trip-detail budget fields; PDF export hardened with transport/charter segment support, currency formatting via Intl.NumberFormat, defensive null checks, try-catch error handling
 - 2026-02-19: Analytics page (/dashboard/analytics) — premium editorial design with Recharts; date range selector (30d/3m/12m/all time); 4 summary stat cards (total trips, active trips, total clients, portfolio value); trips-over-time area chart; top destinations horizontal bar chart; trips-by-status donut chart; most active clients table (clickable to profile); advisor activity table (owner only); graceful empty states; sidebar navigation with BarChart2 icon
 - 2026-02-19: Advisor productivity features — segment_templates table for reusable segment templates (Save as template checkbox in segment editor, template picker dropdown in Add menu, Templates section in Settings with rename/delete); trip duplication via Duplicate button in trip editor header (copies all versions/segments, lets you pick new client/dates, strips confirmation numbers)

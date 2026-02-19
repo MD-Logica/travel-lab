@@ -1,6 +1,7 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
   flightTracking, notifications, segmentTemplates, conversations, messages, pushSubscriptions,
+  invitations,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -14,6 +15,7 @@ import {
   type Conversation, type InsertConversation,
   type Message, type InsertMessage,
   type PushSubscription,
+  type Invitation, type InsertInvitation,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike, desc } from "drizzle-orm";
@@ -96,7 +98,15 @@ export interface IStorage {
   incrementTemplateUseCount(id: string, orgId: string): Promise<void>;
 
   updateProfile(userId: string, data: Partial<InsertProfile>): Promise<Profile | undefined>;
+  deleteProfile(userId: string): Promise<boolean>;
   updateOrganization(id: string, data: Partial<InsertOrganization>): Promise<Organization | undefined>;
+
+  createInvitation(data: InsertInvitation): Promise<Invitation>;
+  getInvitationsByOrg(orgId: string): Promise<(Invitation & { inviterName: string | null })[]>;
+  getInvitationByToken(token: string): Promise<Invitation | undefined>;
+  getInvitationByEmail(email: string, orgId: string): Promise<Invitation | undefined>;
+  updateInvitation(id: string, data: Partial<InsertInvitation>): Promise<Invitation | undefined>;
+  deleteInvitation(id: string, orgId: string): Promise<boolean>;
 
   getConversationsByOrg(orgId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]>;
   getOrCreateConversation(orgId: string, clientId: string): Promise<Conversation>;
@@ -437,6 +447,52 @@ export class DatabaseStorage implements IStorage {
       .where(eq(organizations.id, id))
       .returning();
     return result;
+  }
+
+  async deleteProfile(userId: string): Promise<boolean> {
+    const deleted = await db.delete(profiles).where(eq(profiles.id, userId)).returning();
+    return deleted.length > 0;
+  }
+
+  async createInvitation(data: InsertInvitation): Promise<Invitation> {
+    const [result] = await db.insert(invitations).values(data).returning();
+    return result;
+  }
+
+  async getInvitationsByOrg(orgId: string): Promise<(Invitation & { inviterName: string | null })[]> {
+    const rows = await db
+      .select({
+        invitation: invitations,
+        inviterName: profiles.fullName,
+      })
+      .from(invitations)
+      .leftJoin(profiles, eq(invitations.invitedBy, profiles.id))
+      .where(eq(invitations.orgId, orgId))
+      .orderBy(desc(invitations.createdAt));
+    return rows.map((r) => ({ ...r.invitation, inviterName: r.inviterName }));
+  }
+
+  async getInvitationByToken(token: string): Promise<Invitation | undefined> {
+    const [result] = await db.select().from(invitations).where(eq(invitations.token, token));
+    return result;
+  }
+
+  async getInvitationByEmail(email: string, orgId: string): Promise<Invitation | undefined> {
+    const [result] = await db
+      .select()
+      .from(invitations)
+      .where(and(eq(invitations.email, email), eq(invitations.orgId, orgId), eq(invitations.status, "pending")));
+    return result;
+  }
+
+  async updateInvitation(id: string, data: Partial<InsertInvitation>): Promise<Invitation | undefined> {
+    const [result] = await db.update(invitations).set(data).where(eq(invitations.id, id)).returning();
+    return result;
+  }
+
+  async deleteInvitation(id: string, orgId: string): Promise<boolean> {
+    const deleted = await db.delete(invitations).where(and(eq(invitations.id, id), eq(invitations.orgId, orgId))).returning();
+    return deleted.length > 0;
   }
 
   async getTripWithClient(id: string, orgId: string): Promise<(Trip & { clientName: string | null }) | undefined> {
