@@ -1,0 +1,124 @@
+Build the public-facing pages of Travel Lab — the marketing site that
+visitors see before they sign up. These pages live at the root of the
+app and must be visually stunning. This is the storefront.
+
+─── PAGES TO BUILD ──────────────────────────────────────────────────────────
+
+/ (landing page)
+/pricing
+/login  (already built in 1.2 — just ensure it's linked correctly)
+/signup (already built in 1.2 — just ensure it's linked correctly)
+
+─── NAVIGATION BAR ──────────────────────────────────────────────────────────
+
+Slim, clean top nav. Transparent over hero, white/frosted on scroll.
+  Left: "TRAVEL LAB" wordmark in serif
+  Right: "Pricing" link · "Log in" link · "Start free trial" button
+The "Start free trial" button is the only prominent CTA in the nav.
+Everything else is understated.
+
+─── LANDING PAGE (/) ────────────────────────────────────────────────────────
+
+HERO SECTION:
+  This must be breathtaking. A travel agency owner should land here and
+  immediately think: "this is the tool my business deserves."
+
+  Large editorial headline in serif — something like:
+    "The itinerary platform your clients will never forget."
+  One-line subheading: clean sans, warm and confident tone.
+  Two CTAs: "Start free trial" (primary) + "See a sample itinerary" (ghost)
+  
+  Hero visual: either a beautiful full-bleed destination image with overlay,
+  or an elegant device mockup showing the app. Your creative choice —
+  make it premium.
+
+SOCIAL PROOF BAR (below hero):
+  A slim strip: "Trusted by luxury travel advisors in 12 countries" or similar.
+  Logo placeholders for agencies (can be placeholder shapes for now).
+
+FEATURE SECTIONS (3-4 alternating sections below):
+  Each section: large elegant headline + body copy + visual (screenshot or
+  illustrated mockup). Alternate image left/right.
+
+  Section 1 — Itinerary Builder:
+    "Build itineraries your clients will treasure."
+    Describe the day-by-day timeline, segment types, cover images.
+
+  Section 2 — Client Portal:
+    "A private travel portal, just for them."
+    Describe the beautiful read-only view clients receive.
+
+  Section 3 — Multi-Advisor Teams:
+    "Built for agencies, not just solo advisors."
+    Describe team management, roles, shared client roster.
+
+  Section 4 — Export & Share:
+    "PDF itineraries. Calendar exports. One tap."
+
+FOOTER:
+  Clean, minimal. Links: Pricing · Log in · Sign up.
+  Copyright line. Nothing cluttered.
+
+─── PRICING PAGE (/pricing) ─────────────────────────────────────────────────
+
+This page must make the decision feel easy and obvious.
+
+Header: "Simple, transparent pricing." Serif, large.
+Subheading: "Start free. Upgrade when you're ready."
+
+THREE PLAN CARDS (side by side on desktop, stacked on mobile):
+
+  TRIAL (Free, 14 days):
+    Everything in Pro, limited to:
+    - Up to 3 advisors
+    - Up to 50 clients
+    - Up to 20 trips
+    CTA: "Start free trial" → /signup
+
+  PRO ($X/month — leave amount as [PRICE] placeholder):
+    - Up to 10 advisors
+    - Up to 500 clients
+    - Unlimited trips
+    - PDF & calendar export
+    - Client portal access
+    - Priority support
+    CTA: "Start with Pro" → /signup?plan=pro
+    Visual treatment: make this card stand out as the recommended plan.
+    Consider: slightly larger, subtle shadow, "Most Popular" badge.
+
+  ENTERPRISE (Custom pricing):
+    - Unlimited advisors & clients
+    - Custom branding / white-label
+    - Dedicated onboarding
+    - SLA + dedicated support
+    CTA: "Contact us" → mailto or contact form
+
+PLAN COMPARISON TABLE (below cards):
+  A clean feature comparison table showing all three plans side by side.
+  Features: Advisors, Clients, Trips, PDF Export, Client Portal, Team Roles,
+  White-label, Support tier.
+  Checkmarks / limits per column. Elegant, readable.
+
+FAQ SECTION (below table):
+  4-6 common questions, accordion style:
+  - "Can I cancel anytime?" — Yes, no lock-in.
+  - "What happens after the trial?" — You'll be prompted to upgrade.
+  - "Can I white-label this for my agency brand?" — Enterprise plan.
+  - "Do my clients need to pay anything?" — No, clients access for free.
+  - "Can I import my existing client data?" — Yes, via CSV (coming soon).
+
+─── UPGRADE PROMPT (in-app) ─────────────────────────────────────────────────
+
+When an advisor hits a plan limit (too many clients, advisors, or trips),
+show a beautiful in-app upgrade prompt — not a harsh error.
+
+Design: a modal or inline banner with:
+  - Warm, non-alarming message: "You've reached your plan limit for clients."
+  - Brief upgrade value prop: "Upgrade to Pro to add unlimited clients."
+  - Two buttons: "See pricing" (links to /pricing) + "Maybe later" (dismisses)
+  - Never block the user completely — let them view existing data always.
+
+Also: show a slim persistent trial banner at the top of the dashboard
+when the org is on trial, counting down days remaining.
+"Your free trial ends in 8 days. Upgrade to Pro →"
+Disappears when they upgrade. Not annoying — one line, subtle.
