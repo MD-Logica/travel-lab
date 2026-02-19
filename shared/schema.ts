@@ -46,6 +46,8 @@ export const clients = pgTable("clients", {
   notes: text("notes"),
   tags: text("tags").array(),
   avatarUrl: text("avatar_url"),
+  invited: text("invited").default("no"),
+  invitedAt: timestamp("invited_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
