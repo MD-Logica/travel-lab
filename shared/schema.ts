@@ -123,6 +123,70 @@ export const tripDocuments = pgTable("trip_documents", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const flightTracking = pgTable("flight_tracking", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  segmentId: varchar("segment_id").notNull().references(() => tripSegments.id, { onDelete: "cascade" }),
+  tripId: varchar("trip_id").notNull().references(() => trips.id, { onDelete: "cascade" }),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  flightNumber: text("flight_number").notNull(),
+  flightDate: text("flight_date").notNull(),
+  scheduledDeparture: text("scheduled_departure"),
+  scheduledArrival: text("scheduled_arrival"),
+  lastStatus: jsonb("last_status"),
+  lastCheckedAt: timestamp("last_checked_at"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  profileId: varchar("profile_id").notNull(),
+  type: text("type").notNull(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  data: jsonb("data"),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertFlightTrackingSchema = createInsertSchema(flightTracking).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type FlightTracking = typeof flightTracking.$inferSelect;
+export type InsertFlightTracking = z.infer<typeof insertFlightTrackingSchema>;
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+
+export const flightTrackingRelations = relations(flightTracking, ({ one }) => ({
+  segment: one(tripSegments, {
+    fields: [flightTracking.segmentId],
+    references: [tripSegments.id],
+  }),
+  trip: one(trips, {
+    fields: [flightTracking.tripId],
+    references: [trips.id],
+  }),
+  organization: one(organizations, {
+    fields: [flightTracking.orgId],
+    references: [organizations.id],
+  }),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [notifications.orgId],
+    references: [organizations.id],
+  }),
+}));
+
 export const tripDocumentsRelations = relations(tripDocuments, ({ one }) => ({
   trip: one(trips, {
     fields: [tripDocuments.tripId],
