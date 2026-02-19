@@ -37,6 +37,19 @@ export const profiles = pgTable("profiles", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const clients = pgTable("clients", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  fullName: text("full_name").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  notes: text("notes"),
+  tags: text("tags").array(),
+  avatarUrl: text("avatar_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const trips = pgTable("trips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   orgId: varchar("org_id").notNull().references(() => organizations.id),
@@ -58,6 +71,7 @@ export const trips = pgTable("trips", {
 
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   profiles: many(profiles),
+  clients: many(clients),
   trips: many(trips),
 }));
 
@@ -68,10 +82,22 @@ export const profilesRelations = relations(profiles, ({ one }) => ({
   }),
 }));
 
+export const clientsRelations = relations(clients, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [clients.orgId],
+    references: [organizations.id],
+  }),
+  trips: many(trips),
+}));
+
 export const tripsRelations = relations(trips, ({ one }) => ({
   organization: one(organizations, {
     fields: [trips.orgId],
     references: [organizations.id],
+  }),
+  client: one(clients, {
+    fields: [trips.clientId],
+    references: [clients.id],
   }),
 }));
 
@@ -86,6 +112,12 @@ export const insertProfileSchema = createInsertSchema(profiles).omit({
   updatedAt: true,
 });
 
+export const insertClientSchema = createInsertSchema(clients).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export const insertTripSchema = createInsertSchema(trips).omit({
   id: true,
   createdAt: true,
@@ -96,5 +128,7 @@ export type Organization = typeof organizations.$inferSelect;
 export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
 export type Profile = typeof profiles.$inferSelect;
 export type InsertProfile = z.infer<typeof insertProfileSchema>;
+export type Client = typeof clients.$inferSelect;
+export type InsertClient = z.infer<typeof insertClientSchema>;
 export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;

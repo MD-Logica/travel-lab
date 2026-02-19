@@ -1,7 +1,8 @@
 import {
-  organizations, profiles, trips,
+  organizations, profiles, clients, trips,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
+  type Client, type InsertClient,
   type Trip, type InsertTrip,
 } from "@shared/schema";
 import { db } from "./db";
@@ -18,6 +19,12 @@ export interface IStorage {
   getClientsByOrg(orgId: string): Promise<Profile[]>;
   countAdvisorsByOrg(orgId: string): Promise<number>;
   countClientsByOrg(orgId: string): Promise<number>;
+
+  createClient(client: InsertClient): Promise<Client>;
+  getClient(id: string, orgId: string): Promise<Client | undefined>;
+  getClientsByOrgWithTripCount(orgId: string): Promise<(Client & { tripCount: number })[]>;
+  updateClient(id: string, orgId: string, data: Partial<InsertClient>): Promise<Client | undefined>;
+  countClientsByOrgNew(orgId: string): Promise<number>;
 
   createTrip(trip: InsertTrip): Promise<Trip>;
   getTrip(id: string, orgId: string): Promise<Trip | undefined>;
@@ -84,6 +91,46 @@ export class DatabaseStorage implements IStorage {
     return result.count;
   }
 
+  async createClient(client: InsertClient): Promise<Client> {
+    const [result] = await db.insert(clients).values(client).returning();
+    return result;
+  }
+
+  async getClient(id: string, orgId: string): Promise<Client | undefined> {
+    const [result] = await db.select().from(clients).where(
+      and(eq(clients.id, id), eq(clients.orgId, orgId))
+    );
+    return result;
+  }
+
+  async getClientsByOrgWithTripCount(orgId: string): Promise<(Client & { tripCount: number })[]> {
+    const rows = await db
+      .select({
+        client: clients,
+        tripCount: sql<number>`cast(count(${trips.id}) as int)`,
+      })
+      .from(clients)
+      .leftJoin(trips, eq(clients.id, trips.clientId))
+      .where(eq(clients.orgId, orgId))
+      .groupBy(clients.id)
+      .orderBy(sql`${clients.fullName} ASC`);
+    return rows.map((r) => ({ ...r.client, tripCount: r.tripCount }));
+  }
+
+  async updateClient(id: string, orgId: string, data: Partial<InsertClient>): Promise<Client | undefined> {
+    const [result] = await db
+      .update(clients)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(clients.id, id), eq(clients.orgId, orgId)))
+      .returning();
+    return result;
+  }
+
+  async countClientsByOrgNew(orgId: string): Promise<number> {
+    const [result] = await db.select({ count: count() }).from(clients).where(eq(clients.orgId, orgId));
+    return result.count;
+  }
+
   async createTrip(trip: InsertTrip): Promise<Trip> {
     const [result] = await db.insert(trips).values(trip).returning();
     return result;
@@ -146,10 +193,10 @@ export class DatabaseStorage implements IStorage {
     const rows = await db
       .select({
         trip: trips,
-        clientName: profiles.fullName,
+        clientName: clients.fullName,
       })
       .from(trips)
-      .leftJoin(profiles, eq(trips.clientId, profiles.id))
+      .leftJoin(clients, eq(trips.clientId, clients.id))
       .where(eq(trips.orgId, orgId))
       .orderBy(sql`${trips.createdAt} DESC`)
       .limit(limit);
@@ -161,7 +208,7 @@ export class DatabaseStorage implements IStorage {
       this.countTripsByOrg(orgId),
       this.countActiveTripsByOrg(orgId),
       this.countCompletedTripsByOrg(orgId),
-      this.countClientsByOrg(orgId),
+      this.countClientsByOrgNew(orgId),
     ]);
     return { totalTrips, activeTrips, completedTrips, totalClients };
   }

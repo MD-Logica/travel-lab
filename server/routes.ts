@@ -361,10 +361,74 @@ export async function registerRoutes(
 
   app.get("/api/clients", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const clients = await storage.getClientsByOrg(req._orgId);
-      res.json(clients);
+      const clientsList = await storage.getClientsByOrgWithTripCount(req._orgId);
+      res.json(clientsList);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch clients" });
+    }
+  });
+
+  app.get("/api/clients/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const client = await storage.getClient(req.params.id, req._orgId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+      res.json(client);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch client" });
+    }
+  });
+
+  app.post("/api/clients", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const orgId = req._orgId;
+      const org = await storage.getOrganization(orgId);
+      if (!org) return res.status(404).json({ message: "Organization not found" });
+
+      const limits = PLAN_LIMITS[org.plan] || PLAN_LIMITS.trial;
+      const clientCount = await storage.countClientsByOrgNew(orgId);
+      if (clientCount >= limits.maxClients) {
+        return res.status(403).json({
+          message: "Client limit reached",
+          upgrade: true,
+          limit: limits.maxClients,
+          current: clientCount,
+        });
+      }
+
+      const schema = z.object({
+        fullName: z.string().min(1, "Name is required"),
+        email: z.string().email().optional().or(z.literal("")),
+        phone: z.string().optional().or(z.literal("")),
+        notes: z.string().optional().or(z.literal("")),
+        tags: z.array(z.string()).optional(),
+      });
+
+      const parsed = schema.parse(req.body);
+      const client = await storage.createClient({
+        orgId,
+        fullName: parsed.fullName,
+        email: parsed.email || null,
+        phone: parsed.phone || null,
+        notes: parsed.notes || null,
+        tags: parsed.tags || null,
+      });
+      res.status(201).json(client);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ message: error.errors[0].message });
+      }
+      console.error("Create client error:", error);
+      res.status(500).json({ message: "Failed to create client" });
+    }
+  });
+
+  app.patch("/api/clients/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const client = await storage.updateClient(req.params.id, req._orgId, req.body);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+      res.json(client);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update client" });
     }
   });
 

@@ -17,6 +17,7 @@ import DashboardPage from "@/pages/dashboard";
 import TripsPage from "@/pages/trips";
 import TripDetailPage from "@/pages/trip-detail";
 import ClientsPage from "@/pages/clients";
+import ClientDetailPage from "@/pages/client-detail";
 import SettingsPage from "@/pages/settings";
 import LoginPage from "@/pages/auth/login";
 import SignupPage from "@/pages/auth/signup";
@@ -48,6 +49,7 @@ function AuthenticatedLayout() {
               <Route path="/trips" component={TripsPage} />
               <Route path="/trips/:id" component={TripDetailPage} />
               <Route path="/clients" component={ClientsPage} />
+              <Route path="/clients/:id" component={ClientDetailPage} />
               <Route path="/settings" component={SettingsPage} />
               <Route component={NotFound} />
             </Switch>
