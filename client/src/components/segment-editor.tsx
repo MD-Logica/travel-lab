@@ -17,10 +17,13 @@ import {
   X, Plus, ImageIcon, DollarSign, Star, Clock, MapPin, Phone,
   Globe, Hash, User, Truck, Train, Bus, Anchor,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Landmark, Palette,
-  Dumbbell, Sparkles, Ticket, Search, Bookmark,
+  Dumbbell, Sparkles, Ticket, Search, Bookmark, Loader2, Check,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PlacesAutocomplete, getPhotoUrl } from "@/components/places-autocomplete";
+import { PhoneInput } from "@/components/phone-input";
+import { CurrencyInput } from "@/components/currency-input";
 import type { TripSegment } from "@shared/schema";
 
 function deriveTitle(type: string, metadata: Record<string, any>): string {
@@ -125,8 +128,107 @@ function StarRating({ value, onChange }: { value: number; onChange: (v: number) 
 
 function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  const [searchNumber, setSearchNumber] = useState(metadata.flightNumber || "");
+  const [searchDate, setSearchDate] = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResult, setSearchResult] = useState<any>(null);
+  const [searchError, setSearchError] = useState("");
+
+  const handleSearch = async () => {
+    if (!searchNumber.trim()) return;
+    setIsSearching(true);
+    setSearchResult(null);
+    setSearchError("");
+    try {
+      const res = await fetch("/api/flights/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ flightNumber: searchNumber.trim(), date: searchDate || undefined }),
+      });
+      const data = await res.json();
+      if (data.found && data.flight) {
+        setSearchResult(data.flight);
+      } else {
+        setSearchError("Flight not found \u2014 you can enter the details manually below.");
+      }
+    } catch {
+      setSearchError("Flight not found \u2014 you can enter the details manually below.");
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const applyFlightData = () => {
+    if (!searchResult) return;
+    const f = searchResult;
+    const depTime = f.departureTime ? f.departureTime.replace(" ", "T").slice(0, 16) : "";
+    const arrTime = f.arrivalTime ? f.arrivalTime.replace(" ", "T").slice(0, 16) : "";
+    onChange({
+      ...metadata,
+      airline: f.airline || metadata.airline,
+      flightNumber: f.flightNumber || metadata.flightNumber,
+      departureAirport: f.departureIata || metadata.departureAirport,
+      departureAirportName: f.departureAirport || "",
+      departureDateTime: depTime || metadata.departureDateTime,
+      departureTerminal: f.departureTerminal || metadata.departureTerminal,
+      departureGate: f.departureGate || metadata.departureGate,
+      arrivalAirport: f.arrivalIata || metadata.arrivalAirport,
+      arrivalAirportName: f.arrivalAirport || "",
+      arrivalDateTime: arrTime || metadata.arrivalDateTime,
+      arrivalTerminal: f.arrivalTerminal || metadata.arrivalTerminal,
+      arrivalGate: f.arrivalGate || metadata.arrivalGate,
+    });
+    setSearchResult(null);
+  };
+
   return (
     <div className="space-y-3">
+      <SectionHeading>Search Flight</SectionHeading>
+      <div className="flex gap-2 items-end flex-wrap">
+        <div className="flex-1 min-w-[120px]">
+          <FieldLabel>Flight Number</FieldLabel>
+          <Input value={searchNumber} onChange={(e) => setSearchNumber(e.target.value)} placeholder="BA560" data-testid="input-flight-search-number"
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSearch(); } }} />
+        </div>
+        <div className="flex-1 min-w-[120px]">
+          <FieldLabel>Date (optional)</FieldLabel>
+          <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} data-testid="input-flight-search-date" />
+        </div>
+        <Button variant="default" size="default" onClick={handleSearch} disabled={isSearching || !searchNumber.trim()} data-testid="button-search-flight">
+          {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4 mr-1.5" />}
+          Search
+        </Button>
+      </div>
+
+      {searchResult && (
+        <div className="border border-border rounded-md p-3 space-y-2 bg-accent/20" data-testid="card-flight-result">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant="outline" className="text-xs">{searchResult.airline}</Badge>
+            <span className="font-medium text-sm">{searchResult.flightNumber}</span>
+          </div>
+          <div className="text-sm text-muted-foreground">
+            {searchResult.departureIata || searchResult.departureAirport} <span className="mx-1">{"\u2192"}</span> {searchResult.arrivalIata || searchResult.arrivalAirport}
+          </div>
+          {(searchResult.departureTime || searchResult.arrivalTime) && (
+            <div className="text-xs text-muted-foreground/60">
+              {searchResult.departureTime && <span>Departs: {new Date(searchResult.departureTime).toLocaleString()}</span>}
+              {searchResult.departureTime && searchResult.arrivalTime && <span className="mx-2">|</span>}
+              {searchResult.arrivalTime && <span>Arrives: {new Date(searchResult.arrivalTime).toLocaleString()}</span>}
+            </div>
+          )}
+          {searchResult.aircraft && <div className="text-xs text-muted-foreground/40">Aircraft: {searchResult.aircraft}</div>}
+          <Button size="sm" onClick={applyFlightData} data-testid="button-use-flight">
+            <Check className="w-3.5 h-3.5 mr-1.5" />
+            Use this flight
+          </Button>
+        </div>
+      )}
+
+      {searchError && (
+        <p className="text-sm text-muted-foreground/60 italic" data-testid="text-flight-not-found">{searchError}</p>
+      )}
+
       <SectionHeading>Flight Details</SectionHeading>
       <FieldRow>
         <div>
@@ -257,13 +359,32 @@ function CharterFields({ metadata, onChange }: { metadata: Record<string, any>; 
 
 function HotelFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  const handlePlaceSelect = (details: any) => {
+    onChange({
+      ...metadata,
+      hotelName: details.name || metadata.hotelName,
+      address: details.address || metadata.address,
+      phone: details.phone || metadata.phone,
+      website: details.website || metadata.website,
+      mapsUrl: details.mapsUrl || metadata.mapsUrl,
+      starRating: details.rating ? Math.round(details.rating) : metadata.starRating,
+      photos: details.photoRefs?.length ? details.photoRefs.map((r: string) => getPhotoUrl(r)) : metadata.photos,
+      placeDescription: details.editorialSummary || details.firstReview || metadata.placeDescription,
+    });
+  };
   return (
     <div className="space-y-3">
+      <SectionHeading>Search Hotel</SectionHeading>
+      <PlacesAutocomplete
+        value={metadata.hotelName || ""}
+        onValueChange={(v) => set("hotelName", v)}
+        onPlaceSelect={handlePlaceSelect}
+        placeholder="Search hotels..."
+        types="lodging"
+        testId="input-hotel-search"
+      />
+
       <SectionHeading>Hotel Details</SectionHeading>
-      <div>
-        <FieldLabel>Hotel Name</FieldLabel>
-        <Input value={metadata.hotelName || ""} onChange={(e) => set("hotelName", e.target.value)} placeholder="Aman Venice" data-testid="input-hotel-name" />
-      </div>
       <div>
         <FieldLabel>Star Rating</FieldLabel>
         <StarRating value={metadata.starRating || 0} onChange={(v) => set("starRating", v)} />
@@ -275,13 +396,40 @@ function HotelFields({ metadata, onChange }: { metadata: Record<string, any>; on
       <FieldRow>
         <div>
           <FieldLabel>Phone</FieldLabel>
-          <Input value={metadata.phone || ""} onChange={(e) => set("phone", e.target.value)} placeholder="+39 041 270 7333" data-testid="input-hotel-phone" />
+          <PhoneInput value={metadata.phone || ""} onChange={(v) => set("phone", v)} placeholder="Hotel phone" testId="input-hotel-phone" />
         </div>
         <div>
           <FieldLabel>Website</FieldLabel>
           <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} placeholder="https://aman.com" data-testid="input-hotel-website" />
         </div>
       </FieldRow>
+      {metadata.mapsUrl && (
+        <div>
+          <a href={metadata.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1" data-testid="link-hotel-maps">
+            <MapPin className="w-3 h-3" /> View on Google Maps
+          </a>
+        </div>
+      )}
+
+      {metadata.photos && metadata.photos.length > 0 && (
+        <div>
+          <FieldLabel>Photos from Google</FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            {(metadata.photos as string[]).slice(0, 4).map((url: string, i: number) => (
+              <div key={i} className="relative w-16 h-16 rounded-md overflow-hidden bg-muted">
+                <img src={url} alt="" className="w-full h-full object-cover" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {metadata.placeDescription && (
+        <div>
+          <FieldLabel>Description</FieldLabel>
+          <p className="text-xs text-muted-foreground/60 leading-relaxed">{metadata.placeDescription}</p>
+        </div>
+      )}
 
       <SectionHeading>Stay</SectionHeading>
       <FieldRow>
@@ -377,7 +525,7 @@ function TransportFields({ metadata, onChange }: { metadata: Record<string, any>
         </div>
         <div>
           <FieldLabel>Driver Phone</FieldLabel>
-          <Input value={metadata.driverPhone || ""} onChange={(e) => set("driverPhone", e.target.value)} data-testid="input-driver-phone" />
+          <PhoneInput value={metadata.driverPhone || ""} onChange={(v) => set("driverPhone", v)} placeholder="Driver phone" testId="input-driver-phone" />
         </div>
       </FieldRow>
       <div>
@@ -390,33 +538,81 @@ function TransportFields({ metadata, onChange }: { metadata: Record<string, any>
 
 function RestaurantFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  const priceLevelLabels = ["", "$", "$$", "$$$", "$$$$"];
+  const handlePlaceSelect = (details: any) => {
+    const cuisineType = (details.types || []).find((t: string) =>
+      ["restaurant", "cafe", "bar", "bakery", "meal_delivery", "meal_takeaway"].includes(t) === false
+      && !["point_of_interest", "establishment", "food"].includes(t)
+    );
+    onChange({
+      ...metadata,
+      restaurantName: details.name || metadata.restaurantName,
+      address: details.address || metadata.address,
+      phone: details.phone || metadata.phone,
+      website: details.website || metadata.website,
+      mapsUrl: details.mapsUrl || metadata.mapsUrl,
+      cuisine: cuisineType ? cuisineType.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) : metadata.cuisine,
+      priceLevel: details.priceLevel != null ? priceLevelLabels[details.priceLevel] || "" : metadata.priceLevel,
+      photos: details.photoRefs?.length ? details.photoRefs.slice(0, 3).map((r: string) => getPhotoUrl(r)) : metadata.photos,
+    });
+  };
   return (
     <div className="space-y-3">
+      <SectionHeading>Search Restaurant</SectionHeading>
+      <PlacesAutocomplete
+        value={metadata.restaurantName || ""}
+        onValueChange={(v) => set("restaurantName", v)}
+        onPlaceSelect={handlePlaceSelect}
+        placeholder="Search restaurants..."
+        types="restaurant"
+        testId="input-restaurant-search"
+      />
+
       <SectionHeading>Restaurant Details</SectionHeading>
-      <div>
-        <FieldLabel>Restaurant Name</FieldLabel>
-        <Input value={metadata.restaurantName || ""} onChange={(e) => set("restaurantName", e.target.value)} placeholder="Noma" data-testid="input-restaurant-name" />
-      </div>
       <FieldRow>
         <div>
           <FieldLabel>Cuisine</FieldLabel>
           <Input value={metadata.cuisine || ""} onChange={(e) => set("cuisine", e.target.value)} placeholder="New Nordic" data-testid="input-cuisine" />
         </div>
         <div>
-          <FieldLabel>Address</FieldLabel>
-          <Input value={metadata.address || ""} onChange={(e) => set("address", e.target.value)} placeholder="Refshalevej 96, Copenhagen" data-testid="input-restaurant-address" />
+          <FieldLabel>Price Level</FieldLabel>
+          <Input value={metadata.priceLevel || ""} onChange={(e) => set("priceLevel", e.target.value)} placeholder="$$$" data-testid="input-price-level" />
         </div>
       </FieldRow>
+      <div>
+        <FieldLabel>Address</FieldLabel>
+        <Input value={metadata.address || ""} onChange={(e) => set("address", e.target.value)} placeholder="Refshalevej 96, Copenhagen" data-testid="input-restaurant-address" />
+      </div>
       <FieldRow>
         <div>
           <FieldLabel>Phone</FieldLabel>
-          <Input value={metadata.phone || ""} onChange={(e) => set("phone", e.target.value)} placeholder="+45 3296 3297" data-testid="input-restaurant-phone" />
+          <PhoneInput value={metadata.phone || ""} onChange={(v) => set("phone", v)} placeholder="Restaurant phone" testId="input-restaurant-phone" />
         </div>
         <div>
           <FieldLabel>Website</FieldLabel>
           <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} placeholder="https://noma.dk" data-testid="input-restaurant-website" />
         </div>
       </FieldRow>
+      {metadata.mapsUrl && (
+        <div>
+          <a href={metadata.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1" data-testid="link-restaurant-maps">
+            <MapPin className="w-3 h-3" /> View on Google Maps
+          </a>
+        </div>
+      )}
+
+      {metadata.photos && metadata.photos.length > 0 && (
+        <div>
+          <FieldLabel>Photos from Google</FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            {(metadata.photos as string[]).slice(0, 3).map((url: string, i: number) => (
+              <div key={i} className="relative w-16 h-16 rounded-md overflow-hidden bg-muted">
+                <img src={url} alt="" className="w-full h-full object-cover" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <SectionHeading>Reservation</SectionHeading>
       <FieldRow>
@@ -458,13 +654,33 @@ const activityCategories = [
 
 function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  const handlePlaceSelect = (details: any) => {
+    const placeCategory = (details.types || []).find((t: string) =>
+      !["point_of_interest", "establishment"].includes(t)
+    );
+    onChange({
+      ...metadata,
+      activityName: details.name || metadata.activityName,
+      location: details.address || metadata.location,
+      phone: details.phone || metadata.phone,
+      website: details.website || metadata.website,
+      mapsUrl: details.mapsUrl || metadata.mapsUrl,
+      category: placeCategory ? (activityCategories.find(c => placeCategory.includes(c.value))?.value || metadata.category) : metadata.category,
+      photos: details.photoRefs?.length ? details.photoRefs.slice(0, 3).map((r: string) => getPhotoUrl(r)) : metadata.photos,
+    });
+  };
   return (
     <div className="space-y-3">
+      <SectionHeading>Search Activity / Place</SectionHeading>
+      <PlacesAutocomplete
+        value={metadata.activityName || ""}
+        onValueChange={(v) => set("activityName", v)}
+        onPlaceSelect={handlePlaceSelect}
+        placeholder="Search places, attractions..."
+        testId="input-activity-search"
+      />
+
       <SectionHeading>Activity Details</SectionHeading>
-      <div>
-        <FieldLabel>Activity Name</FieldLabel>
-        <Input value={metadata.activityName || ""} onChange={(e) => set("activityName", e.target.value)} placeholder="Private gondola tour" data-testid="input-activity-name" />
-      </div>
       <div>
         <FieldLabel>Category</FieldLabel>
         <div className="flex flex-wrap gap-1.5">
@@ -491,6 +707,37 @@ function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>;
         <FieldLabel>Location</FieldLabel>
         <Input value={metadata.location || ""} onChange={(e) => set("location", e.target.value)} placeholder="Piazza San Marco" data-testid="input-activity-location" />
       </div>
+      <FieldRow>
+        <div>
+          <FieldLabel>Phone</FieldLabel>
+          <PhoneInput value={metadata.phone || ""} onChange={(v) => set("phone", v)} placeholder="Contact phone" testId="input-activity-phone" />
+        </div>
+        <div>
+          <FieldLabel>Website</FieldLabel>
+          <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} placeholder="https://..." data-testid="input-activity-website" />
+        </div>
+      </FieldRow>
+      {metadata.mapsUrl && (
+        <div>
+          <a href={metadata.mapsUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1" data-testid="link-activity-maps">
+            <MapPin className="w-3 h-3" /> View on Google Maps
+          </a>
+        </div>
+      )}
+
+      {metadata.photos && metadata.photos.length > 0 && (
+        <div>
+          <FieldLabel>Photos from Google</FieldLabel>
+          <div className="flex flex-wrap gap-2">
+            {(metadata.photos as string[]).slice(0, 3).map((url: string, i: number) => (
+              <div key={i} className="relative w-16 h-16 rounded-md overflow-hidden bg-muted">
+                <img src={url} alt="" className="w-full h-full object-cover" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <FieldRow>
         <div>
           <FieldLabel>Date + Time</FieldLabel>
@@ -874,12 +1121,12 @@ export function SegmentEditor({
           <FieldRow>
             <div>
               <FieldLabel>Cost</FieldLabel>
-              <Input
-                type="number"
+              <CurrencyInput
                 value={cost}
-                onChange={(e) => setCost(e.target.value)}
+                onChange={setCost}
+                currency={currency}
                 placeholder="0"
-                data-testid="input-segment-cost"
+                testId="input-segment-cost"
               />
             </div>
             <div>

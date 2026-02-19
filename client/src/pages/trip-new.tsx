@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CurrencyInput } from "@/components/currency-input";
 import {
   Select,
   SelectContent,
@@ -422,7 +423,13 @@ export default function TripNewPage() {
                             <FormItem>
                               <FormLabel className="text-xs text-muted-foreground">Budget</FormLabel>
                               <FormControl>
-                                <Input type="number" placeholder="10000" data-testid="input-trip-budget" {...field} />
+                                <CurrencyInput
+                                  value={field.value || ""}
+                                  onChange={field.onChange}
+                                  currency={form.getValues("currency") || "USD"}
+                                  placeholder="10,000"
+                                  testId="input-trip-budget"
+                                />
                               </FormControl>
                               <FormMessage />
                             </FormItem>

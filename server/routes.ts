@@ -1348,6 +1348,203 @@ export async function registerRoutes(
     }
   });
 
+  // ── Google Places API proxy endpoints ──
+  app.get("/api/places/autocomplete", isAuthenticated, async (req: any, res) => {
+    try {
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+      if (!apiKey) {
+        console.warn("[Places] GOOGLE_PLACES_API_KEY not configured");
+        return res.status(503).json({ message: "Places API not configured" });
+      }
+      const { input, types } = req.query;
+      if (!input || typeof input !== "string" || input.length < 2) {
+        return res.json({ predictions: [] });
+      }
+      const params = new URLSearchParams({
+        input,
+        key: apiKey,
+        ...(types && typeof types === "string" ? { types } : {}),
+      });
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`;
+      const apiRes = await fetch(url);
+      const data = await apiRes.json();
+      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+        console.warn("[Places] Autocomplete API status:", data.status, data.error_message);
+      }
+      res.json({ predictions: data.predictions || [] });
+    } catch (error) {
+      console.error("[Places] Autocomplete error:", error);
+      res.status(500).json({ message: "Places autocomplete failed" });
+    }
+  });
+
+  app.get("/api/places/details", isAuthenticated, async (req: any, res) => {
+    try {
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+      if (!apiKey) {
+        return res.status(503).json({ message: "Places API not configured" });
+      }
+      const { placeId } = req.query;
+      if (!placeId || typeof placeId !== "string") {
+        return res.status(400).json({ message: "placeId required" });
+      }
+      const fields = "name,formatted_address,formatted_phone_number,international_phone_number,website,url,rating,price_level,types,editorial_summary,reviews,photos,geometry";
+      const params = new URLSearchParams({
+        place_id: placeId,
+        fields,
+        key: apiKey,
+      });
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?${params}`;
+      const apiRes = await fetch(url);
+      const data = await apiRes.json();
+      if (data.status !== "OK") {
+        console.warn("[Places] Details API status:", data.status, data.error_message);
+        return res.status(404).json({ message: "Place not found" });
+      }
+      const result = data.result;
+      const photoRefs = (result.photos || []).slice(0, 4).map((p: any) => p.photo_reference);
+      res.json({
+        name: result.name,
+        address: result.formatted_address,
+        phone: result.international_phone_number || result.formatted_phone_number,
+        website: result.website,
+        mapsUrl: result.url,
+        rating: result.rating,
+        priceLevel: result.price_level,
+        types: result.types || [],
+        editorialSummary: result.editorial_summary?.overview,
+        firstReview: result.reviews?.[0]?.text,
+        photoRefs,
+        lat: result.geometry?.location?.lat,
+        lng: result.geometry?.location?.lng,
+      });
+    } catch (error) {
+      console.error("[Places] Details error:", error);
+      res.status(500).json({ message: "Places details failed" });
+    }
+  });
+
+  app.get("/api/places/photo", async (req, res) => {
+    try {
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+      if (!apiKey) {
+        return res.status(503).send("Places API not configured");
+      }
+      const { ref, maxwidth } = req.query;
+      if (!ref || typeof ref !== "string") {
+        return res.status(400).send("photo reference required");
+      }
+      const width = maxwidth && typeof maxwidth === "string" ? maxwidth : "800";
+      const params = new URLSearchParams({
+        photoreference: ref,
+        maxwidth: width,
+        key: apiKey,
+      });
+      const url = `https://maps.googleapis.com/maps/api/place/photo?${params}`;
+      const apiRes = await fetch(url, { redirect: "follow" });
+      if (!apiRes.ok) {
+        return res.status(apiRes.status).send("Photo not available");
+      }
+      const contentType = apiRes.headers.get("content-type") || "image/jpeg";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      const buffer = Buffer.from(await apiRes.arrayBuffer());
+      res.send(buffer);
+    } catch (error) {
+      console.error("[Places] Photo proxy error:", error);
+      res.status(500).send("Photo proxy failed");
+    }
+  });
+
+  // ── FlightLabs flight search proxy ──
+  app.post("/api/flights/search", isAuthenticated, async (req: any, res) => {
+    try {
+      const apiKey = process.env.FLIGHTLABS_API_KEY;
+      if (!apiKey) {
+        console.warn("[FlightSearch] FLIGHTLABS_API_KEY not configured");
+        return res.status(503).json({ message: "Flight search API not configured" });
+      }
+      const { flightNumber, date } = req.body;
+      if (!flightNumber || typeof flightNumber !== "string") {
+        return res.status(400).json({ message: "flightNumber required" });
+      }
+      const cleaned = flightNumber.replace(/\s+/g, "").toUpperCase();
+      const flightIata = cleaned;
+      const params = new URLSearchParams({
+        access_key: apiKey,
+        flight_iata: flightIata,
+      });
+      const url = `https://app.goflightlabs.com/advanced-real-time-flights?${params}`;
+      const apiRes = await fetch(url);
+      const data = await apiRes.json();
+
+      if (!data || data.error || (!data.data && !Array.isArray(data))) {
+        const schedParams = new URLSearchParams({
+          access_key: apiKey,
+          flight_iata: flightIata,
+        });
+        const schedUrl = `https://app.goflightlabs.com/flights?${schedParams}`;
+        const schedRes = await fetch(schedUrl);
+        const schedData = await schedRes.json();
+
+        const flights = schedData?.data || (Array.isArray(schedData) ? schedData : []);
+        if (!flights.length) {
+          return res.json({ found: false, flight: null });
+        }
+        const f = flights[0];
+        return res.json({
+          found: true,
+          flight: {
+            airline: f.airline?.name || "",
+            airlineIata: f.airline?.iata || "",
+            flightNumber: f.flight?.iata || flightIata,
+            departureAirport: f.departure?.airport || "",
+            departureIata: f.departure?.iata || "",
+            departureTime: f.departure?.scheduled || f.departure?.estimated || "",
+            departureTerminal: f.departure?.terminal || "",
+            departureGate: f.departure?.gate || "",
+            arrivalAirport: f.arrival?.airport || "",
+            arrivalIata: f.arrival?.iata || "",
+            arrivalTime: f.arrival?.scheduled || f.arrival?.estimated || "",
+            arrivalTerminal: f.arrival?.terminal || "",
+            arrivalGate: f.arrival?.gate || "",
+            status: f.flight_status || "",
+            aircraft: f.aircraft?.registration || "",
+          },
+        });
+      }
+
+      const flights = data.data || (Array.isArray(data) ? data : []);
+      if (!flights.length) {
+        return res.json({ found: false, flight: null });
+      }
+      const f = flights[0];
+      res.json({
+        found: true,
+        flight: {
+          airline: f.airline?.name || "",
+          airlineIata: f.airline?.iata || "",
+          flightNumber: f.flight?.iata || flightIata,
+          departureAirport: f.departure?.airport || "",
+          departureIata: f.departure?.iata || "",
+          departureTime: f.departure?.scheduled || f.departure?.estimated || "",
+          departureTerminal: f.departure?.terminal || "",
+          departureGate: f.departure?.gate || "",
+          arrivalAirport: f.arrival?.airport || "",
+          arrivalIata: f.arrival?.iata || "",
+          arrivalTime: f.arrival?.scheduled || f.arrival?.estimated || "",
+          arrivalTerminal: f.arrival?.terminal || "",
+          arrivalGate: f.arrival?.gate || "",
+          status: f.flight_status || "",
+          aircraft: f.aircraft?.registration || "",
+        },
+      });
+    } catch (error) {
+      console.error("[FlightSearch] Error:", error);
+      res.status(500).json({ message: "Flight search failed" });
+    }
+  });
+
   app.get("/api/push/vapid-key", (req, res) => {
     res.json({ publicKey: process.env.VAPID_PUBLIC_KEY || "" });
   });

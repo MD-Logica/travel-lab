@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { PhoneInput } from "@/components/phone-input";
 import {
   Select,
   SelectContent,
@@ -1650,14 +1651,12 @@ export default function ClientDetailPage() {
                           data-testid="input-edit-email"
                         />
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <Phone className="w-3.5 h-3.5 text-muted-foreground/40" strokeWidth={1.5} />
-                        <Input
+                      <div className="w-64">
+                        <PhoneInput
                           value={editPhone}
-                          onChange={(e) => setEditPhone(e.target.value)}
+                          onChange={setEditPhone}
                           placeholder="Phone"
-                          className="h-7 text-sm border-0 border-b border-border/30 rounded-none px-0 focus-visible:ring-0 focus-visible:border-foreground/30 bg-transparent w-40"
-                          data-testid="input-edit-phone"
+                          testId="input-edit-phone"
                         />
                       </div>
                     </>
