@@ -13,12 +13,12 @@ import {
 import {
   ArrowLeft, Plus, Plane, Ship, Hotel, Car, UtensilsCrossed, Activity,
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
-  Copy, Star, MapPin, Calendar,
+  Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SegmentEditor } from "@/components/segment-editor";
-import type { Trip, TripVersion, TripSegment } from "@shared/schema";
+import type { Trip, TripVersion, TripSegment, Client } from "@shared/schema";
 import { format } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
@@ -149,6 +149,134 @@ function SegmentCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+interface ClientPrefs {
+  travelStyle?: { tier?: string; pace?: string; notes?: string };
+  flights?: { cabin?: string; seatPreference?: string; preferredAirlines?: string[]; notes?: string };
+  hotels?: { tier?: string; preferredBrands?: string[]; roomPreferences?: string; notes?: string };
+  dining?: { dietary?: string[]; cuisinePreferences?: string[]; diningStyle?: string; notes?: string };
+  interests?: { selected?: string[]; notes?: string };
+  generalNotes?: string;
+}
+
+function ClientPreferencesPanel({ clientId, clientName }: { clientId: string; clientName: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const { data: client } = useQuery<Client>({
+    queryKey: ["/api/clients", clientId],
+    enabled: !!clientId,
+  });
+
+  const prefs = (client?.preferences as ClientPrefs | null) || null;
+  if (!prefs) return null;
+
+  const formatVal = (v?: string) => {
+    if (!v) return null;
+    return v.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  };
+
+  const hasContent = !!(
+    prefs.travelStyle?.tier || prefs.travelStyle?.pace ||
+    prefs.flights?.cabin ||
+    prefs.hotels?.tier || (prefs.hotels?.preferredBrands && prefs.hotels.preferredBrands.length > 0) ||
+    (prefs.dining?.dietary && prefs.dining.dietary.length > 0) ||
+    prefs.dining?.diningStyle ||
+    (prefs.interests?.selected && prefs.interests.selected.length > 0) ||
+    prefs.generalNotes
+  );
+
+  if (!hasContent) return null;
+
+  return (
+    <div className="border-l border-border/40 bg-muted/20" data-testid="panel-client-preferences">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 px-3 py-2.5 w-full text-left text-sm font-medium hover:bg-muted/40 transition-colors"
+        data-testid="button-toggle-preferences-panel"
+      >
+        <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} strokeWidth={1.5} />
+        <Heart className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.5} />
+        <span className="truncate">Client Preferences</span>
+      </button>
+
+      {isOpen && (
+        <div className="px-3 pb-4 space-y-4 overflow-y-auto max-h-[calc(100vh-200px)]">
+          <p className="text-[11px] text-muted-foreground/50 font-medium">{clientName}</p>
+
+          {prefs.travelStyle?.tier && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-1">Travel Style</p>
+              <p className="text-xs">{formatVal(prefs.travelStyle.tier)}{prefs.travelStyle.pace ? ` · ${formatVal(prefs.travelStyle.pace)}` : ""}</p>
+              {prefs.travelStyle.notes && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{prefs.travelStyle.notes}</p>}
+            </div>
+          )}
+
+          {prefs.flights?.cabin && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-1">Flights</p>
+              <p className="text-xs">{formatVal(prefs.flights.cabin)}{prefs.flights.seatPreference ? ` · ${formatVal(prefs.flights.seatPreference)}` : ""}</p>
+              {prefs.flights.preferredAirlines && prefs.flights.preferredAirlines.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {prefs.flights.preferredAirlines.map((a) => (
+                    <Badge key={a} variant="secondary" className="text-[10px] font-normal no-default-hover-elevate no-default-active-elevate">{a}</Badge>
+                  ))}
+                </div>
+              )}
+              {prefs.flights.notes && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{prefs.flights.notes}</p>}
+            </div>
+          )}
+
+          {prefs.hotels?.tier && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-1">Hotels</p>
+              <p className="text-xs">{formatVal(prefs.hotels.tier)}</p>
+              {prefs.hotels.preferredBrands && prefs.hotels.preferredBrands.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {prefs.hotels.preferredBrands.map((b) => (
+                    <Badge key={b} variant="secondary" className="text-[10px] font-normal no-default-hover-elevate no-default-active-elevate">{b}</Badge>
+                  ))}
+                </div>
+              )}
+              {prefs.hotels.notes && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{prefs.hotels.notes}</p>}
+            </div>
+          )}
+
+          {prefs.dining?.dietary && prefs.dining.dietary.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-1">Dietary</p>
+              <div className="flex flex-wrap gap-1">
+                {prefs.dining.dietary.map((d) => (
+                  <Badge key={d} variant="secondary" className="text-[10px] font-normal no-default-hover-elevate no-default-active-elevate">{d}</Badge>
+                ))}
+              </div>
+              {prefs.dining.diningStyle && <p className="text-xs mt-1">{formatVal(prefs.dining.diningStyle)}</p>}
+              {prefs.dining.notes && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{prefs.dining.notes}</p>}
+            </div>
+          )}
+
+          {prefs.interests?.selected && prefs.interests.selected.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-1">Interests</p>
+              <div className="flex flex-wrap gap-1">
+                {prefs.interests.selected.map((i) => (
+                  <Badge key={i} variant="secondary" className="text-[10px] font-normal no-default-hover-elevate no-default-active-elevate">{i}</Badge>
+                ))}
+              </div>
+              {prefs.interests.notes && <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{prefs.interests.notes}</p>}
+            </div>
+          )}
+
+          {prefs.generalNotes && (
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium mb-1">General Notes</p>
+              <p className="text-xs text-foreground/80 whitespace-pre-wrap leading-relaxed">{prefs.generalNotes}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -399,8 +527,9 @@ export default function TripEditPage() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-4 py-6 md:px-6">
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-3xl mx-auto px-4 py-6 md:px-6">
           {segmentsLoading ? (
             <div className="space-y-4">
               <Skeleton className="h-20 w-full" />
@@ -485,7 +614,14 @@ export default function TripEditPage() {
               </div>
             </div>
           )}
+          </div>
         </div>
+
+        {trip.clientId && trip.clientName && (
+          <div className="hidden lg:block w-64 shrink-0 overflow-y-auto">
+            <ClientPreferencesPanel clientId={trip.clientId} clientName={trip.clientName} />
+          </div>
+        )}
       </div>
 
       {currentVersionId && (

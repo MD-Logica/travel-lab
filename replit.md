@@ -18,6 +18,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 ## Data Model
 - **organizations**: id, name, slug, plan (trial/pro/enterprise), plan_status, trial_ends_at, max_advisors, max_clients
 - **profiles**: id (= auth user id), org_id, role (owner/advisor/assistant/client), full_name, email, phone, avatar_url
+- **clients**: id, org_id, full_name, email, phone, notes, tags, preferences (jsonb), preferences_updated_at
 - **trips**: id, org_id, title, destination, description, cover_image_url, start_date, end_date, status, budget, currency, notes
 - **trip_versions**: id, trip_id, org_id, version_number, name, is_primary
 - **trip_segments**: id, version_id, trip_id, org_id, day_number, sort_order, type (flight/charter/hotel/transport/restaurant/activity/note), title, subtitle, start_time, end_time, confirmation_number, cost, currency, notes
@@ -49,6 +50,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
 
 ## Recent Changes
+- 2026-02-19: Client preferences system — tab bar on client detail page (Overview/Preferences/Documents), structured preferences editor with travel style, flights, hotels, dining, interests, important dates, loyalty, general notes; view/edit modes; preferences reference panel in trip editor
 - 2026-02-19: Trip editor (/trips/:id/edit) with version tabs, day timeline, segment CRUD (add/edit/delete dialog), version management (duplicate, set primary, delete)
 - 2026-02-19: Added trip_segments and trip_versions tables; segment/version API routes; storage CRUD methods
 - 2026-02-19: Built public marketing pages: redesigned landing page with full-bleed hero, social proof, 4 feature sections; new /pricing page with plan cards, comparison table, FAQ; marketing navbar; trial banner; upgrade prompt modal
