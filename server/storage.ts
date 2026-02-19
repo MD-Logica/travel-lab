@@ -1,9 +1,10 @@
 import {
-  organizations, profiles, clients, trips,
+  organizations, profiles, clients, trips, tripVersions,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
   type Trip, type InsertTrip,
+  type TripVersion, type InsertTripVersion,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike } from "drizzle-orm";
@@ -38,7 +39,11 @@ export interface IStorage {
 
   countCompletedTripsByOrg(orgId: string): Promise<number>;
   getRecentTripsWithClient(orgId: string, limit?: number): Promise<(Trip & { clientName: string | null })[]>;
+  getTripsWithClientByOrg(orgId: string): Promise<(Trip & { clientName: string | null })[]>;
   getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; completedTrips: number; totalClients: number }>;
+
+  createTripVersion(version: InsertTripVersion): Promise<TripVersion>;
+  getTripVersions(tripId: string, orgId: string): Promise<TripVersion[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -209,6 +214,30 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`${trips.createdAt} DESC`)
       .limit(limit);
     return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));
+  }
+
+  async getTripsWithClientByOrg(orgId: string): Promise<(Trip & { clientName: string | null })[]> {
+    const rows = await db
+      .select({
+        trip: trips,
+        clientName: clients.fullName,
+      })
+      .from(trips)
+      .leftJoin(clients, eq(trips.clientId, clients.id))
+      .where(eq(trips.orgId, orgId))
+      .orderBy(sql`${trips.createdAt} DESC`);
+    return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));
+  }
+
+  async createTripVersion(version: InsertTripVersion): Promise<TripVersion> {
+    const [result] = await db.insert(tripVersions).values(version).returning();
+    return result;
+  }
+
+  async getTripVersions(tripId: string, orgId: string): Promise<TripVersion[]> {
+    return db.select().from(tripVersions).where(
+      and(eq(tripVersions.tripId, tripId), eq(tripVersions.orgId, orgId))
+    ).orderBy(sql`${tripVersions.versionNumber} ASC`);
   }
 
   async getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; completedTrips: number; totalClients: number }> {

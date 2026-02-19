@@ -285,8 +285,8 @@ export async function registerRoutes(
 
   app.get("/api/trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const trips = await storage.getTripsByOrg(req._orgId);
-      res.json(trips);
+      const tripsWithClients = await storage.getTripsWithClientByOrg(req._orgId);
+      res.json(tripsWithClients);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch trips" });
     }
@@ -327,6 +327,15 @@ export async function registerRoutes(
       };
 
       const trip = await storage.createTrip(tripData);
+
+      await storage.createTripVersion({
+        tripId: trip.id,
+        orgId,
+        versionNumber: 1,
+        name: "Version 1",
+        isPrimary: true,
+      });
+
       res.status(201).json(trip);
     } catch (error: any) {
       console.error("Create trip error:", error);

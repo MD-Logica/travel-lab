@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, pgEnum, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -71,6 +71,17 @@ export const trips = pgTable("trips", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const tripVersions = pgTable("trip_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tripId: varchar("trip_id").notNull().references(() => trips.id, { onDelete: "cascade" }),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  versionNumber: integer("version_number").notNull().default(1),
+  name: text("name").notNull().default("Version 1"),
+  isPrimary: boolean("is_primary").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   profiles: many(profiles),
   clients: many(clients),
@@ -92,7 +103,7 @@ export const clientsRelations = relations(clients, ({ one, many }) => ({
   trips: many(trips),
 }));
 
-export const tripsRelations = relations(trips, ({ one }) => ({
+export const tripsRelations = relations(trips, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [trips.orgId],
     references: [organizations.id],
@@ -100,6 +111,18 @@ export const tripsRelations = relations(trips, ({ one }) => ({
   client: one(clients, {
     fields: [trips.clientId],
     references: [clients.id],
+  }),
+  versions: many(tripVersions),
+}));
+
+export const tripVersionsRelations = relations(tripVersions, ({ one }) => ({
+  trip: one(trips, {
+    fields: [tripVersions.tripId],
+    references: [trips.id],
+  }),
+  organization: one(organizations, {
+    fields: [tripVersions.orgId],
+    references: [organizations.id],
   }),
 }));
 
@@ -132,5 +155,13 @@ export type Profile = typeof profiles.$inferSelect;
 export type InsertProfile = z.infer<typeof insertProfileSchema>;
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
+export const insertTripVersionSchema = createInsertSchema(tripVersions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
 export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
+export type TripVersion = typeof tripVersions.$inferSelect;
+export type InsertTripVersion = z.infer<typeof insertTripVersionSchema>;
