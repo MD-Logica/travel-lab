@@ -311,7 +311,7 @@ export class DatabaseStorage implements IStorage {
         currency: seg.currency,
         notes: seg.notes,
         photos: seg.photos,
-        metadata: seg.metadata,
+        metadata: seg.metadata as Record<string, unknown> | null,
       });
     }
 

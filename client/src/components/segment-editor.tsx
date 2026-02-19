@@ -1,0 +1,755 @@
+import { useState, useEffect, useCallback } from "react";
+import { useMutation } from "@tanstack/react-query";
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle,
+} from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
+  X, Plus, ImageIcon, DollarSign, Star, Clock, MapPin, Phone,
+  Globe, Hash, User, Truck, Train, Bus, Anchor,
+} from "lucide-react";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { TripSegment } from "@shared/schema";
+
+const segmentTypeConfig: Record<string, { label: string; icon: typeof Plane; color: string }> = {
+  flight: { label: "Flight", icon: Plane, color: "text-sky-600 bg-sky-100 dark:bg-sky-950/50" },
+  charter: { label: "Charter", icon: Ship, color: "text-indigo-600 bg-indigo-100 dark:bg-indigo-950/50" },
+  hotel: { label: "Hotel", icon: Hotel, color: "text-amber-600 bg-amber-100 dark:bg-amber-950/50" },
+  transport: { label: "Transport", icon: Car, color: "text-emerald-600 bg-emerald-100 dark:bg-emerald-950/50" },
+  restaurant: { label: "Restaurant", icon: UtensilsCrossed, color: "text-rose-600 bg-rose-100 dark:bg-rose-950/50" },
+  activity: { label: "Activity", icon: Activity, color: "text-violet-600 bg-violet-100 dark:bg-violet-950/50" },
+  note: { label: "Note", icon: StickyNote, color: "text-muted-foreground bg-muted" },
+};
+
+const currencies = ["USD", "EUR", "GBP", "CHF", "AUD", "CAD", "JPY", "AED", "SGD", "HKD", "THB", "INR", "BRL", "MXN"];
+
+const transportSubTypes = [
+  { value: "car", label: "Car", icon: Car },
+  { value: "train", label: "Train", icon: Train },
+  { value: "bus", label: "Bus", icon: Bus },
+  { value: "ferry", label: "Ferry", icon: Anchor },
+  { value: "transfer", label: "Transfer", icon: Truck },
+  { value: "other", label: "Other", icon: Car },
+];
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{children}</label>;
+}
+
+function FieldRow({ children, cols = 2 }: { children: React.ReactNode; cols?: number }) {
+  return <div className={`grid gap-3 ${cols === 3 ? "grid-cols-3" : cols === 2 ? "grid-cols-2" : "grid-cols-1"}`}>{children}</div>;
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 pt-2">
+      <span className="text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">{children}</span>
+      <Separator className="flex-1" />
+    </div>
+  );
+}
+
+function StarRating({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="flex items-center gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          onClick={() => onChange(star === value ? 0 : star)}
+          className="p-0.5 focus:outline-none"
+          data-testid={`button-star-${star}`}
+        >
+          <Star
+            className={`w-5 h-5 transition-colors ${
+              star <= value ? "text-amber-500 fill-amber-500" : "text-muted-foreground/30"
+            }`}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Flight Details</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Flight Number</FieldLabel>
+          <Input value={metadata.flightNumber || ""} onChange={(e) => set("flightNumber", e.target.value)} placeholder="BA 560" data-testid="input-flight-number" />
+        </div>
+        <div>
+          <FieldLabel>Airline</FieldLabel>
+          <Input value={metadata.airline || ""} onChange={(e) => set("airline", e.target.value)} placeholder="British Airways" data-testid="input-airline" />
+        </div>
+      </FieldRow>
+      <FieldRow>
+        <div>
+          <FieldLabel>Booking Class</FieldLabel>
+          <Input value={metadata.bookingClass || ""} onChange={(e) => set("bookingClass", e.target.value)} placeholder="Business" data-testid="input-booking-class" />
+        </div>
+        <div>
+          <FieldLabel>Confirmation Number</FieldLabel>
+          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} placeholder="ABC123" data-testid="input-flight-confirmation" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Departure</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Airport</FieldLabel>
+          <Input value={metadata.departureAirport || ""} onChange={(e) => set("departureAirport", e.target.value)} placeholder="LHR" data-testid="input-departure-airport" />
+        </div>
+        <div>
+          <FieldLabel>Date / Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.departureDateTime || ""} onChange={(e) => set("departureDateTime", e.target.value)} data-testid="input-departure-datetime" />
+        </div>
+      </FieldRow>
+      <FieldRow cols={3}>
+        <div>
+          <FieldLabel>Terminal</FieldLabel>
+          <Input value={metadata.departureTerminal || ""} onChange={(e) => set("departureTerminal", e.target.value)} placeholder="5" data-testid="input-departure-terminal" />
+        </div>
+        <div>
+          <FieldLabel>Gate</FieldLabel>
+          <Input value={metadata.departureGate || ""} onChange={(e) => set("departureGate", e.target.value)} placeholder="B42" data-testid="input-departure-gate" />
+        </div>
+        <div />
+      </FieldRow>
+
+      <SectionHeading>Arrival</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Airport</FieldLabel>
+          <Input value={metadata.arrivalAirport || ""} onChange={(e) => set("arrivalAirport", e.target.value)} placeholder="FCO" data-testid="input-arrival-airport" />
+        </div>
+        <div>
+          <FieldLabel>Date / Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.arrivalDateTime || ""} onChange={(e) => set("arrivalDateTime", e.target.value)} data-testid="input-arrival-datetime" />
+        </div>
+      </FieldRow>
+      <FieldRow cols={3}>
+        <div>
+          <FieldLabel>Terminal</FieldLabel>
+          <Input value={metadata.arrivalTerminal || ""} onChange={(e) => set("arrivalTerminal", e.target.value)} data-testid="input-arrival-terminal" />
+        </div>
+        <div>
+          <FieldLabel>Gate</FieldLabel>
+          <Input value={metadata.arrivalGate || ""} onChange={(e) => set("arrivalGate", e.target.value)} data-testid="input-arrival-gate" />
+        </div>
+        <div>
+          <FieldLabel>Baggage</FieldLabel>
+          <Input value={metadata.baggageCarousel || ""} onChange={(e) => set("baggageCarousel", e.target.value)} placeholder="3" data-testid="input-baggage-carousel" />
+        </div>
+      </FieldRow>
+    </div>
+  );
+}
+
+function CharterFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Charter Details</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Operator</FieldLabel>
+          <Input value={metadata.operator || ""} onChange={(e) => set("operator", e.target.value)} placeholder="NetJets" data-testid="input-charter-operator" />
+        </div>
+        <div>
+          <FieldLabel>Aircraft Type</FieldLabel>
+          <Input value={metadata.aircraftType || ""} onChange={(e) => set("aircraftType", e.target.value)} placeholder="Citation X" data-testid="input-aircraft-type" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Departure</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Location</FieldLabel>
+          <Input value={metadata.departureLocation || ""} onChange={(e) => set("departureLocation", e.target.value)} placeholder="Teterboro, NJ" data-testid="input-charter-departure-location" />
+        </div>
+        <div>
+          <FieldLabel>Date / Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.departureDateTime || ""} onChange={(e) => set("departureDateTime", e.target.value)} data-testid="input-charter-departure-datetime" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Arrival</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Location</FieldLabel>
+          <Input value={metadata.arrivalLocation || ""} onChange={(e) => set("arrivalLocation", e.target.value)} placeholder="Nice Cote d'Azur" data-testid="input-charter-arrival-location" />
+        </div>
+        <div>
+          <FieldLabel>Date / Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.arrivalDateTime || ""} onChange={(e) => set("arrivalDateTime", e.target.value)} data-testid="input-charter-arrival-datetime" />
+        </div>
+      </FieldRow>
+
+      <FieldRow>
+        <div>
+          <FieldLabel>FBO / Handler</FieldLabel>
+          <Input value={metadata.fboHandler || ""} onChange={(e) => set("fboHandler", e.target.value)} data-testid="input-fbo-handler" />
+        </div>
+        <div>
+          <FieldLabel>Confirmation Number</FieldLabel>
+          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-charter-confirmation" />
+        </div>
+      </FieldRow>
+    </div>
+  );
+}
+
+function HotelFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Hotel Details</SectionHeading>
+      <div>
+        <FieldLabel>Hotel Name</FieldLabel>
+        <Input value={metadata.hotelName || ""} onChange={(e) => set("hotelName", e.target.value)} placeholder="Aman Venice" data-testid="input-hotel-name" />
+      </div>
+      <div>
+        <FieldLabel>Star Rating</FieldLabel>
+        <StarRating value={metadata.starRating || 0} onChange={(v) => set("starRating", v)} />
+      </div>
+      <div>
+        <FieldLabel>Address</FieldLabel>
+        <Input value={metadata.address || ""} onChange={(e) => set("address", e.target.value)} placeholder="Palazzo Papadopoli, Venice" data-testid="input-hotel-address" />
+      </div>
+      <FieldRow>
+        <div>
+          <FieldLabel>Phone</FieldLabel>
+          <Input value={metadata.phone || ""} onChange={(e) => set("phone", e.target.value)} placeholder="+39 041 270 7333" data-testid="input-hotel-phone" />
+        </div>
+        <div>
+          <FieldLabel>Website</FieldLabel>
+          <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} placeholder="https://aman.com" data-testid="input-hotel-website" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Stay</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Check-in Date + Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.checkInDateTime || ""} onChange={(e) => set("checkInDateTime", e.target.value)} data-testid="input-checkin-datetime" />
+        </div>
+        <div>
+          <FieldLabel>Check-out Date + Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.checkOutDateTime || ""} onChange={(e) => set("checkOutDateTime", e.target.value)} data-testid="input-checkout-datetime" />
+        </div>
+      </FieldRow>
+      <FieldRow>
+        <div>
+          <FieldLabel>Room Type</FieldLabel>
+          <Input value={metadata.roomType || ""} onChange={(e) => set("roomType", e.target.value)} placeholder="Suite with canal view" data-testid="input-room-type" />
+        </div>
+        <div>
+          <FieldLabel>Confirmation Number</FieldLabel>
+          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-hotel-confirmation" />
+        </div>
+      </FieldRow>
+    </div>
+  );
+}
+
+function TransportFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Transport Details</SectionHeading>
+      <div>
+        <FieldLabel>Type</FieldLabel>
+        <div className="flex flex-wrap gap-1.5">
+          {transportSubTypes.map((t) => {
+            const TIcon = t.icon;
+            const selected = metadata.transportType === t.value;
+            return (
+              <Button
+                key={t.value}
+                type="button"
+                variant={selected ? "default" : "outline"}
+                size="sm"
+                onClick={() => set("transportType", t.value)}
+                data-testid={`button-transport-type-${t.value}`}
+              >
+                <TIcon className="w-3.5 h-3.5 mr-1" />
+                {t.label}
+              </Button>
+            );
+          })}
+        </div>
+      </div>
+      <FieldRow>
+        <div>
+          <FieldLabel>Provider</FieldLabel>
+          <Input value={metadata.provider || ""} onChange={(e) => set("provider", e.target.value)} placeholder="Blacklane, Trenitalia" data-testid="input-transport-provider" />
+        </div>
+        <div>
+          <FieldLabel>Vehicle Details</FieldLabel>
+          <Input value={metadata.vehicleDetails || ""} onChange={(e) => set("vehicleDetails", e.target.value)} placeholder="Mercedes S-Class" data-testid="input-vehicle-details" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Pickup</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Location</FieldLabel>
+          <Input value={metadata.pickupLocation || ""} onChange={(e) => set("pickupLocation", e.target.value)} placeholder="Hotel lobby" data-testid="input-pickup-location" />
+        </div>
+        <div>
+          <FieldLabel>Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.pickupTime || ""} onChange={(e) => set("pickupTime", e.target.value)} data-testid="input-pickup-time" />
+        </div>
+      </FieldRow>
+
+      <SectionHeading>Drop-off</SectionHeading>
+      <FieldRow>
+        <div>
+          <FieldLabel>Location</FieldLabel>
+          <Input value={metadata.dropoffLocation || ""} onChange={(e) => set("dropoffLocation", e.target.value)} placeholder="Airport Terminal 2" data-testid="input-dropoff-location" />
+        </div>
+        <div>
+          <FieldLabel>Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.dropoffTime || ""} onChange={(e) => set("dropoffTime", e.target.value)} data-testid="input-dropoff-time" />
+        </div>
+      </FieldRow>
+
+      <FieldRow>
+        <div>
+          <FieldLabel>Driver Name</FieldLabel>
+          <Input value={metadata.driverName || ""} onChange={(e) => set("driverName", e.target.value)} data-testid="input-driver-name" />
+        </div>
+        <div>
+          <FieldLabel>Driver Phone</FieldLabel>
+          <Input value={metadata.driverPhone || ""} onChange={(e) => set("driverPhone", e.target.value)} data-testid="input-driver-phone" />
+        </div>
+      </FieldRow>
+      <div>
+        <FieldLabel>Confirmation Number</FieldLabel>
+        <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-transport-confirmation" />
+      </div>
+    </div>
+  );
+}
+
+function RestaurantFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Restaurant Details</SectionHeading>
+      <div>
+        <FieldLabel>Restaurant Name</FieldLabel>
+        <Input value={metadata.restaurantName || ""} onChange={(e) => set("restaurantName", e.target.value)} placeholder="Noma" data-testid="input-restaurant-name" />
+      </div>
+      <div>
+        <FieldLabel>Cuisine</FieldLabel>
+        <Input value={metadata.cuisine || ""} onChange={(e) => set("cuisine", e.target.value)} placeholder="New Nordic" data-testid="input-cuisine" />
+      </div>
+      <div>
+        <FieldLabel>Address</FieldLabel>
+        <Input value={metadata.address || ""} onChange={(e) => set("address", e.target.value)} data-testid="input-restaurant-address" />
+      </div>
+      <FieldRow>
+        <div>
+          <FieldLabel>Phone</FieldLabel>
+          <Input value={metadata.phone || ""} onChange={(e) => set("phone", e.target.value)} data-testid="input-restaurant-phone" />
+        </div>
+        <div>
+          <FieldLabel>Website</FieldLabel>
+          <Input value={metadata.website || ""} onChange={(e) => set("website", e.target.value)} data-testid="input-restaurant-website" />
+        </div>
+      </FieldRow>
+      <FieldRow>
+        <div>
+          <FieldLabel>Reservation Date + Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.reservationDateTime || ""} onChange={(e) => set("reservationDateTime", e.target.value)} data-testid="input-reservation-datetime" />
+        </div>
+        <div>
+          <FieldLabel>Party Size</FieldLabel>
+          <Input type="number" min={1} value={metadata.partySize || ""} onChange={(e) => set("partySize", e.target.value)} placeholder="2" data-testid="input-party-size" />
+        </div>
+      </FieldRow>
+      <FieldRow>
+        <div>
+          <FieldLabel>Dress Code</FieldLabel>
+          <Input value={metadata.dressCode || ""} onChange={(e) => set("dressCode", e.target.value)} placeholder="Smart casual" data-testid="input-dress-code" />
+        </div>
+        <div>
+          <FieldLabel>Confirmation Number</FieldLabel>
+          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-restaurant-confirmation" />
+        </div>
+      </FieldRow>
+    </div>
+  );
+}
+
+function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  return (
+    <div className="space-y-3">
+      <SectionHeading>Activity Details</SectionHeading>
+      <div>
+        <FieldLabel>Activity Name</FieldLabel>
+        <Input value={metadata.activityName || ""} onChange={(e) => set("activityName", e.target.value)} placeholder="Private gondola tour" data-testid="input-activity-name" />
+      </div>
+      <div>
+        <FieldLabel>Provider / Operator</FieldLabel>
+        <Input value={metadata.provider || ""} onChange={(e) => set("provider", e.target.value)} placeholder="Walks of Italy" data-testid="input-activity-provider" />
+      </div>
+      <div>
+        <FieldLabel>Location</FieldLabel>
+        <Input value={metadata.location || ""} onChange={(e) => set("location", e.target.value)} placeholder="Piazza San Marco" data-testid="input-activity-location" />
+      </div>
+      <FieldRow>
+        <div>
+          <FieldLabel>Start Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.startDateTime || ""} onChange={(e) => set("startDateTime", e.target.value)} data-testid="input-activity-start" />
+        </div>
+        <div>
+          <FieldLabel>End Time</FieldLabel>
+          <Input type="datetime-local" value={metadata.endDateTime || ""} onChange={(e) => set("endDateTime", e.target.value)} data-testid="input-activity-end" />
+        </div>
+      </FieldRow>
+      <FieldRow>
+        <div>
+          <FieldLabel>Duration</FieldLabel>
+          <Input value={metadata.duration || ""} onChange={(e) => set("duration", e.target.value)} placeholder="2 hours" data-testid="input-activity-duration" />
+        </div>
+        <div>
+          <FieldLabel>Confirmation Number</FieldLabel>
+          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-activity-confirmation" />
+        </div>
+      </FieldRow>
+      <div>
+        <FieldLabel>What to Bring</FieldLabel>
+        <Input value={metadata.whatToBring || ""} onChange={(e) => set("whatToBring", e.target.value)} placeholder="Comfortable shoes, sunscreen" data-testid="input-what-to-bring" />
+      </div>
+    </div>
+  );
+}
+
+function NoteFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+  return <></>;
+}
+
+function PhotosField({ photos, onChange }: { photos: string[]; onChange: (p: string[]) => void }) {
+  const [newUrl, setNewUrl] = useState("");
+
+  const addPhoto = () => {
+    if (newUrl.trim()) {
+      onChange([...photos, newUrl.trim()]);
+      setNewUrl("");
+    }
+  };
+
+  const removePhoto = (index: number) => {
+    onChange(photos.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="space-y-2">
+      <FieldLabel>Photos</FieldLabel>
+      {photos.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {photos.map((url, i) => (
+            <div key={i} className="relative group w-16 h-16 rounded-md overflow-hidden bg-muted">
+              <img src={url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = ""; }} />
+              <button
+                type="button"
+                onClick={() => removePhoto(i)}
+                className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ visibility: "visible" }}
+              >
+                <X className="w-2.5 h-2.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input
+          value={newUrl}
+          onChange={(e) => setNewUrl(e.target.value)}
+          placeholder="Paste image URL..."
+          className="flex-1"
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addPhoto(); } }}
+          data-testid="input-photo-url"
+        />
+        <Button variant="outline" size="sm" onClick={addPhoto} disabled={!newUrl.trim()} data-testid="button-add-photo">
+          <Plus className="w-3.5 h-3.5 mr-1" /> Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const typeFieldComponents: Record<string, typeof FlightFields> = {
+  flight: FlightFields,
+  charter: CharterFields,
+  hotel: HotelFields,
+  transport: TransportFields,
+  restaurant: RestaurantFields,
+  activity: ActivityFields,
+  note: NoteFields,
+};
+
+interface SegmentEditorProps {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  tripId: string;
+  versionId: string;
+  existingSegment: TripSegment | null;
+  defaultDay: number;
+}
+
+export function SegmentEditor({
+  open,
+  onOpenChange,
+  tripId,
+  versionId,
+  existingSegment,
+  defaultDay,
+}: SegmentEditorProps) {
+  const { toast } = useToast();
+  const isEdit = !!existingSegment;
+
+  const [type, setType] = useState<string>(existingSegment?.type || "activity");
+  const [title, setTitle] = useState(existingSegment?.title || "");
+  const [subtitle, setSubtitle] = useState(existingSegment?.subtitle || "");
+  const [dayNumber, setDayNumber] = useState(existingSegment?.dayNumber || defaultDay);
+  const [startTime, setStartTime] = useState(existingSegment?.startTime || "");
+  const [endTime, setEndTime] = useState(existingSegment?.endTime || "");
+  const [confirmationNumber, setConfirmationNumber] = useState(existingSegment?.confirmationNumber || "");
+  const [cost, setCost] = useState(existingSegment?.cost?.toString() || "");
+  const [currency, setCurrency] = useState(existingSegment?.currency || "USD");
+  const [notes, setNotes] = useState(existingSegment?.notes || "");
+  const [photos, setPhotos] = useState<string[]>((existingSegment?.photos as string[]) || []);
+  const [metadata, setMetadata] = useState<Record<string, any>>((existingSegment?.metadata as Record<string, any>) || {});
+
+  const resetForm = useCallback(() => {
+    setType("activity");
+    setTitle("");
+    setSubtitle("");
+    setDayNumber(defaultDay);
+    setStartTime("");
+    setEndTime("");
+    setConfirmationNumber("");
+    setCost("");
+    setCurrency("USD");
+    setNotes("");
+    setPhotos([]);
+    setMetadata({});
+  }, [defaultDay]);
+
+  useEffect(() => {
+    if (open) {
+      if (existingSegment) {
+        setType(existingSegment.type);
+        setTitle(existingSegment.title);
+        setSubtitle(existingSegment.subtitle || "");
+        setDayNumber(existingSegment.dayNumber);
+        setStartTime(existingSegment.startTime || "");
+        setEndTime(existingSegment.endTime || "");
+        setConfirmationNumber(existingSegment.confirmationNumber || "");
+        setCost(existingSegment.cost?.toString() || "");
+        setCurrency(existingSegment.currency || "USD");
+        setNotes(existingSegment.notes || "");
+        setPhotos((existingSegment.photos as string[]) || []);
+        setMetadata((existingSegment.metadata as Record<string, any>) || {});
+      } else {
+        resetForm();
+      }
+    }
+  }, [open, existingSegment, resetForm]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        dayNumber,
+        sortOrder: existingSegment?.sortOrder || 0,
+        type,
+        title,
+        subtitle: subtitle || null,
+        startTime: startTime || null,
+        endTime: endTime || null,
+        confirmationNumber: confirmationNumber || null,
+        cost: cost ? parseInt(cost) : null,
+        currency,
+        notes: notes || null,
+        photos: photos.length > 0 ? photos : null,
+        metadata: Object.keys(metadata).length > 0 ? metadata : null,
+      };
+      if (isEdit) {
+        const res = await apiRequest("PATCH", `/api/trips/${tripId}/segments/${existingSegment.id}`, payload);
+        return res.json();
+      } else {
+        const res = await apiRequest("POST", `/api/trips/${tripId}/versions/${versionId}/segments`, payload);
+        return res.json();
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
+      toast({ title: isEdit ? "Segment updated" : "Segment added" });
+      resetForm();
+      onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const cfg = segmentTypeConfig[type] || segmentTypeConfig.activity;
+  const Icon = cfg.icon;
+  const TypeFields = typeFieldComponents[type] || NoteFields;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="w-full sm:max-w-[540px] p-0 flex flex-col overflow-hidden"
+        data-testid="sheet-segment-editor"
+      >
+        <div className="shrink-0 border-b border-border/50 p-4 pb-3">
+          <SheetHeader className="space-y-0">
+            <div className="flex items-center gap-3">
+              <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${cfg.color}`}>
+                <Icon className="w-4.5 h-4.5" strokeWidth={1.5} />
+              </div>
+              <SheetTitle className="font-serif text-lg">
+                {isEdit ? `Edit ${cfg.label}` : `New ${cfg.label}`}
+              </SheetTitle>
+            </div>
+          </SheetHeader>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          <div>
+            <FieldLabel>Segment Type</FieldLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(segmentTypeConfig).map(([value, c]) => {
+                const TIcon = c.icon;
+                const selected = type === value;
+                return (
+                  <Button
+                    key={value}
+                    type="button"
+                    variant={selected ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setType(value);
+                      setMetadata({});
+                    }}
+                    data-testid={`button-type-${value}`}
+                  >
+                    <TIcon className="w-3.5 h-3.5 mr-1" />
+                    {c.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+
+          <FieldRow>
+            <div>
+              <FieldLabel>Title</FieldLabel>
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={type === "flight" ? "LHR to FCO" : type === "hotel" ? "Aman Venice" : type === "restaurant" ? "Dinner at Noma" : "Segment title"}
+                data-testid="input-segment-title"
+              />
+            </div>
+            <div>
+              <FieldLabel>Day</FieldLabel>
+              <Input
+                type="number"
+                min={1}
+                value={dayNumber}
+                onChange={(e) => setDayNumber(parseInt(e.target.value) || 1)}
+                data-testid="input-segment-day"
+              />
+            </div>
+          </FieldRow>
+
+          <div>
+            <FieldLabel>Subtitle</FieldLabel>
+            <Input
+              value={subtitle}
+              onChange={(e) => setSubtitle(e.target.value)}
+              placeholder={type === "flight" ? "British Airways BA560" : type === "hotel" ? "Suite with canal view" : "Optional subtitle"}
+              data-testid="input-segment-subtitle"
+            />
+          </div>
+
+          <TypeFields metadata={metadata} onChange={setMetadata} />
+
+          <SectionHeading>Shared Details</SectionHeading>
+
+          <div>
+            <FieldLabel>Notes</FieldLabel>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Additional information, special requests..."
+              className="resize-none"
+              rows={3}
+              data-testid="input-segment-notes"
+            />
+          </div>
+
+          <FieldRow>
+            <div>
+              <FieldLabel>Cost</FieldLabel>
+              <Input
+                type="number"
+                value={cost}
+                onChange={(e) => setCost(e.target.value)}
+                placeholder="0"
+                data-testid="input-segment-cost"
+              />
+            </div>
+            <div>
+              <FieldLabel>Currency</FieldLabel>
+              <Select value={currency} onValueChange={setCurrency}>
+                <SelectTrigger data-testid="select-segment-currency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {currencies.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </FieldRow>
+
+          <PhotosField photos={photos} onChange={setPhotos} />
+        </div>
+
+        <div className="shrink-0 border-t border-border/50 p-4">
+          <Button
+            className="w-full"
+            onClick={() => saveMutation.mutate()}
+            disabled={!title.trim() || saveMutation.isPending}
+            data-testid="button-save-segment"
+          >
+            {saveMutation.isPending ? "Saving..." : isEdit ? `Update ${cfg.label}` : `Save ${cfg.label}`}
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}

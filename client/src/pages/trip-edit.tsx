@@ -1,31 +1,23 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   ArrowLeft, Plus, Plane, Ship, Hotel, Car, UtensilsCrossed, Activity,
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
-  Copy, Star, ChevronDown, MapPin, Calendar, GripVertical, Check,
-  X, Save,
+  Copy, Star, MapPin, Calendar,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { SegmentEditor } from "@/components/segment-editor";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format } from "date-fns";
 
@@ -42,12 +34,6 @@ const segmentTypeConfig: Record<string, { label: string; icon: typeof Plane; col
   note: { label: "Note", icon: StickyNote, color: "text-muted-foreground bg-muted/60" },
 };
 
-const segmentTypes = Object.entries(segmentTypeConfig).map(([value, cfg]) => ({
-  value,
-  label: cfg.label,
-  icon: cfg.icon,
-  color: cfg.color,
-}));
 
 function SegmentCard({
   segment,
@@ -75,6 +61,32 @@ function SegmentCard({
     },
   });
 
+  const meta = (segment.metadata || {}) as Record<string, any>;
+
+  const metaDetails: string[] = [];
+  if (segment.type === "flight") {
+    if (meta.flightNumber) metaDetails.push(meta.flightNumber);
+    if (meta.airline) metaDetails.push(meta.airline);
+    if (meta.departureAirport && meta.arrivalAirport) metaDetails.push(`${meta.departureAirport} → ${meta.arrivalAirport}`);
+  } else if (segment.type === "charter") {
+    if (meta.operator) metaDetails.push(meta.operator);
+    if (meta.aircraftType) metaDetails.push(meta.aircraftType);
+  } else if (segment.type === "hotel") {
+    if (meta.roomType) metaDetails.push(meta.roomType);
+    if (meta.starRating) metaDetails.push(`${"★".repeat(meta.starRating)}`);
+  } else if (segment.type === "transport") {
+    if (meta.transportType) metaDetails.push(meta.transportType.charAt(0).toUpperCase() + meta.transportType.slice(1));
+    if (meta.provider) metaDetails.push(meta.provider);
+  } else if (segment.type === "restaurant") {
+    if (meta.cuisine) metaDetails.push(meta.cuisine);
+    if (meta.dressCode) metaDetails.push(meta.dressCode);
+  } else if (segment.type === "activity") {
+    if (meta.provider) metaDetails.push(meta.provider);
+    if (meta.duration) metaDetails.push(meta.duration);
+  }
+
+  const confNum = meta.confirmationNumber || segment.confirmationNumber;
+
   return (
     <Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>
       <CardContent className="p-3 flex items-start gap-3">
@@ -85,8 +97,10 @@ function SegmentCard({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="text-sm font-medium truncate" data-testid={`text-segment-title-${segment.id}`}>{segment.title}</p>
-              {segment.subtitle && (
-                <p className="text-xs text-muted-foreground truncate mt-0.5">{segment.subtitle}</p>
+              {(segment.subtitle || metaDetails.length > 0) && (
+                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                  {segment.subtitle || metaDetails.join(" · ")}
+                </p>
               )}
             </div>
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" style={{ visibility: "visible" }}>
@@ -110,10 +124,10 @@ function SegmentCard({
                 {segment.startTime}{segment.endTime ? ` - ${segment.endTime}` : ""}
               </span>
             )}
-            {segment.confirmationNumber && (
+            {confNum && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Hash className="w-3 h-3" strokeWidth={1.5} />
-                {segment.confirmationNumber}
+                {confNum}
               </span>
             )}
             {segment.cost != null && segment.cost > 0 && (
@@ -129,225 +143,6 @@ function SegmentCard({
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function SegmentFormDialog({
-  open,
-  onOpenChange,
-  tripId,
-  versionId,
-  orgId,
-  existingSegment,
-  defaultDay,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  tripId: string;
-  versionId: string;
-  orgId: string;
-  existingSegment: TripSegment | null;
-  defaultDay: number;
-}) {
-  const { toast } = useToast();
-  const isEdit = !!existingSegment;
-
-  const [type, setType] = useState<string>(existingSegment?.type || "activity");
-  const [title, setTitle] = useState(existingSegment?.title || "");
-  const [subtitle, setSubtitle] = useState(existingSegment?.subtitle || "");
-  const [startTime, setStartTime] = useState(existingSegment?.startTime || "");
-  const [endTime, setEndTime] = useState(existingSegment?.endTime || "");
-  const [confirmationNumber, setConfirmationNumber] = useState(existingSegment?.confirmationNumber || "");
-  const [cost, setCost] = useState(existingSegment?.cost?.toString() || "");
-  const [notes, setNotes] = useState(existingSegment?.notes || "");
-  const [dayNumber, setDayNumber] = useState(existingSegment?.dayNumber || defaultDay);
-
-  const resetForm = useCallback(() => {
-    setType("activity");
-    setTitle("");
-    setSubtitle("");
-    setStartTime("");
-    setEndTime("");
-    setConfirmationNumber("");
-    setCost("");
-    setNotes("");
-    setDayNumber(defaultDay);
-  }, [defaultDay]);
-
-  useEffect(() => {
-    if (open) {
-      if (existingSegment) {
-        setType(existingSegment.type);
-        setTitle(existingSegment.title);
-        setSubtitle(existingSegment.subtitle || "");
-        setStartTime(existingSegment.startTime || "");
-        setEndTime(existingSegment.endTime || "");
-        setConfirmationNumber(existingSegment.confirmationNumber || "");
-        setCost(existingSegment.cost?.toString() || "");
-        setNotes(existingSegment.notes || "");
-        setDayNumber(existingSegment.dayNumber);
-      } else {
-        resetForm();
-      }
-    }
-  }, [open, existingSegment, resetForm]);
-
-  const createMutation = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        dayNumber,
-        sortOrder: 0,
-        type,
-        title,
-        subtitle: subtitle || null,
-        startTime: startTime || null,
-        endTime: endTime || null,
-        confirmationNumber: confirmationNumber || null,
-        cost: cost ? parseInt(cost) : null,
-        notes: notes || null,
-      };
-      if (isEdit) {
-        const res = await apiRequest("PATCH", `/api/trips/${tripId}/segments/${existingSegment.id}`, payload);
-        return res.json();
-      } else {
-        const res = await apiRequest("POST", `/api/trips/${tripId}/versions/${versionId}/segments`, payload);
-        return res.json();
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
-      toast({ title: isEdit ? "Segment updated" : "Segment added" });
-      resetForm();
-      onOpenChange(false);
-    },
-    onError: (e: Error) => {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    },
-  });
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg" data-testid="dialog-segment-form">
-        <DialogHeader>
-          <DialogTitle className="font-serif">{isEdit ? "Edit Segment" : "Add Segment"}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4 py-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Type</label>
-              <Select value={type} onValueChange={setType}>
-                <SelectTrigger data-testid="select-segment-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {segmentTypes.map((t) => {
-                    const TIcon = t.icon;
-                    return (
-                      <SelectItem key={t.value} value={t.value}>
-                        <span className="flex items-center gap-2">
-                          <TIcon className="w-3.5 h-3.5" />
-                          {t.label}
-                        </span>
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Day</label>
-              <Input
-                type="number"
-                min={1}
-                value={dayNumber}
-                onChange={(e) => setDayNumber(parseInt(e.target.value) || 1)}
-                data-testid="input-segment-day"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Title</label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. LHR to FCO, Aman Venice, Dinner at Noma"
-              data-testid="input-segment-title"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Subtitle</label>
-            <Input
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              placeholder="e.g. British Airways BA560, Suite with canal view"
-              data-testid="input-segment-subtitle"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Start Time</label>
-              <Input
-                type="time"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                data-testid="input-segment-start-time"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">End Time</label>
-              <Input
-                type="time"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                data-testid="input-segment-end-time"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Confirmation #</label>
-              <Input
-                value={confirmationNumber}
-                onChange={(e) => setConfirmationNumber(e.target.value)}
-                placeholder="ABC123"
-                data-testid="input-segment-confirmation"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Cost</label>
-              <Input
-                type="number"
-                value={cost}
-                onChange={(e) => setCost(e.target.value)}
-                placeholder="0"
-                data-testid="input-segment-cost"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Notes</label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Additional details..."
-              className="resize-none"
-              rows={2}
-              data-testid="input-segment-notes"
-            />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button
-            onClick={() => createMutation.mutate()}
-            disabled={!title.trim() || createMutation.isPending}
-            data-testid="button-save-segment"
-          >
-            {createMutation.isPending ? "Saving..." : isEdit ? "Update" : "Add"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
@@ -688,13 +483,12 @@ export default function TripEditPage() {
       </div>
 
       {currentVersionId && (
-        <SegmentFormDialog
+        <SegmentEditor
           key={editingSegment?.id || `new-${addSegmentDay}`}
           open={segmentDialogOpen}
           onOpenChange={setSegmentDialogOpen}
           tripId={id!}
           versionId={currentVersionId}
-          orgId={trip.orgId}
           existingSegment={editingSegment}
           defaultDay={addSegmentDay}
         />
