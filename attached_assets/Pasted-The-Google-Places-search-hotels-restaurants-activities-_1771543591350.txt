@@ -1,0 +1,140 @@
+The Google Places search (hotels, restaurants, activities) and the
+FlightLabs commercial flight search are not returning any results.
+Diagnose and fix all three. Work through each one systematically.
+
+─── STEP 1: CHECK API KEY ACCESS ────────────────────────────────────────────
+
+Verify that all API keys are being read correctly from Replit Secrets.
+Add temporary console.log statements to confirm:
+  console.log('Google Places key present:', !!process.env.GOOGLE_PLACES_API_KEY)
+  console.log('FlightLabs key present:', !!process.env.FLIGHTLABS_API_KEY)
+
+Run the app and check the console output. If either shows false,
+the secret name in the code does not match the name in Replit Secrets.
+Fix the variable names to match exactly.
+Remove the console.log statements after confirming.
+
+─── STEP 2: TEST GOOGLE PLACES DIRECTLY ─────────────────────────────────────
+
+Build a simple test by making a direct server-side call to the
+Google Places Autocomplete endpoint and logging the raw response:
+
+  URL: https://maps.googleapis.com/maps/api/place/autocomplete/json
+  Params:
+    input: "Hotel Cipriani"
+    types: establishment
+    key: [GOOGLE_PLACES_API_KEY]
+
+Log the full response including any error_message field.
+
+Common errors to fix:
+  "REQUEST_DENIED" → API key is invalid or Places API is not enabled
+    Fix: ensure both "Places API" and "Places API (New)" are enabled
+    in Google Cloud Console for this key. Also check that billing
+    is enabled on the Google Cloud project — Places API requires it.
+
+  "ZERO_RESULTS" → Query or types parameter is wrong
+    Fix: remove the types filter and try again with input only.
+
+  Network error → The server-side route is not reaching Google
+    Fix: check that the fetch call uses the correct full URL and
+    that there are no firewall or CORS issues on the server side.
+
+Once the raw API call works, trace through the full chain:
+  Frontend input → server route → Google API → response → dropdown
+  Find exactly where the chain breaks and fix it.
+
+─── STEP 3: FIX GOOGLE PLACES AUTOCOMPLETE ──────────────────────────────────
+
+Ensure the server-side proxy route is correctly structured:
+
+  Route: GET /api/places/search?input=[query]&type=[hotel|restaurant|activity]
+
+  For hotels and restaurants: use types=establishment
+  For the destination field on trip creation: use types=(cities)
+
+  The route must:
+    1. Receive the query from the frontend
+    2. Call Google Places Autocomplete with the query + API key
+    3. Return the predictions array to the frontend
+    4. Never expose the API key in the response or client-side code
+
+  The frontend must:
+    1. Call /api/places/search as the user types (debounced 300ms)
+    2. Display the predictions in a dropdown
+    3. On selection: call /api/places/details?place_id=[id]
+       to fetch full place details and auto-populate fields
+
+─── STEP 4: FIX GOOGLE PLACES DETAILS ───────────────────────────────────────
+
+Ensure the place details route is correctly structured:
+
+  Route: GET /api/places/details?place_id=[id]
+
+  Call: https://maps.googleapis.com/maps/api/place/details/json
+  Params:
+    place_id: [the selected place_id]
+    fields: name,formatted_address,formatted_phone_number,website,
+            rating,photos,editorial_summary,geometry,types,price_level
+    key: [GOOGLE_PLACES_API_KEY]
+
+  Return the full result object to the frontend.
+  Frontend uses this to auto-populate the segment editor fields.
+
+─── STEP 5: FIX FLIGHTLABS SEARCH ───────────────────────────────────────────
+
+FlightLabs has specific endpoint and parameter requirements.
+Use exactly this structure for flight search:
+
+  Base URL: https://app.goflightlabs.com
+  Endpoint: GET /flights
+  Params:
+    access_key: [FLIGHTLABS_API_KEY]
+    flight_iata: [flight number, e.g. "AA123"]
+    flight_date: [date in YYYY-MM-DD format]
+
+  Build the server-side proxy route: GET /api/flights/search
+    Accepts query params: flightNumber, date
+    Formats them correctly for FlightLabs
+    Returns normalized flight data:
+      {
+        airline: string,
+        flightNumber: string,
+        departureAirport: { iata, name, city },
+        arrivalAirport: { iata, name, city },
+        scheduledDeparture: datetime,
+        scheduledArrival: datetime,
+        aircraft: string (if available)
+      }
+
+  Test with a known flight number and today's or tomorrow's date.
+  Log the raw FlightLabs response to verify the structure before
+  mapping fields to the normalized format.
+
+  If FlightLabs returns an empty array: the flight may not be in
+  their database for that date. Test with a major route like
+  "AA100" or "BA001" to confirm the integration is working,
+  then advise that some flights may not be found.
+
+─── STEP 6: VERIFY END TO END ───────────────────────────────────────────────
+
+After fixing each integration, test the full flow:
+
+  Google Places:
+    1. Open a Hotel segment editor
+    2. Type "Cipriani" in the search field
+    3. Confirm dropdown appears with results
+    4. Select a result
+    5. Confirm all fields auto-populate (name, address, phone, etc.)
+    6. Confirm photos load via the proxy endpoint
+
+  FlightLabs:
+    1. Open a Commercial Flight segment editor
+    2. Enter a real flight number (e.g. "BA001") and tomorrow's date
+    3. Click Search
+    4. Confirm a result card appears
+    5. Click "Use this flight"
+    6. Confirm fields auto-populate
+
+Do not mark this complete until all three search types
+(hotel, restaurant, flight) are working end to end.
