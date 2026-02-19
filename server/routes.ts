@@ -549,6 +549,23 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/clients/:id/preferences", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const client = await storage.getClient(req.params.id, req._orgId);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+
+      const updated = await storage.updateClient(req.params.id, req._orgId, {
+        preferences: req.body,
+        preferencesUpdatedAt: new Date(),
+      } as any);
+
+      res.json(updated);
+    } catch (error) {
+      console.error("Update preferences error:", error);
+      res.status(500).json({ message: "Failed to update preferences" });
+    }
+  });
+
   app.get("/api/trips/:id/full", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const trip = await storage.getTripWithClient(req.params.id, req._orgId);
