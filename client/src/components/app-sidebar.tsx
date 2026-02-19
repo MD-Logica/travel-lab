@@ -24,10 +24,12 @@ import {
   LogOut,
   MapPin,
   Building2,
+  BarChart2,
 } from "lucide-react";
 
 const navItems = [
   { title: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { title: "Analytics", path: "/dashboard/analytics", icon: BarChart2 },
   { title: "Trips", path: "/trips", icon: Map },
   { title: "Clients", path: "/clients", icon: Users },
   { title: "Settings", path: "/settings", icon: Settings },
@@ -77,7 +79,9 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => {
-                const isActive = location === item.path || location.startsWith(item.path + "/");
+                const isActive = item.path === "/dashboard"
+                  ? location === "/dashboard"
+                  : location === item.path || location.startsWith(item.path + "/");
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton

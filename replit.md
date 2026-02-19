@@ -48,9 +48,10 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 ## Routing
 - Public pages (always accessible): /, /pricing
 - Auth pages (redirect to /dashboard if logged in): /login, /signup, /forgot-password, /set-password
-- Authenticated pages (redirect to /login if not logged in): /dashboard, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
+- Authenticated pages (redirect to /login if not logged in): /dashboard, /dashboard/analytics, /trips, /trips/new, /trips/:id, /trips/:id/edit, /clients, /clients/:id, /settings
 
 ## Recent Changes
+- 2026-02-19: Analytics page (/dashboard/analytics) — premium editorial design with Recharts; date range selector (30d/3m/12m/all time); 4 summary stat cards (total trips, active trips, total clients, portfolio value); trips-over-time area chart; top destinations horizontal bar chart; trips-by-status donut chart; most active clients table (clickable to profile); advisor activity table (owner only); graceful empty states; sidebar navigation with BarChart2 icon
 - 2026-02-19: Advisor productivity features — segment_templates table for reusable segment templates (Save as template checkbox in segment editor, template picker dropdown in Add menu, Templates section in Settings with rename/delete); trip duplication via Duplicate button in trip editor header (copies all versions/segments, lets you pick new client/dates, strips confirmation numbers)
 - 2026-02-19: Flight status monitoring system — flight_tracking table, AeroDataBox API integration (via RapidAPI), 20-minute background polling for flights within monitoring window (3h before departure to 1h after arrival), notification bell in header with unread count + dropdown panel, flight status badges on segment cards (Scheduled/On Time/Delayed/Cancelled/Departed/Landed), manual refresh button, auto-creates tracking when flight segments saved, advisor notifications for delays 20+ min, gate changes, cancellations, departures, landings
 - 2026-02-19: Secure document vault — trip_documents table, file upload via Replit Object Storage (presigned URL flow), drag-drop upload on client detail Documents tab and trip editor; label suggestions, visibility toggle, download/delete; org-scoped security on all document routes

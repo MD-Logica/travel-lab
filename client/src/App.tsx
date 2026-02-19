@@ -23,6 +23,7 @@ import TripViewPage from "@/pages/trip-view";
 import ClientsPage from "@/pages/clients";
 import ClientDetailPage from "@/pages/client-detail";
 import SettingsPage from "@/pages/settings";
+import AnalyticsPage from "@/pages/analytics";
 import LoginPage from "@/pages/auth/login";
 import SignupPage from "@/pages/auth/signup";
 import ForgotPasswordPage from "@/pages/auth/forgot-password";
@@ -50,6 +51,7 @@ function AuthenticatedLayout() {
           </header>
           <main className="flex-1 overflow-hidden flex flex-col">
             <Switch>
+              <Route path="/dashboard/analytics" component={AnalyticsPage} />
               <Route path="/dashboard" component={DashboardPage} />
               <Route path="/trips" component={TripsPage} />
               <Route path="/trips/new" component={TripNewPage} />

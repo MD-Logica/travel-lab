@@ -1187,6 +1187,22 @@ export async function registerRoutes(
     }
   });
 
+  // ──── ANALYTICS ─────────────────────────────────────────────────
+
+  app.get("/api/analytics", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const range = (req.query.range as string) || "12m";
+      const orgId = req._orgId;
+      const profileRole = req._profile.role;
+
+      const data = await storage.getAnalytics(orgId, range, profileRole);
+      res.json(data);
+    } catch (error) {
+      console.error("Analytics error:", error);
+      res.status(500).json({ message: "Failed to fetch analytics" });
+    }
+  });
+
   app.get("/api/plan-limits", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const org = await storage.getOrganization(req._orgId);

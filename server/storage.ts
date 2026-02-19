@@ -667,6 +667,157 @@ export class DatabaseStorage implements IStorage {
       .set({ useCount: sql`${segmentTemplates.useCount} + 1` })
       .where(and(eq(segmentTemplates.id, id), eq(segmentTemplates.orgId, orgId)));
   }
+
+  async getAnalytics(orgId: string, range: string, role: string): Promise<any> {
+    const now = new Date();
+    let sinceDate: Date | null = null;
+    if (range === "30d") {
+      sinceDate = new Date(now.getTime() - 30 * 86400000);
+    } else if (range === "3m") {
+      sinceDate = new Date(now);
+      sinceDate.setMonth(sinceDate.getMonth() - 3);
+    } else if (range === "12m") {
+      sinceDate = new Date(now);
+      sinceDate.setFullYear(sinceDate.getFullYear() - 1);
+    }
+
+    const dateCondition = sinceDate
+      ? sql`AND t.created_at >= ${sinceDate}`
+      : sql``;
+
+    const dateConditionNoAlias = sinceDate
+      ? sql`AND created_at >= ${sinceDate}`
+      : sql``;
+
+    const [
+      summaryRows,
+      activeTripsRows,
+      totalClientsRows,
+      tripsOverTimeRows,
+      topDestRows,
+      statusRows,
+      topClientsRows,
+      advisorRows,
+    ] = await Promise.all([
+      db.execute(sql`
+        SELECT
+          COUNT(*)::int AS total_trips,
+          COALESCE(SUM(CASE WHEN t.budget IS NOT NULL THEN t.budget ELSE 0 END), 0)::bigint AS portfolio_value,
+          COALESCE(
+            (SELECT currency FROM trips WHERE org_id = ${orgId} AND budget IS NOT NULL ORDER BY created_at DESC LIMIT 1),
+            'USD'
+          ) AS currency
+        FROM trips t
+        WHERE t.org_id = ${orgId} ${dateCondition}
+      `),
+
+      db.execute(sql`
+        SELECT COUNT(*)::int AS active_trips
+        FROM trips
+        WHERE org_id = ${orgId} AND status IN ('planning', 'confirmed', 'in_progress')
+      `),
+
+      db.execute(sql`
+        SELECT COUNT(*)::int AS total_clients
+        FROM clients
+        WHERE org_id = ${orgId}
+      `),
+
+      db.execute(sql`
+        SELECT
+          TO_CHAR(t.created_at, 'YYYY-MM') AS month,
+          COUNT(*)::int AS trip_count
+        FROM trips t
+        WHERE t.org_id = ${orgId} ${dateCondition}
+        GROUP BY TO_CHAR(t.created_at, 'YYYY-MM')
+        ORDER BY month ASC
+      `),
+
+      db.execute(sql`
+        SELECT destination, COUNT(*)::int AS trip_count
+        FROM trips
+        WHERE org_id = ${orgId} AND destination IS NOT NULL AND destination != '' ${dateConditionNoAlias}
+        GROUP BY destination
+        ORDER BY trip_count DESC
+        LIMIT 8
+      `),
+
+      db.execute(sql`
+        SELECT status, COUNT(*)::int AS status_count
+        FROM trips
+        WHERE org_id = ${orgId} ${dateConditionNoAlias}
+        GROUP BY status
+        ORDER BY status_count DESC
+      `),
+
+      db.execute(sql`
+        SELECT
+          c.id,
+          c.full_name,
+          COUNT(t.id)::int AS total_trips,
+          MAX(t.created_at) AS most_recent_trip,
+          COALESCE(SUM(CASE WHEN t.budget IS NOT NULL THEN t.budget ELSE 0 END), 0)::bigint AS total_value
+        FROM clients c
+        LEFT JOIN trips t ON t.client_id = c.id AND t.org_id = ${orgId} ${dateCondition}
+        WHERE c.org_id = ${orgId}
+        GROUP BY c.id, c.full_name
+        ORDER BY total_trips DESC
+        LIMIT 10
+      `),
+
+      role === "owner" ? db.execute(sql`
+        SELECT
+          p.id,
+          p.full_name,
+          COUNT(DISTINCT t.id)::int AS trips_created,
+          COUNT(DISTINCT t.client_id)::int AS clients_managed
+        FROM profiles p
+        LEFT JOIN trips t ON t.advisor_id = p.id AND t.org_id = ${orgId} ${dateCondition}
+        WHERE p.org_id = ${orgId} AND p.role IN ('owner', 'advisor')
+        GROUP BY p.id, p.full_name
+        ORDER BY trips_created DESC
+      `) : Promise.resolve({ rows: [] }),
+    ]);
+
+    const summary = (summaryRows as any).rows?.[0] || summaryRows[0] || {};
+    const activeTrips = (activeTripsRows as any).rows?.[0] || activeTripsRows[0] || {};
+    const totalClients = (totalClientsRows as any).rows?.[0] || totalClientsRows[0] || {};
+
+    return {
+      summary: {
+        totalTrips: summary.total_trips || 0,
+        activeTrips: activeTrips.active_trips || 0,
+        totalClients: totalClients.total_clients || 0,
+        portfolioValue: Number(summary.portfolio_value || 0),
+        currency: summary.currency || "USD",
+      },
+      tripsOverTime: ((tripsOverTimeRows as any).rows || tripsOverTimeRows || []).map((r: any) => ({
+        month: r.month,
+        count: r.trip_count,
+      })),
+      topDestinations: ((topDestRows as any).rows || topDestRows || []).map((r: any) => ({
+        destination: r.destination,
+        count: r.trip_count,
+      })),
+      tripsByStatus: ((statusRows as any).rows || statusRows || []).map((r: any) => ({
+        status: r.status,
+        count: r.status_count,
+      })),
+      topClients: ((topClientsRows as any).rows || topClientsRows || []).map((r: any) => ({
+        id: r.id,
+        name: r.full_name,
+        totalTrips: r.total_trips,
+        mostRecentTrip: r.most_recent_trip,
+        totalValue: Number(r.total_value || 0),
+      })),
+      advisorActivity: ((advisorRows as any).rows || advisorRows || []).map((r: any) => ({
+        id: r.id,
+        name: r.full_name,
+        tripsCreated: r.trips_created,
+        clientsManaged: r.clients_managed,
+      })),
+    };
+  }
 }
 
 export const storage = new DatabaseStorage();
