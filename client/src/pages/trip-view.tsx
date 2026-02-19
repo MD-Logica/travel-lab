@@ -14,24 +14,32 @@ import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   Clock, MapPin, Hash, ChevronDown, Calendar, Download, Star,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Users,
-  ArrowRight, FileDown, CalendarPlus,
+  ArrowRight, FileDown, CalendarPlus, Diamond,
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
 
 const segmentIcons: Record<string, typeof Plane> = {
-  flight: Plane, charter: Ship, hotel: Hotel, transport: Car,
+  flight: Plane, charter: Diamond, charter_flight: Diamond, hotel: Hotel, transport: Car,
   restaurant: UtensilsCrossed, activity: Activity, note: StickyNote,
 };
 
 const segmentColors: Record<string, string> = {
   flight: "text-sky-600 bg-sky-50 dark:bg-sky-950/40",
   charter: "text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40",
+  charter_flight: "text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40",
   hotel: "text-amber-600 bg-amber-50 dark:bg-amber-950/40",
   transport: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40",
   restaurant: "text-rose-600 bg-rose-50 dark:bg-rose-950/40",
   activity: "text-violet-600 bg-violet-50 dark:bg-violet-950/40",
   note: "text-muted-foreground bg-muted/60",
+};
+
+const bookingClassLabels: Record<string, string> = {
+  first: "First Class",
+  business: "Business",
+  premium_economy: "Premium Economy",
+  economy: "Economy",
 };
 
 const noteTypeIcons: Record<string, { icon: typeof Info; color: string }> = {
@@ -100,13 +108,13 @@ function FlightCard({ segment }: { segment: TripSegment }) {
               <Plane className="w-3.5 h-3.5 text-sky-600" strokeWidth={1.5} />
             </div>
             <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Flight</span>
-            {meta.bookingClass && <Badge variant="secondary" className="text-[10px]">{meta.bookingClass}</Badge>}
+            {meta.bookingClass && <Badge variant="secondary" className="text-[10px]">{bookingClassLabels[meta.bookingClass] || meta.bookingClass}</Badge>}
           </div>
           {depAirport && arrAirport ? (
             <div className="flex items-center gap-3 mb-2">
               <div className="text-center">
                 <p className="text-2xl font-serif font-semibold tracking-tight">{depAirport}</p>
-                {meta.departureDateTime && <p className="text-xs text-muted-foreground mt-0.5">{format(new Date(meta.departureDateTime), "HH:mm")}</p>}
+                {meta.departureTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.departureTime}</p>}
               </div>
               <div className="flex-1 flex items-center gap-1">
                 <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
@@ -115,15 +123,67 @@ function FlightCard({ segment }: { segment: TripSegment }) {
               </div>
               <div className="text-center">
                 <p className="text-2xl font-serif font-semibold tracking-tight">{arrAirport}</p>
-                {meta.arrivalDateTime && <p className="text-xs text-muted-foreground mt-0.5">{format(new Date(meta.arrivalDateTime), "HH:mm")}</p>}
+                {meta.arrivalTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.arrivalTime}</p>}
               </div>
             </div>
           ) : (
             <p className="text-base font-serif font-medium mb-1">{segment.title}</p>
           )}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-2">
-            {meta.flightNumber && <span>{meta.flightNumber}</span>}
             {meta.airline && <span>{meta.airline}</span>}
+            {meta.flightNumber && <span className="font-mono">{meta.flightNumber}</span>}
+            {(segment.confirmationNumber || meta.confirmationNumber) && (
+              <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CharterFlightCard({ segment }: { segment: TripSegment }) {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const depLoc = meta.departureLocation || "";
+  const arrLoc = meta.arrivalLocation || "";
+
+  return (
+    <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-segment-${segment.id}`}>
+      <div className="flex items-stretch">
+        <div className="w-1.5 bg-indigo-500 shrink-0" />
+        <div className="flex-1 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-indigo-50 dark:bg-indigo-950/40">
+              <Diamond className="w-3.5 h-3.5 text-indigo-600" strokeWidth={1.5} />
+            </div>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Private Flight</span>
+            <Badge variant="secondary" className="text-[10px]">
+              <Diamond className="w-2.5 h-2.5 mr-0.5" />
+              Charter
+            </Badge>
+          </div>
+          <p className="text-lg font-serif font-semibold">{meta.operator || "Private Flight"}</p>
+          {meta.aircraftType && <p className="text-sm text-muted-foreground mt-0.5">{meta.aircraftType}</p>}
+          {depLoc && arrLoc && (
+            <div className="flex items-center gap-3 mt-3 mb-1">
+              <div className="text-center">
+                <p className="text-base font-medium">{depLoc}</p>
+                {meta.departureTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.departureTime}</p>}
+              </div>
+              <div className="flex-1 flex items-center gap-1">
+                <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
+                <Diamond className="w-3.5 h-3.5 text-muted-foreground/50" />
+                <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
+              </div>
+              <div className="text-center">
+                <p className="text-base font-medium">{arrLoc}</p>
+                {meta.arrivalTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.arrivalTime}</p>}
+              </div>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-2">
+            {meta.tailNumber && <span className="font-mono">{meta.tailNumber}</span>}
+            {meta.fboHandler && <span>{meta.fboHandler}</span>}
             {(segment.confirmationNumber || meta.confirmationNumber) && (
               <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
             )}
@@ -298,6 +358,8 @@ function GenericCard({ segment }: { segment: TripSegment }) {
 function SegmentView({ segment }: { segment: TripSegment }) {
   switch (segment.type) {
     case "flight": return <FlightCard segment={segment} />;
+    case "charter":
+    case "charter_flight": return <CharterFlightCard segment={segment} />;
     case "hotel": return <HotelCard segment={segment} />;
     case "restaurant": return <RestaurantCard segment={segment} />;
     case "activity": return <ActivityCard segment={segment} />;

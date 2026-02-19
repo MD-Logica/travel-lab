@@ -32,6 +32,7 @@ const colors = {
   note: "#6b7280",
   transport: "#06b6d4",
   charter: "#ec4899",
+  charter_flight: "#6366f1",
 };
 
 const s = StyleSheet.create({
@@ -100,16 +101,31 @@ function SegmentView({ segment }: { segment: TripSegment }) {
       if (fn) details.push(`Flight ${fn}`);
       const airline = getMetaValue(meta, "airline");
       if (airline) details.push(airline);
-      const cabin = getMetaValue(meta, "cabin");
-      if (cabin) details.push(`Class: ${cabin}`);
-    } else if (segment.type === "charter") {
+      const bookingClass = getMetaValue(meta, "bookingClass");
+      if (bookingClass) {
+        const classLabels: Record<string, string> = { first: "First", business: "Business", premium_economy: "Premium Economy", economy: "Economy" };
+        details.push(`Class: ${classLabels[bookingClass] || bookingClass}`);
+      }
+      const depTime = getMetaValue(meta, "departureTime");
+      const arrTime = getMetaValue(meta, "arrivalTime");
+      if (depTime) details.push(`Departs: ${depTime}`);
+      if (arrTime) details.push(`Arrives: ${arrTime}`);
+    } else if (segment.type === "charter" || segment.type === "charter_flight") {
       const operator = getMetaValue(meta, "operator");
       if (operator) details.push(`Operator: ${operator}`);
       const aircraft = getMetaValue(meta, "aircraftType");
       if (aircraft) details.push(`Aircraft: ${aircraft}`);
+      const tailNumber = getMetaValue(meta, "tailNumber");
+      if (tailNumber) details.push(`Tail: ${tailNumber}`);
       const dep = getMetaValue(meta, "departureLocation");
       const arr = getMetaValue(meta, "arrivalLocation");
       if (dep && arr) details.push(`${dep} > ${arr}`);
+      const depTime = getMetaValue(meta, "departureTime");
+      const arrTime = getMetaValue(meta, "arrivalTime");
+      if (depTime) details.push(`Departs: ${depTime}`);
+      if (arrTime) details.push(`Arrives: ${arrTime}`);
+      const fbo = getMetaValue(meta, "fboHandler");
+      if (fbo) details.push(`FBO: ${fbo}`);
     } else if (segment.type === "hotel") {
       const name = getMetaValue(meta, "hotelName");
       if (name) details.push(name);
@@ -164,10 +180,11 @@ function SegmentView({ segment }: { segment: TripSegment }) {
 
   const title = segment.title || segment.type || "Segment";
   const confNum = getMetaValue(meta, "confirmationNumber") || segment.confirmationNumber || "";
+  const typeLabel = segment.type === "charter_flight" ? "private flight" : (segment.type === "charter" ? "private flight" : segment.type || "other");
 
   return (
     <View style={[s.segmentCard, { borderLeftColor: typeColor }]}>
-      <Text style={s.segmentType}>{segment.type || "other"}</Text>
+      <Text style={s.segmentType}>{typeLabel}</Text>
       <Text style={s.segmentTitle}>{title}</Text>
       {segment.subtitle ? <Text style={s.segmentDetail}>{segment.subtitle}</Text> : null}
       {details.map((d, i) => (

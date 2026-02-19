@@ -55,10 +55,20 @@ async function syncFlightTracking(segment: any, tripId: string, orgId: string) {
 
   const flightNumber = meta.flightNumber as string;
   let flightDate = "";
-  if (meta.departureDateTime) {
+  if (meta.departureDate) {
+    flightDate = meta.departureDate as string;
+  } else if (meta.departureDateTime) {
     flightDate = (meta.departureDateTime as string).split("T")[0];
   }
   if (!flightDate) return;
+
+  const composeDatetime = (date: string | undefined, time: string | undefined): string | null => {
+    if (!date) return null;
+    return time ? `${date}T${time}` : `${date}T00:00`;
+  };
+
+  const scheduledDeparture = composeDatetime(meta.departureDate, meta.departureTime) || meta.departureDateTime || null;
+  const scheduledArrival = composeDatetime(meta.arrivalDate, meta.arrivalTime) || meta.arrivalDateTime || null;
 
   const existing = await storage.getFlightTrackingBySegment(segment.id);
   if (existing) {
@@ -66,8 +76,8 @@ async function syncFlightTracking(segment: any, tripId: string, orgId: string) {
       await storage.updateFlightTracking(existing.id, {
         flightNumber,
         flightDate,
-        scheduledDeparture: meta.departureDateTime || null,
-        scheduledArrival: meta.arrivalDateTime || null,
+        scheduledDeparture,
+        scheduledArrival,
         isActive: true,
         lastStatus: null,
         lastCheckedAt: null,
@@ -80,8 +90,8 @@ async function syncFlightTracking(segment: any, tripId: string, orgId: string) {
       orgId,
       flightNumber,
       flightDate,
-      scheduledDeparture: meta.departureDateTime || null,
-      scheduledArrival: meta.arrivalDateTime || null,
+      scheduledDeparture,
+      scheduledArrival,
       isActive: true,
     });
   }

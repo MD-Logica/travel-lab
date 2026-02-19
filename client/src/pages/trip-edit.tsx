@@ -31,7 +31,7 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown, RefreshCw, Bookmark, Check,
+  ChevronDown, RefreshCw, Bookmark, Check, Diamond,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -74,12 +74,20 @@ function checkedTimeAgo(date: Date | string | null): string {
 
 const segmentTypeConfig: Record<string, { label: string; icon: typeof Plane; color: string }> = {
   flight: { label: "Flight", icon: Plane, color: "text-sky-600 bg-sky-50 dark:bg-sky-950/40" },
-  charter: { label: "Charter", icon: Ship, color: "text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40" },
+  charter_flight: { label: "Charter", icon: Diamond, color: "text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40" },
+  charter: { label: "Charter", icon: Diamond, color: "text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40" },
   hotel: { label: "Hotel", icon: Hotel, color: "text-amber-600 bg-amber-50 dark:bg-amber-950/40" },
   transport: { label: "Transport", icon: Car, color: "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40" },
   restaurant: { label: "Restaurant", icon: UtensilsCrossed, color: "text-rose-600 bg-rose-50 dark:bg-rose-950/40" },
   activity: { label: "Activity", icon: Activity, color: "text-violet-600 bg-violet-50 dark:bg-violet-950/40" },
   note: { label: "Note", icon: StickyNote, color: "text-muted-foreground bg-muted/60" },
+};
+
+const bookingClassLabels: Record<string, string> = {
+  first: "First",
+  business: "Business",
+  premium_economy: "Premium Economy",
+  economy: "Economy",
 };
 
 const tripStatusOptions = [
@@ -98,7 +106,8 @@ function deriveSegmentTitle(type: string, metadata: Record<string, any>): string
         [metadata.departureAirport, metadata.arrivalAirport].filter(Boolean).join(" to ") ||
         "Flight";
     case "charter":
-      return metadata.operator || metadata.aircraftType || "Charter";
+    case "charter_flight":
+      return metadata.operator || "Private Flight";
     case "hotel":
       return metadata.hotelName || "Hotel Stay";
     case "transport":
@@ -119,6 +128,7 @@ function deriveSegmentSubtitle(type: string, metadata: Record<string, any>): str
         ? `${metadata.departureAirport} to ${metadata.arrivalAirport}`
         : "";
     case "charter":
+    case "charter_flight":
       return [metadata.departureLocation, metadata.arrivalLocation].filter(Boolean).join(" to ");
     case "hotel":
       return [metadata.roomType, metadata.starRating ? "\u2605".repeat(metadata.starRating) : ""].filter(Boolean).join(" \u00b7 ");
@@ -182,12 +192,33 @@ function SegmentCard({
 
   const meta = (segment.metadata || {}) as Record<string, any>;
   const confNum = meta.confirmationNumber || segment.confirmationNumber;
-  const displayTitle = segment.type === "note"
-    ? (segment.title || "Note")
-    : (deriveSegmentTitle(segment.type, meta) || segment.title || cfg.label);
-  const displaySubtitle = segment.type === "note"
-    ? ""
-    : (deriveSegmentSubtitle(segment.type, meta) || segment.subtitle || "");
+  const isCommercialFlight = segment.type === "flight";
+  const isCharterFlight = segment.type === "charter_flight" || segment.type === "charter";
+
+  let displayTitle: string;
+  let displaySubtitle: string;
+  if (segment.type === "note") {
+    displayTitle = segment.title || "Note";
+    displaySubtitle = "";
+  } else if (isCommercialFlight) {
+    const parts = [meta.airline, meta.flightNumber].filter(Boolean);
+    displayTitle = parts.length > 0 ? parts.join(" · ") : (segment.title || "Flight");
+    const depAirport = meta.departureAirport || "";
+    const arrAirport = meta.arrivalAirport || "";
+    displaySubtitle = depAirport && arrAirport ? `${depAirport} → ${arrAirport}` : "";
+  } else if (isCharterFlight) {
+    displayTitle = meta.operator || "Private Flight";
+    const depLoc = meta.departureLocation || "";
+    const arrLoc = meta.arrivalLocation || "";
+    displaySubtitle = depLoc && arrLoc ? `${depLoc} → ${arrLoc}` : "";
+  } else {
+    displayTitle = deriveSegmentTitle(segment.type, meta) || segment.title || cfg.label;
+    displaySubtitle = deriveSegmentSubtitle(segment.type, meta) || segment.subtitle || "";
+  }
+
+  const depTime = isCommercialFlight ? meta.departureTime : (isCharterFlight ? meta.departureTime : null);
+  const arrTime = isCommercialFlight ? meta.arrivalTime : (isCharterFlight ? meta.arrivalTime : null);
+  const timeDisplay = depTime && arrTime ? `${depTime} → ${arrTime}` : depTime || arrTime || null;
 
   return (
     <Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>
@@ -197,8 +228,21 @@ function SegmentCard({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <p className="text-sm font-medium truncate" data-testid={`text-segment-title-${segment.id}`}>{displayTitle}</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="text-sm font-medium truncate" data-testid={`text-segment-title-${segment.id}`}>{displayTitle}</p>
+                {isCommercialFlight && meta.bookingClass && (
+                  <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`badge-class-${segment.id}`}>
+                    {bookingClassLabels[meta.bookingClass] || meta.bookingClass}
+                  </Badge>
+                )}
+                {isCharterFlight && (
+                  <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`badge-charter-${segment.id}`}>
+                    <Diamond className="w-2.5 h-2.5 mr-0.5" />
+                    Charter
+                  </Badge>
+                )}
+              </div>
               {displaySubtitle && (
                 <p className="text-xs text-muted-foreground truncate mt-0.5">
                   {displaySubtitle}
@@ -220,14 +264,19 @@ function SegmentCard({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 mt-1.5">
-            {(segment.startTime || segment.endTime) && (
+            {(isCommercialFlight || isCharterFlight) && timeDisplay ? (
+              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Clock className="w-3 h-3" strokeWidth={1.5} />
+                {timeDisplay}
+              </span>
+            ) : (segment.startTime || segment.endTime) ? (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Clock className="w-3 h-3" strokeWidth={1.5} />
                 {segment.startTime}{segment.endTime ? ` - ${segment.endTime}` : ""}
               </span>
-            )}
+            ) : null}
             {confNum && (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1 text-xs font-mono text-muted-foreground">
                 <Hash className="w-3 h-3" strokeWidth={1.5} />
                 {confNum}
               </span>
@@ -727,13 +776,23 @@ function DuplicateTripDialog({ tripId, tripTitle, open, onOpenChange }: {
 }
 
 const segmentTypeIcons: Record<string, typeof Plane> = {
-  flight: Plane, charter: Ship, hotel: Hotel, transport: Car,
+  flight: Plane, charter: Diamond, charter_flight: Diamond, hotel: Hotel, transport: Car,
   restaurant: UtensilsCrossed, activity: Activity, note: StickyNote,
 };
 
+const addSegmentOptions = [
+  { type: "flight", label: "Commercial Flight", icon: Plane },
+  { type: "charter_flight", label: "Private / Charter Flight", icon: Diamond },
+  { type: "hotel", label: "Hotel", icon: Hotel },
+  { type: "transport", label: "Transport", icon: Car },
+  { type: "restaurant", label: "Restaurant", icon: UtensilsCrossed },
+  { type: "activity", label: "Activity", icon: Activity },
+  { type: "note", label: "Note", icon: StickyNote },
+];
+
 function AddSegmentMenu({ day, onAddBlank, onAddFromTemplate }: {
   day: number;
-  onAddBlank: (day: number) => void;
+  onAddBlank: (day: number, type?: string) => void;
   onAddFromTemplate: (day: number, tpl: TemplateData) => void;
 }) {
   const { data: templates } = useQuery<any[]>({
@@ -741,14 +800,6 @@ function AddSegmentMenu({ day, onAddBlank, onAddFromTemplate }: {
   });
 
   const hasTemplates = templates && templates.length > 0;
-
-  if (!hasTemplates) {
-    return (
-      <Button variant="ghost" size="sm" className="text-xs" onClick={() => onAddBlank(day)} data-testid={`button-add-segment-day-${day}`}>
-        <Plus className="w-3 h-3 mr-1" /> Add
-      </Button>
-    );
-  }
 
   return (
     <DropdownMenu>
@@ -759,39 +810,52 @@ function AddSegmentMenu({ day, onAddBlank, onAddFromTemplate }: {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuItem onClick={() => onAddBlank(day)} data-testid={`add-blank-segment-day-${day}`}>
-          <Plus className="w-3.5 h-3.5 mr-2" />
-          Blank segment
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <div className="px-2 py-1.5">
-          <p className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground/60 font-medium flex items-center gap-1">
-            <Bookmark className="w-3 h-3" /> Templates
-          </p>
-        </div>
-        {templates.map((tpl: any) => {
-          const TIcon = segmentTypeIcons[tpl.type] || Activity;
+        {addSegmentOptions.map((opt) => {
+          const OptIcon = opt.icon;
           return (
             <DropdownMenuItem
-              key={tpl.id}
-              onClick={() => onAddFromTemplate(day, {
-                type: tpl.type,
-                title: tpl.data?.title || tpl.label,
-                subtitle: tpl.data?.subtitle,
-                cost: tpl.data?.cost,
-                currency: tpl.data?.currency,
-                notes: tpl.data?.notes,
-                metadata: tpl.data?.metadata,
-                templateId: tpl.id,
-              })}
-              data-testid={`add-template-${tpl.id}`}
+              key={opt.type}
+              onClick={() => onAddBlank(day, opt.type)}
+              data-testid={`add-${opt.type}-day-${day}`}
             >
-              <TIcon className="w-3.5 h-3.5 mr-2 shrink-0" />
-              <span className="truncate">{tpl.label}</span>
-              <span className="ml-auto text-[10px] text-muted-foreground/50">{tpl.useCount}x</span>
+              <OptIcon className="w-3.5 h-3.5 mr-2 shrink-0" />
+              {opt.label}
             </DropdownMenuItem>
           );
         })}
+        {hasTemplates && (
+          <>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1.5">
+              <p className="text-[10px] uppercase tracking-[0.1em] text-muted-foreground/60 font-medium flex items-center gap-1">
+                <Bookmark className="w-3 h-3" /> Templates
+              </p>
+            </div>
+            {templates!.map((tpl: any) => {
+              const TIcon = segmentTypeIcons[tpl.type] || Activity;
+              return (
+                <DropdownMenuItem
+                  key={tpl.id}
+                  onClick={() => onAddFromTemplate(day, {
+                    type: tpl.type,
+                    title: tpl.data?.title || tpl.label,
+                    subtitle: tpl.data?.subtitle,
+                    cost: tpl.data?.cost,
+                    currency: tpl.data?.currency,
+                    notes: tpl.data?.notes,
+                    metadata: tpl.data?.metadata,
+                    templateId: tpl.id,
+                  })}
+                  data-testid={`add-template-${tpl.id}`}
+                >
+                  <TIcon className="w-3.5 h-3.5 mr-2 shrink-0" />
+                  <span className="truncate">{tpl.label}</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground/50">{tpl.useCount}x</span>
+                </DropdownMenuItem>
+              );
+            })}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -941,10 +1005,13 @@ export default function TripEditPage() {
     },
   });
 
-  const openAddSegment = (day: number) => {
+  const [addSegmentType, setAddSegmentType] = useState<string | null>(null);
+
+  const openAddSegment = (day: number, type?: string) => {
     setEditingSegment(null);
     setTemplateForEditor(null);
     setAddSegmentDay(day);
+    setAddSegmentType(type || null);
     setSegmentDialogOpen(true);
   };
 
@@ -1251,7 +1318,7 @@ export default function TripEditPage() {
 
       {currentVersionId && (
         <SegmentEditor
-          key={editingSegment?.id || `new-${addSegmentDay}-${templateForEditor?.templateId || ''}`}
+          key={editingSegment?.id || `new-${addSegmentDay}-${addSegmentType || ''}-${templateForEditor?.templateId || ''}`}
           open={segmentDialogOpen}
           onOpenChange={setSegmentDialogOpen}
           tripId={id!}
@@ -1259,6 +1326,7 @@ export default function TripEditPage() {
           existingSegment={editingSegment}
           defaultDay={addSegmentDay}
           templateData={templateForEditor}
+          defaultType={addSegmentType}
         />
       )}
 

@@ -39,6 +39,18 @@ function buildDescription(segment: TripSegment): string {
     if (airline) parts.push(`Airline: ${airline}`);
     if (fn) parts.push(`Flight: ${fn}`);
     if (dep && arr) parts.push(`Route: ${dep} → ${arr}`);
+    const bookingClass = getMetaValue(meta, "bookingClass");
+    if (bookingClass) parts.push(`Class: ${bookingClass}`);
+  } else if (segment.type === "charter" || segment.type === "charter_flight") {
+    const operator = getMetaValue(meta, "operator");
+    const aircraft = getMetaValue(meta, "aircraftType");
+    const dep = getMetaValue(meta, "departureLocation");
+    const arr = getMetaValue(meta, "arrivalLocation");
+    if (operator) parts.push(`Operator: ${operator}`);
+    if (aircraft) parts.push(`Aircraft: ${aircraft}`);
+    if (dep && arr) parts.push(`Route: ${dep} → ${arr}`);
+    const fbo = getMetaValue(meta, "fboHandler");
+    if (fbo) parts.push(`FBO: ${fbo}`);
   } else if (segment.type === "hotel") {
     const name = getMetaValue(meta, "hotelName");
     const room = getMetaValue(meta, "roomType");
@@ -68,6 +80,10 @@ function buildLocation(segment: TripSegment): string {
   if (segment.type === "flight") {
     const dep = getMetaValue(meta, "departureAirport");
     const arr = getMetaValue(meta, "arrivalAirport");
+    if (dep && arr) return `${dep} to ${arr}`;
+  } else if (segment.type === "charter" || segment.type === "charter_flight") {
+    const dep = getMetaValue(meta, "departureLocation");
+    const arr = getMetaValue(meta, "arrivalLocation");
     if (dep && arr) return `${dep} to ${arr}`;
   } else if (segment.type === "hotel") {
     return getMetaValue(meta, "hotelName") || segment.title;
