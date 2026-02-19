@@ -14,6 +14,9 @@ import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -28,13 +31,13 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown, RefreshCw, Bookmark,
+  ChevronDown, RefreshCw, Bookmark, Check,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { SegmentEditor, type TemplateData } from "@/components/segment-editor";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking } from "@shared/schema";
-import { format } from "date-fns";
+import { format, addDays, differenceInDays } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
 type TripFull = { trip: TripWithClient; versions: TripVersion[] };
@@ -78,17 +81,72 @@ const segmentTypeConfig: Record<string, { label: string; icon: typeof Plane; col
   note: { label: "Note", icon: StickyNote, color: "text-muted-foreground bg-muted/60" },
 };
 
+const tripStatusOptions = [
+  { value: "draft", label: "Draft", className: "bg-muted text-muted-foreground" },
+  { value: "planning", label: "Planning", className: "bg-primary/10 text-primary" },
+  { value: "confirmed", label: "Confirmed", className: "bg-chart-2/10 text-chart-2" },
+  { value: "in_progress", label: "In Progress", className: "bg-chart-4/10 text-chart-4" },
+  { value: "completed", label: "Completed", className: "bg-chart-2/10 text-chart-2" },
+  { value: "cancelled", label: "Cancelled", className: "bg-destructive/10 text-destructive" },
+];
+
+function deriveSegmentTitle(type: string, metadata: Record<string, any>): string {
+  switch (type) {
+    case "flight":
+      return [metadata.airline, metadata.flightNumber].filter(Boolean).join(" ") ||
+        [metadata.departureAirport, metadata.arrivalAirport].filter(Boolean).join(" to ") ||
+        "Flight";
+    case "charter":
+      return metadata.operator || metadata.aircraftType || "Charter";
+    case "hotel":
+      return metadata.hotelName || "Hotel Stay";
+    case "transport":
+      return metadata.provider || (metadata.transportType ? metadata.transportType.charAt(0).toUpperCase() + metadata.transportType.slice(1) : "") || "Transfer";
+    case "restaurant":
+      return metadata.restaurantName || "Restaurant";
+    case "activity":
+      return metadata.activityName || metadata.provider || "Activity";
+    default:
+      return "";
+  }
+}
+
+function deriveSegmentSubtitle(type: string, metadata: Record<string, any>): string {
+  switch (type) {
+    case "flight":
+      return metadata.departureAirport && metadata.arrivalAirport
+        ? `${metadata.departureAirport} to ${metadata.arrivalAirport}`
+        : "";
+    case "charter":
+      return [metadata.departureLocation, metadata.arrivalLocation].filter(Boolean).join(" to ");
+    case "hotel":
+      return [metadata.roomType, metadata.starRating ? "\u2605".repeat(metadata.starRating) : ""].filter(Boolean).join(" \u00b7 ");
+    case "transport":
+      return [metadata.transportType ? metadata.transportType.charAt(0).toUpperCase() + metadata.transportType.slice(1) : "", metadata.vehicleType].filter(Boolean).join(" \u00b7 ");
+    case "restaurant":
+      return [metadata.cuisine, metadata.partySize ? `${metadata.partySize} guests` : ""].filter(Boolean).join(" \u00b7 ");
+    case "activity":
+      return [metadata.category ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1) : "", metadata.duration].filter(Boolean).join(" \u00b7 ");
+    case "note":
+      return metadata.noteType ? metadata.noteType.charAt(0).toUpperCase() + metadata.noteType.slice(1) : "";
+    default:
+      return "";
+  }
+}
+
 
 function SegmentCard({
   segment,
   tripId,
   onEdit,
   tracking,
+  showPricing = false,
 }: {
   segment: TripSegment;
   tripId: string;
   onEdit: (s: TripSegment) => void;
   tracking?: FlightTracking | null;
+  showPricing?: boolean;
 }) {
   const { toast } = useToast();
   const cfg = segmentTypeConfig[segment.type] || segmentTypeConfig.activity;
@@ -122,34 +180,13 @@ function SegmentCard({
   });
 
   const meta = (segment.metadata || {}) as Record<string, any>;
-
-  const metaDetails: string[] = [];
-  if (segment.type === "flight") {
-    if (meta.flightNumber) metaDetails.push(meta.flightNumber);
-    if (meta.airline) metaDetails.push(meta.airline);
-    if (meta.departureAirport && meta.arrivalAirport) metaDetails.push(`${meta.departureAirport} → ${meta.arrivalAirport}`);
-  } else if (segment.type === "charter") {
-    if (meta.operator) metaDetails.push(meta.operator);
-    if (meta.aircraftType) metaDetails.push(meta.aircraftType);
-  } else if (segment.type === "hotel") {
-    if (meta.roomType) metaDetails.push(meta.roomType);
-    if (meta.starRating) metaDetails.push(`${"★".repeat(meta.starRating)}`);
-  } else if (segment.type === "transport") {
-    if (meta.transportType) metaDetails.push(meta.transportType.charAt(0).toUpperCase() + meta.transportType.slice(1));
-    if (meta.provider) metaDetails.push(meta.provider);
-  } else if (segment.type === "restaurant") {
-    if (meta.cuisine) metaDetails.push(meta.cuisine);
-    if (meta.guestName) metaDetails.push(meta.guestName);
-    if (meta.partySize) metaDetails.push(`${meta.partySize} guests`);
-  } else if (segment.type === "activity") {
-    if (meta.category) metaDetails.push(meta.category.charAt(0).toUpperCase() + meta.category.slice(1));
-    if (meta.provider) metaDetails.push(meta.provider);
-    if (meta.duration) metaDetails.push(meta.duration);
-  } else if (segment.type === "note") {
-    if (meta.noteType) metaDetails.push(meta.noteType.charAt(0).toUpperCase() + meta.noteType.slice(1));
-  }
-
   const confNum = meta.confirmationNumber || segment.confirmationNumber;
+  const displayTitle = segment.type === "note"
+    ? (segment.title || "Note")
+    : (deriveSegmentTitle(segment.type, meta) || segment.title || cfg.label);
+  const displaySubtitle = segment.type === "note"
+    ? ""
+    : (deriveSegmentSubtitle(segment.type, meta) || segment.subtitle || "");
 
   return (
     <Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>
@@ -160,10 +197,10 @@ function SegmentCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-sm font-medium truncate" data-testid={`text-segment-title-${segment.id}`}>{segment.title}</p>
-              {(segment.subtitle || metaDetails.length > 0) && (
+              <p className="text-sm font-medium truncate" data-testid={`text-segment-title-${segment.id}`}>{displayTitle}</p>
+              {displaySubtitle && (
                 <p className="text-xs text-muted-foreground truncate mt-0.5">
-                  {segment.subtitle || metaDetails.join(" · ")}
+                  {displaySubtitle}
                 </p>
               )}
             </div>
@@ -194,7 +231,7 @@ function SegmentCard({
                 {confNum}
               </span>
             )}
-            {segment.cost != null && segment.cost > 0 && (
+            {showPricing && segment.cost != null && segment.cost > 0 && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <DollarSign className="w-3 h-3" strokeWidth={1.5} />
                 {segment.currency || "USD"} {segment.cost.toLocaleString()}
@@ -806,16 +843,23 @@ export default function TripEditPage() {
     return map;
   }, [flightTrackings]);
 
-  const dayGroups = useMemo(() => {
+  const segmentsByDay = useMemo(() => {
     const groups = new Map<number, TripSegment[]>();
     for (const seg of segments) {
       if (!groups.has(seg.dayNumber)) groups.set(seg.dayNumber, []);
       groups.get(seg.dayNumber)!.push(seg);
     }
-    return Array.from(groups.entries()).sort(([a], [b]) => a - b);
+    return groups;
   }, [segments]);
 
-  const maxDay = dayGroups.length > 0 ? Math.max(...dayGroups.map(([d]) => d)) : 0;
+  const dayCount = useMemo(() => {
+    if (trip?.startDate && trip?.endDate) {
+      const days = differenceInDays(new Date(trip.endDate), new Date(trip.startDate)) + 1;
+      return Math.max(days, 1);
+    }
+    const maxDay = segments.length > 0 ? Math.max(...segments.map(s => s.dayNumber)) : 0;
+    return Math.max(maxDay, 1);
+  }, [trip, segments]);
 
   const totalCost = useMemo(() => {
     return segments.reduce((sum, s) => sum + (s.cost || 0), 0);
@@ -861,6 +905,35 @@ export default function TripEditPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
       setActiveVersionId(null);
       toast({ title: "Version deleted" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const updateStatusMutation = useMutation({
+    mutationFn: async (newStatus: string) => {
+      const res = await apiRequest("PATCH", `/api/trips/${id}`, { status: newStatus });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      toast({ title: "Status updated" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const togglePricingMutation = useMutation({
+    mutationFn: async (showPricing: boolean) => {
+      const res = await apiRequest("PATCH", `/api/trips/${id}/versions/${currentVersionId}`, { showPricing });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+      toast({ title: currentVersion?.showPricing ? "Pricing hidden" : "Pricing visible" });
     },
     onError: (e: Error) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -923,7 +996,7 @@ export default function TripEditPage() {
       <div className="shrink-0 border-b border-border/50 bg-background/80 backdrop-blur-xl sticky top-0 z-40">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
           <div className="flex items-center gap-3 min-w-0">
-            <Button variant="ghost" size="icon" onClick={() => navigate(`/trips/${id}`)} data-testid="button-back-trip-detail">
+            <Button variant="ghost" size="icon" onClick={() => navigate("/trips")} data-testid="button-back-trips">
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div className="min-w-0">
@@ -949,8 +1022,35 @@ export default function TripEditPage() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {totalCost > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button data-testid="button-status-popover">
+                  <Badge
+                    variant="secondary"
+                    className={`text-[10px] uppercase tracking-wider cursor-pointer ${
+                      (tripStatusOptions.find(s => s.value === trip.status) || tripStatusOptions[0]).className
+                    }`}
+                  >
+                    {(tripStatusOptions.find(s => s.value === trip.status) || tripStatusOptions[0]).label}
+                  </Badge>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-44 p-1" align="end">
+                {tripStatusOptions.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => updateStatusMutation.mutate(opt.value)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-md hover-elevate flex items-center justify-between gap-2 text-sm"
+                    data-testid={`button-set-status-${opt.value}`}
+                  >
+                    <span>{opt.label}</span>
+                    {trip.status === opt.value && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                  </button>
+                ))}
+              </PopoverContent>
+            </Popover>
+            {totalCost > 0 && currentVersion?.showPricing && (
               <Badge variant="secondary" className="text-xs" data-testid="badge-total-cost">
                 <DollarSign className="w-3 h-3 mr-0.5" />
                 {(trip.currency || "USD")} {totalCost.toLocaleString()}
@@ -1033,6 +1133,16 @@ export default function TripEditPage() {
           >
             <Plus className="w-3.5 h-3.5 mr-1" /> Version
           </Button>
+          <div className="ml-auto flex items-center gap-1.5 shrink-0">
+            <DollarSign className="w-3 h-3 text-muted-foreground" />
+            <span className="text-[11px] text-muted-foreground">Show Pricing</span>
+            <Switch
+              checked={!!currentVersion?.showPricing}
+              onCheckedChange={(checked) => togglePricingMutation.mutate(checked)}
+              disabled={togglePricingMutation.isPending}
+              data-testid="switch-show-pricing"
+            />
+          </div>
         </div>
       </div>
 
@@ -1045,42 +1155,31 @@ export default function TripEditPage() {
               <Skeleton className="h-20 w-full" />
               <Skeleton className="h-20 w-full" />
             </div>
-          ) : segments.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="py-16 text-center"
-            >
-              <div className="w-16 h-16 rounded-full bg-muted/60 flex items-center justify-center mx-auto mb-4">
-                <MapPin className="w-7 h-7 text-muted-foreground" strokeWidth={1.5} />
-              </div>
-              <h3 className="font-serif text-lg mb-1">Start building the itinerary</h3>
-              <p className="text-sm text-muted-foreground mb-5 max-w-sm mx-auto">
-                Add flights, hotels, activities, and more to create a day-by-day plan for your client.
-              </p>
-              <Button onClick={() => openAddSegment(1)} data-testid="button-add-first-segment">
-                <Plus className="w-4 h-4 mr-1" /> Add First Segment
-              </Button>
-            </motion.div>
           ) : (
-            <div className="space-y-6">
-              <AnimatePresence mode="popLayout">
-                {dayGroups.map(([dayNum, daySegments]) => (
+            <div className="space-y-5">
+              {Array.from({ length: dayCount }, (_, i) => i + 1).map((dayNum) => {
+                const daySegments = segmentsByDay.get(dayNum) || [];
+                const dayDate = trip.startDate
+                  ? addDays(new Date(trip.startDate), dayNum - 1)
+                  : null;
+                const showPricing = !!currentVersion?.showPricing;
+
+                return (
                   <motion.div
                     key={dayNum}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -8 }}
-                    layout
+                    transition={{ delay: dayNum * 0.02, duration: 0.3 }}
+                    data-testid={`day-card-${dayNum}`}
                   >
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                    <div className="flex items-center gap-3 mb-2.5">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-serif text-base font-medium tracking-tight">
                           Day {dayNum}
                         </span>
-                        {trip.startDate && (
+                        {dayDate && (
                           <span className="text-xs text-muted-foreground">
-                            {format(new Date(new Date(trip.startDate).getTime() + (dayNum - 1) * 86400000), "EEE, MMM d")}
+                            {format(dayDate, "EEEE, MMM d")}
                           </span>
                         )}
                       </div>
@@ -1091,33 +1190,50 @@ export default function TripEditPage() {
                         onAddFromTemplate={openAddFromTemplate}
                       />
                     </div>
-                    <div className="space-y-2 pl-0 md:pl-4">
-                      {daySegments.map((seg) => (
-                        <SegmentCard
-                          key={seg.id}
-                          segment={seg}
-                          tripId={id!}
-                          onEdit={openEditSegment}
-                          tracking={seg.type === "flight" ? trackingBySegment.get(seg.id) : null}
-                        />
-                      ))}
-                    </div>
+                    {daySegments.length > 0 ? (
+                      <div className="space-y-2 pl-0 md:pl-4">
+                        {daySegments.map((seg) => (
+                          <SegmentCard
+                            key={seg.id}
+                            segment={seg}
+                            tripId={id!}
+                            onEdit={openEditSegment}
+                            tracking={seg.type === "flight" ? trackingBySegment.get(seg.id) : null}
+                            showPricing={showPricing}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="pl-0 md:pl-4">
+                        <div
+                          className="border border-dashed border-border/40 rounded-md py-6 text-center cursor-pointer hover:border-border/70 transition-colors"
+                          onClick={() => openAddSegment(dayNum)}
+                          data-testid={`empty-day-${dayNum}`}
+                        >
+                          <p className="text-xs text-muted-foreground/50">
+                            No segments yet
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </motion.div>
-                ))}
-              </AnimatePresence>
+                );
+              })}
 
-              <div className="flex items-center gap-3 pt-2">
-                <Separator className="flex-1" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openAddSegment(maxDay + 1)}
-                  data-testid="button-add-new-day"
-                >
-                  <Plus className="w-3.5 h-3.5 mr-1" /> Add Day {maxDay + 1}
-                </Button>
-                <Separator className="flex-1" />
-              </div>
+              {!trip.startDate && (
+                <div className="flex items-center gap-3 pt-2">
+                  <Separator className="flex-1" />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openAddSegment(dayCount + 1)}
+                    data-testid="button-add-new-day"
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Day {dayCount + 1}
+                  </Button>
+                  <Separator className="flex-1" />
+                </div>
+              )}
             </div>
           )}
 

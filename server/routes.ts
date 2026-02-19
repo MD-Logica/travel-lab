@@ -771,6 +771,7 @@ export async function registerRoutes(
       const updateSchema = z.object({
         name: z.string().min(1).optional(),
         isPrimary: z.boolean().optional(),
+        showPricing: z.boolean().optional(),
       });
       const parsed = updateSchema.parse(req.body);
 

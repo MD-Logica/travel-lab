@@ -139,7 +139,7 @@ export default function TripNewPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       toast({ title: "Trip created", description: "Your new trip has been added." });
-      navigate(`/trips/${trip.id}`);
+      navigate(`/trips/${trip.id}/edit`);
     },
     onError: (error: Error) => {
       try {

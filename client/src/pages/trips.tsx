@@ -73,7 +73,7 @@ type FlightStatusMap = Record<string, { count: number; hasActive: boolean }>;
 function MobileTripRow({ trip, flightStatus }: { trip: TripWithClient; flightStatus?: { count: number; hasActive: boolean } }) {
   const cfg = statusConfig[trip.status] || statusConfig.draft;
   return (
-    <Link href={`/trips/${trip.id}`}>
+    <Link href={`/trips/${trip.id}/edit`}>
       <div
         className="flex items-center gap-3 px-4 py-3 hover-elevate cursor-pointer border-b border-border/30 last:border-b-0"
         data-testid={`mobile-trip-${trip.id}`}
@@ -280,7 +280,7 @@ export default function TripsPage() {
                     animate="visible"
                     variants={fadeUp}
                   >
-                    <Link href={`/trips/${trip.id}`}>
+                    <Link href={`/trips/${trip.id}/edit`}>
                       <Card className="hover-elevate cursor-pointer h-full overflow-visible" data-testid={`card-trip-${trip.id}`}>
                         <div className="relative aspect-[16/10] overflow-hidden rounded-t-md">
                           {trip.coverImageUrl ? (

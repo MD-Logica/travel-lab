@@ -23,6 +23,46 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { TripSegment } from "@shared/schema";
 
+function deriveTitle(type: string, metadata: Record<string, any>): string {
+  switch (type) {
+    case "flight":
+      return [metadata.airline, metadata.flightNumber].filter(Boolean).join(" ") ||
+        [metadata.departureAirport, metadata.arrivalAirport].filter(Boolean).join(" to ") || "";
+    case "charter":
+      return metadata.operator || metadata.aircraftType || "";
+    case "hotel":
+      return metadata.hotelName || "";
+    case "transport":
+      return metadata.provider || (metadata.transportType ? metadata.transportType.charAt(0).toUpperCase() + metadata.transportType.slice(1) : "") || "";
+    case "restaurant":
+      return metadata.restaurantName || "";
+    case "activity":
+      return metadata.activityName || metadata.provider || "";
+    default:
+      return "";
+  }
+}
+
+function deriveSubtitle(type: string, metadata: Record<string, any>): string {
+  switch (type) {
+    case "flight":
+      return metadata.departureAirport && metadata.arrivalAirport
+        ? `${metadata.departureAirport} to ${metadata.arrivalAirport}` : "";
+    case "charter":
+      return [metadata.departureLocation, metadata.arrivalLocation].filter(Boolean).join(" to ");
+    case "hotel":
+      return [metadata.roomType, metadata.starRating ? "\u2605".repeat(metadata.starRating) : ""].filter(Boolean).join(" \u00b7 ");
+    case "transport":
+      return [metadata.transportType ? metadata.transportType.charAt(0).toUpperCase() + metadata.transportType.slice(1) : "", metadata.vehicleType].filter(Boolean).join(" \u00b7 ");
+    case "restaurant":
+      return [metadata.cuisine, metadata.partySize ? `${metadata.partySize} guests` : ""].filter(Boolean).join(" \u00b7 ");
+    case "activity":
+      return [metadata.category ? metadata.category.charAt(0).toUpperCase() + metadata.category.slice(1) : "", metadata.duration].filter(Boolean).join(" \u00b7 ");
+    default:
+      return "";
+  }
+}
+
 const segmentTypeConfig: Record<string, { label: string; icon: typeof Plane; color: string }> = {
   flight: { label: "Flight", icon: Plane, color: "text-sky-600 bg-sky-100 dark:bg-sky-950/50" },
   charter: { label: "Charter", icon: Ship, color: "text-indigo-600 bg-indigo-100 dark:bg-indigo-950/50" },
@@ -692,12 +732,14 @@ export function SegmentEditor({
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const derivedTitle = type === "note" ? title : deriveTitle(type, metadata);
+      const derivedSubtitle = type === "note" ? "" : deriveSubtitle(type, metadata);
       const payload = {
         dayNumber,
         sortOrder: existingSegment?.sortOrder || 0,
         type,
-        title,
-        subtitle: subtitle || null,
+        title: derivedTitle || title || segmentTypeConfig[type]?.label || "Segment",
+        subtitle: derivedSubtitle || subtitle || null,
         startTime: startTime || null,
         endTime: endTime || null,
         confirmationNumber: confirmationNumber || null,
@@ -801,37 +843,17 @@ export function SegmentEditor({
             </div>
           </div>
 
-          <FieldRow>
+          {type === "note" && (
             <div>
               <FieldLabel>Title</FieldLabel>
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder={type === "flight" ? "LHR to FCO" : type === "hotel" ? "Aman Venice" : type === "restaurant" ? "Dinner at Noma" : "Segment title"}
+                placeholder="Note title"
                 data-testid="input-segment-title"
               />
             </div>
-            <div>
-              <FieldLabel>Day</FieldLabel>
-              <Input
-                type="number"
-                min={1}
-                value={dayNumber}
-                onChange={(e) => setDayNumber(parseInt(e.target.value) || 1)}
-                data-testid="input-segment-day"
-              />
-            </div>
-          </FieldRow>
-
-          <div>
-            <FieldLabel>Subtitle</FieldLabel>
-            <Input
-              value={subtitle}
-              onChange={(e) => setSubtitle(e.target.value)}
-              placeholder={type === "flight" ? "British Airways BA560" : type === "hotel" ? "Suite with canal view" : "Optional subtitle"}
-              data-testid="input-segment-subtitle"
-            />
-          </div>
+          )}
 
           <TypeFields metadata={metadata} onChange={setMetadata} />
 
@@ -907,7 +929,7 @@ export function SegmentEditor({
           <Button
             className="w-full"
             onClick={() => saveMutation.mutate()}
-            disabled={!title.trim() || saveMutation.isPending || (saveAsTemplate && !templateLabel.trim())}
+            disabled={(type === "note" && !title.trim()) || saveMutation.isPending || (saveAsTemplate && !templateLabel.trim())}
             data-testid="button-save-segment"
           >
             {saveMutation.isPending ? "Saving..." : isEdit ? `Update ${cfg.label}` : `Save ${cfg.label}`}

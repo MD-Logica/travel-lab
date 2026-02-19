@@ -174,7 +174,7 @@ function TripBanner({ clientId }: { clientId: string }) {
   if (!activeTrip) return null;
 
   return (
-    <Link href={`/trips/${activeTrip.id}`}>
+    <Link href={`/trips/${activeTrip.id}/edit`}>
       <div
         className="flex items-center gap-2 px-4 py-2 bg-primary/5 border-b border-border/30 text-xs hover-elevate cursor-pointer"
         data-testid="banner-active-trip"

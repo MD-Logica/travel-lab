@@ -159,7 +159,7 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {recentTrips.map((trip, i) => (
                 <motion.div key={trip.id} custom={i + 5} initial="hidden" animate="visible" variants={fadeUp}>
-                  <Link href={`/trips/${trip.id}`}>
+                  <Link href={`/trips/${trip.id}/edit`}>
                     <Card
                       className="hover-elevate cursor-pointer border-border/40 overflow-visible group"
                       data-testid={`card-trip-${trip.id}`}

@@ -1815,7 +1815,7 @@ export default function ClientDetailPage() {
 
               {imminentTrip && (
                 <div className="mb-8">
-                  <Link href={`/trips/${imminentTrip.id}`}>
+                  <Link href={`/trips/${imminentTrip.id}/edit`}>
                     <Card
                       className="hover-elevate cursor-pointer overflow-visible"
                       data-testid={`card-active-trip-${imminentTrip.id}`}
@@ -1873,7 +1873,7 @@ export default function ClientDetailPage() {
                 ) : sortedTrips.length > 0 ? (
                   <div className="space-y-1.5">
                     {sortedTrips.map((trip) => (
-                      <Link key={trip.id} href={`/trips/${trip.id}`}>
+                      <Link key={trip.id} href={`/trips/${trip.id}/edit`}>
                         <div
                           className="flex items-center justify-between gap-4 px-3 py-2.5 rounded-md hover-elevate cursor-pointer flex-wrap"
                           data-testid={`row-trip-${trip.id}`}
