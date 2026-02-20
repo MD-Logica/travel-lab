@@ -1748,6 +1748,51 @@ export default function TripEditPage() {
         </div>
       </div>
 
+      {(() => {
+        const budgetAmount = Number(trip.budget || 0);
+        const budgetCurrency = trip.currency || "USD";
+        const percentage = budgetAmount > 0 ? (totalCost / budgetAmount) * 100 : 0;
+        const isOverBudget = totalCost > budgetAmount;
+        const isWarning = percentage >= 80 && !isOverBudget;
+        const fmtBudget = (amount: number) =>
+          new Intl.NumberFormat("en-US", {
+            style: "currency",
+            currency: budgetCurrency,
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0,
+          }).format(amount);
+
+        if (budgetAmount <= 0) return null;
+        return (
+          <div className="mx-4 mb-3 p-3 rounded-lg border bg-card/50" data-testid="budget-progress-bar">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                Budget
+              </span>
+              <span className="text-xs font-semibold">
+                {fmtBudget(budgetAmount)}
+              </span>
+            </div>
+            <div className="relative h-1.5 bg-muted rounded-full overflow-hidden">
+              <div
+                className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${isOverBudget ? "bg-red-500 w-full" : isWarning ? "bg-amber-500" : "bg-emerald-500"}`}
+                style={{ width: `${Math.min(percentage, 100)}%` }}
+              />
+            </div>
+            <div className="flex justify-between items-center mt-1.5">
+              <span className="text-[11px] text-muted-foreground">
+                {fmtBudget(totalCost)} used
+              </span>
+              <span className={`text-[11px] font-medium ${isOverBudget ? "text-red-500" : isWarning ? "text-amber-500" : "text-muted-foreground"}`}>
+                {isOverBudget
+                  ? `${fmtBudget(totalCost - budgetAmount)} over budget`
+                  : `${fmtBudget(budgetAmount - totalCost)} remaining`}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-6 md:px-6">
