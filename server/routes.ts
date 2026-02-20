@@ -1745,6 +1745,26 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/flights/diagnose", isAuthenticated, async (req: any, res) => {
+    const apiKey = process.env.FLIGHTLABS_API_KEY;
+    const keyPresent = !!apiKey;
+    const keyLength = apiKey?.length || 0;
+
+    let apiResponse = null;
+    let apiError = null;
+    try {
+      const testUrl =
+        `https://www.goflightlabs.com/flight?access_key=${apiKey}&flight_number=BA001`;
+      const r = await fetch(testUrl);
+      const body = await r.text();
+      apiResponse = { status: r.status, body };
+    } catch (e: any) {
+      apiError = e.message;
+    }
+
+    res.json({ keyPresent, keyLength, apiResponse, apiError });
+  });
+
   // Endpoint B: Real-Time Flights (background monitoring)
   app.get("/api/flights/status", isAuthenticated, async (req: any, res) => {
     try {
