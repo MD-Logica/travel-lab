@@ -49,6 +49,7 @@ import { CurrencyInput } from "@/components/currency-input";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking, DestinationEntry } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
 import { format, addDays, differenceInDays, eachDayOfInterval, differenceInCalendarDays } from "date-fns";
+import { calculateLayover, isRedEye, journeyTotalTime } from "@/lib/journey-utils";
 
 type TripWithClient = Trip & { clientName: string | null };
 type TripFull = { trip: TripWithClient; versions: TripVersion[] };
@@ -421,6 +422,246 @@ function SegmentCard({
             </div>
           )}
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+type DayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+
+function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
+  const items: DayRenderItem[] = [];
+  const seenJourneyIds = new Set<string>();
+  const journeyGroups = new Map<string, TripSegment[]>();
+
+  for (const seg of daySegments) {
+    if (seg.journeyId) {
+      if (!journeyGroups.has(seg.journeyId)) {
+        journeyGroups.set(seg.journeyId, []);
+      }
+      journeyGroups.get(seg.journeyId)!.push(seg);
+    }
+  }
+
+  for (const seg of daySegments) {
+    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+      if (!seenJourneyIds.has(seg.journeyId)) {
+        seenJourneyIds.add(seg.journeyId);
+        const legs = journeyGroups.get(seg.journeyId)!;
+        legs.sort((a, b) => {
+          const aLeg = (a.metadata as any)?.legNumber || 0;
+          const bLeg = (b.metadata as any)?.legNumber || 0;
+          return aLeg - bLeg;
+        });
+        items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else {
+      items.push({ kind: "segment", segment: seg });
+    }
+  }
+  return items;
+}
+
+function JourneyCard({
+  legs,
+  tripId,
+  onEdit,
+  trackingBySegment,
+  showPricing,
+}: {
+  legs: TripSegment[];
+  tripId: string;
+  onEdit: (s: TripSegment) => void;
+  trackingBySegment: Map<string, FlightTracking>;
+  showPricing?: boolean;
+}) {
+  const firstLeg = legs[0];
+  const lastLeg = legs[legs.length - 1];
+  const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
+  const lastMeta = (lastLeg.metadata || {}) as Record<string, any>;
+
+  const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+  const destIata = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+  const originCity = firstMeta.departure?.city || firstMeta.departureAirportName || "";
+  const destCity = lastMeta.arrival?.city || lastMeta.arrivalAirportName || "";
+  const stopsCount = legs.length - 1;
+  const totalTime = journeyTotalTime(firstMeta, lastMeta);
+
+  const stopIatas = legs.slice(0, -1).map(leg => {
+    const m = (leg.metadata || {}) as Record<string, any>;
+    return m.arrival?.iata || m.arrivalAirport || "?";
+  });
+
+  const firstDepTime = firstMeta.departure?.scheduledTime || firstMeta.departureTime || "";
+  const lastArrTime = lastMeta.arrival?.scheduledTime || lastMeta.arrivalTime || "";
+
+  const layovers: (ReturnType<typeof calculateLayover>)[] = [];
+  for (let i = 0; i < legs.length - 1; i++) {
+    const legAMeta = (legs[i].metadata || {}) as Record<string, any>;
+    const legBMeta = (legs[i + 1].metadata || {}) as Record<string, any>;
+    layovers.push(calculateLayover(legAMeta, legBMeta));
+  }
+
+  const hasRedEye = firstMeta.departureTimeLocal
+    ? isRedEye(firstMeta.departureTimeLocal)
+    : firstMeta.departureTime ? isRedEye(firstMeta.departureTime) : false;
+
+  return (
+    <Card className="group relative hover-elevate border-sky-200/40 dark:border-sky-800/40" data-testid={`card-journey-${firstLeg.journeyId}`}>
+      <CardContent className="p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center w-9 h-9 rounded-md shrink-0 text-sky-600 bg-sky-50 dark:bg-sky-950/40">
+            <Plane className="w-4 h-4" strokeWidth={1.5} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-medium text-base tracking-tight" data-testid="text-journey-route">
+                {originIata} <span className="text-muted-foreground mx-1">&rarr;</span> {destIata}
+              </p>
+              <Badge variant="outline" className="text-[10px]">
+                {stopsCount} stop{stopsCount > 1 ? "s" : ""}
+              </Badge>
+              {hasRedEye && (
+                <Badge variant="outline" className="text-[10px] border-indigo-300 text-indigo-600 dark:border-indigo-700 dark:text-indigo-400">
+                  Red-eye
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+              {originCity && destCity && <span>{originCity} to {destCity}</span>}
+              {totalTime && (
+                <>
+                  <span className="text-muted-foreground/40">&middot;</span>
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" strokeWidth={1.5} />
+                    {totalTime} total
+                  </span>
+                </>
+              )}
+              {firstDepTime && lastArrTime && (
+                <>
+                  <span className="text-muted-foreground/40">&middot;</span>
+                  <span>{firstDepTime} &rarr; {lastArrTime}</span>
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground/60">
+              <span>{originIata}</span>
+              {stopIatas.map((iata, i) => (
+                <span key={i} className="flex items-center gap-1">
+                  <ChevronRight className="w-3 h-3" />
+                  <span className="font-medium text-foreground/70">{iata}</span>
+                </span>
+              ))}
+              <ChevronRight className="w-3 h-3" />
+              <span>{destIata}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-0 pl-4 border-l-2 border-sky-200/60 dark:border-sky-800/40 ml-4">
+          {legs.map((leg, i) => {
+            const meta = (leg.metadata || {}) as Record<string, any>;
+            const depIata = meta.departure?.iata || meta.departureAirport || "";
+            const arrIata = meta.arrival?.iata || meta.arrivalAirport || "";
+            const depTime = meta.departure?.scheduledTime || meta.departureTime || "";
+            const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
+            const flightNum = meta.flightNumber || leg.title || "Flight";
+            const airline = meta.airline || "";
+            const tracking = trackingBySegment.get(leg.id);
+
+            return (
+              <div key={leg.id}>
+                {i > 0 && layovers[i - 1] && (
+                  <div className="py-1.5 flex items-center gap-2 text-[11px]" data-testid={`layover-${i}`}>
+                    <div className={`w-2 h-2 rounded-full ${
+                      layovers[i - 1]!.flag === "tight" ? "bg-amber-500" :
+                      layovers[i - 1]!.flag === "long" ? "bg-muted-foreground/40" :
+                      "bg-emerald-500"
+                    }`} />
+                    <span className={`font-medium ${
+                      layovers[i - 1]!.flag === "tight" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                    }`}>
+                      {layovers[i - 1]!.display} layover
+                    </span>
+                    {layovers[i - 1]!.flag === "tight" && (
+                      <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400">
+                        Tight connection
+                      </Badge>
+                    )}
+                    {layovers[i - 1]!.airportChange && (
+                      <Badge variant="outline" className="text-[9px] border-red-300 text-red-600 dark:border-red-700 dark:text-red-400">
+                        Airport change
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                {i > 0 && !layovers[i - 1] && (
+                  <div className="py-1.5 flex items-center gap-2 text-[11px] text-muted-foreground/50">
+                    <div className="w-2 h-2 rounded-full bg-muted-foreground/20" />
+                    <span>Connection</span>
+                  </div>
+                )}
+                <div
+                  className="py-2 flex items-center gap-3 group/leg cursor-pointer hover:bg-accent/30 rounded-md px-2 -mx-2 transition-colors"
+                  onClick={() => onEdit(leg)}
+                  data-testid={`journey-leg-${leg.id}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{flightNum}</span>
+                      {airline && <span className="text-xs text-muted-foreground">{airline}</span>}
+                      {meta.bookingClass && (
+                        <Badge variant="secondary" className="text-[9px]">
+                          {bookingClassLabels[meta.bookingClass] || meta.bookingClass}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                      {depIata && arrIata && <span>{depIata} &rarr; {arrIata}</span>}
+                      {depTime && arrTime && (
+                        <>
+                          <span className="text-muted-foreground/40">&middot;</span>
+                          <span>{depTime} &rarr; {arrTime}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="opacity-0 group-hover/leg:opacity-100 transition-opacity">
+                    <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                  </div>
+                </div>
+                {tracking && (
+                  <div className="flex items-center gap-2 ml-2 mb-1 flex-wrap" data-testid={`flight-status-journey-${leg.id}`}>
+                    {(() => {
+                      const ls = tracking.lastStatus as FlightStatusInfo | null;
+                      const statusKey = ls?.status || "scheduled";
+                      const statusCfg = flightStatusConfig[statusKey] || flightStatusConfig.unknown;
+                      return (
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium">
+                          <span className={`w-2 h-2 rounded-full ${statusCfg.dotClass}`} />
+                          {statusCfg.label}
+                        </span>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {showPricing && (() => {
+          const totalCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0);
+          return totalCost > 0 ? (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground pt-1 border-t border-border/30">
+              <DollarSign className="w-3 h-3" strokeWidth={1.5} />
+              {legs[0].currency || "USD"} {totalCost.toLocaleString()}
+            </div>
+          ) : null;
+        })()}
       </CardContent>
     </Card>
   );
@@ -1861,16 +2102,30 @@ export default function TripEditPage() {
                     </div>
                     {daySegments.length > 0 ? (
                       <div className="space-y-2 pl-0 md:pl-4">
-                        {daySegments.map((seg) => (
-                          <SegmentCard
-                            key={seg.id}
-                            segment={seg}
-                            tripId={id!}
-                            onEdit={openEditSegment}
-                            tracking={seg.type === "flight" ? trackingBySegment.get(seg.id) : null}
-                            showPricing={showPricing}
-                          />
-                        ))}
+                        {buildDayRenderItems(daySegments).map((item) => {
+                          if (item.kind === "journey") {
+                            return (
+                              <JourneyCard
+                                key={`journey-${item.journeyId}`}
+                                legs={item.legs}
+                                tripId={id!}
+                                onEdit={openEditSegment}
+                                trackingBySegment={trackingBySegment}
+                                showPricing={showPricing}
+                              />
+                            );
+                          }
+                          return (
+                            <SegmentCard
+                              key={item.segment.id}
+                              segment={item.segment}
+                              tripId={id!}
+                              onEdit={openEditSegment}
+                              tracking={item.segment.type === "flight" ? trackingBySegment.get(item.segment.id) : null}
+                              showPricing={showPricing}
+                            />
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="pl-0 md:pl-4">
