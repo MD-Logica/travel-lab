@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,11 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Plus, Search, MapPin, Calendar, User,
-  DollarSign, Clock, Plane,
+  DollarSign, Clock, Plane, Archive, ArchiveRestore, Trash2,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Trip } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
 import { format, differenceInDays } from "date-fns";
@@ -25,6 +30,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   in_progress: { label: "In Progress", className: "bg-chart-4/10 text-chart-4" },
   completed: { label: "Completed", className: "bg-chart-2/10 text-chart-2" },
   cancelled: { label: "Cancelled", className: "bg-destructive/10 text-destructive" },
+  archived: { label: "Archived", className: "bg-muted text-muted-foreground" },
 };
 
 const filterTabs = [
@@ -122,12 +128,52 @@ function MobileTripRow({ trip, flightStatus }: { trip: TripWithClient; flightSta
 export default function TripsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
+  const [viewMode, setViewMode] = useState<"active" | "archived">("active");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteTitle, setConfirmDeleteTitle] = useState("");
   const isMobile = useIsMobile();
+  const { toast } = useToast();
 
-  const { data: trips, isLoading } = useQuery<TripWithClient[]>({ queryKey: ["/api/trips"] });
+  const { data: trips, isLoading } = useQuery<TripWithClient[]>({
+    queryKey: ["/api/trips", viewMode === "archived" ? "archived" : undefined],
+    queryFn: async () => {
+      const url = viewMode === "archived" ? "/api/trips?status=archived" : "/api/trips";
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch trips");
+      return res.json();
+    },
+  });
   const { data: flightStatusMap } = useQuery<FlightStatusMap>({
     queryKey: ["/api/trips/flight-status"],
     refetchInterval: 60000,
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: async (tripId: string) => {
+      const res = await apiRequest("PATCH", `/api/trips/${tripId}`, { status: "draft" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      toast({ title: "Trip restored" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteTripMutation = useMutation({
+    mutationFn: async (tripId: string) => {
+      await apiRequest("DELETE", `/api/trips/${tripId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      setConfirmDeleteId(null);
+      toast({ title: "Trip deleted permanently" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -173,14 +219,37 @@ export default function TripsPage() {
                 </p>
               )}
             </div>
-            {!isMobile && (
-              <Link href="/trips/new">
-                <Button variant="outline" size="sm" data-testid="button-new-trip">
-                  <Plus className="w-3.5 h-3.5" />
-                  New Trip
-                </Button>
-              </Link>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center bg-muted/50 rounded-full p-0.5" data-testid="view-mode-toggle">
+                <button
+                  onClick={() => { setViewMode("active"); setActiveFilter("all"); }}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    viewMode === "active" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid="button-view-active"
+                >
+                  Active
+                </button>
+                <button
+                  onClick={() => { setViewMode("archived"); setActiveFilter("all"); }}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1 ${
+                    viewMode === "archived" ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid="button-view-archived"
+                >
+                  <Archive className="w-3 h-3" />
+                  Archived
+                </button>
+              </div>
+              {!isMobile && viewMode === "active" && (
+                <Link href="/trips/new">
+                  <Button variant="outline" size="sm" data-testid="button-new-trip">
+                    <Plus className="w-3.5 h-3.5" />
+                    New Trip
+                  </Button>
+                </Link>
+              )}
+            </div>
           </div>
         </motion.div>
 
@@ -201,33 +270,35 @@ export default function TripsPage() {
             />
           </div>
 
-          <div className={`flex items-center gap-2 ${isMobile ? 'overflow-x-auto pb-1 -mx-4 px-4 no-scrollbar' : 'flex-wrap'}`}>
-            {filterTabs.map((tab) => {
-              const count = statusCounts[tab.value] || 0;
-              const isActive = activeFilter === tab.value;
-              return (
-                <button
-                  key={tab.value}
-                  onClick={() => setActiveFilter(tab.value)}
-                  className={`
-                    px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap shrink-0
-                    ${isActive
-                      ? "bg-foreground text-background"
-                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                    }
-                  `}
-                  data-testid={`button-filter-${tab.value}`}
-                >
-                  {tab.label}
-                  {count > 0 && (
-                    <span className={`ml-1.5 ${isActive ? "opacity-70" : "opacity-50"}`}>
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          {viewMode === "active" && (
+            <div className={`flex items-center gap-2 ${isMobile ? 'overflow-x-auto pb-1 -mx-4 px-4 no-scrollbar' : 'flex-wrap'}`}>
+              {filterTabs.map((tab) => {
+                const count = statusCounts[tab.value] || 0;
+                const isActive = activeFilter === tab.value;
+                return (
+                  <button
+                    key={tab.value}
+                    onClick={() => setActiveFilter(tab.value)}
+                    className={`
+                      px-3 py-1.5 rounded-full text-xs font-medium transition-colors whitespace-nowrap shrink-0
+                      ${isActive
+                        ? "bg-foreground text-background"
+                        : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      }
+                    `}
+                    data-testid={`button-filter-${tab.value}`}
+                  >
+                    {tab.label}
+                    {count > 0 && (
+                      <span className={`ml-1.5 ${isActive ? "opacity-70" : "opacity-50"}`}>
+                        {count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
 
         {isLoading ? (
@@ -315,7 +386,7 @@ export default function TripsPage() {
                           </div>
                         </div>
 
-                        <CardContent className="p-4 space-y-2.5">
+                        <CardContent className={`p-4 space-y-2.5 ${viewMode === "archived" ? "opacity-60" : ""}`}>
                           {trip.clientName && (
                             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                               <User className="w-3 h-3 shrink-0" strokeWidth={1.5} />
@@ -347,6 +418,31 @@ export default function TripsPage() {
                               <span>{trip.currency} {trip.budget.toLocaleString()}</span>
                             </div>
                           )}
+
+                          {viewMode === "archived" && (
+                            <div className="flex items-center gap-2 pt-1" onClick={(e) => e.preventDefault()}>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-xs h-7"
+                                onClick={(e) => { e.preventDefault(); unarchiveMutation.mutate(trip.id); }}
+                                data-testid={`button-unarchive-${trip.id}`}
+                              >
+                                <ArchiveRestore className="w-3 h-3 mr-1" />
+                                Unarchive
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-xs h-7 text-destructive hover:text-destructive"
+                                onClick={(e) => { e.preventDefault(); setConfirmDeleteId(trip.id); setConfirmDeleteTitle(trip.title); }}
+                                data-testid={`button-delete-archived-${trip.id}`}
+                              >
+                                <Trash2 className="w-3 h-3 mr-1" />
+                                Delete
+                              </Button>
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     </Link>
@@ -361,6 +457,14 @@ export default function TripsPage() {
               No matching trips
             </p>
             <p className="text-sm text-muted-foreground/40">Try adjusting your search or filters.</p>
+          </div>
+        ) : viewMode === "archived" ? (
+          <div className="py-24 text-center" data-testid="text-no-archived">
+            <Archive className="w-10 h-10 mx-auto text-muted-foreground/30 mb-4" />
+            <p className="font-serif text-xl text-muted-foreground/50 mb-1 tracking-tight">
+              No archived trips
+            </p>
+            <p className="text-sm text-muted-foreground/40">Trips you archive will appear here.</p>
           </div>
         ) : (
           <div className="py-24 text-center">
@@ -378,6 +482,31 @@ export default function TripsPage() {
             </Link>
           </div>
         )}
+
+        <Dialog open={!!confirmDeleteId} onOpenChange={(open) => { if (!open) setConfirmDeleteId(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="font-serif text-xl">Delete trip permanently?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              This will permanently delete <span className="font-medium text-foreground">{confirmDeleteTitle}</span> and all its
+              versions, segments, and documents. This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setConfirmDeleteId(null)} data-testid="button-cancel-delete-list">
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => confirmDeleteId && deleteTripMutation.mutate(confirmDeleteId)}
+                disabled={deleteTripMutation.isPending}
+                data-testid="button-confirm-delete-list"
+              >
+                {deleteTripMutation.isPending ? "Deleting..." : "Delete permanently"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

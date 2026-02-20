@@ -38,7 +38,7 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal,
+  ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1530,6 +1530,7 @@ export default function TripEditPage() {
   const [templateForEditor, setTemplateForEditor] = useState<TemplateData | null>(null);
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   const { data: tripData, isLoading: tripLoading } = useQuery<TripFull>({
     queryKey: ["/api/trips", id, "full"],
@@ -1681,6 +1682,35 @@ export default function TripEditPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
       toast({ title: currentVersion?.showPricing ? "Pricing hidden" : "Pricing visible" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const archiveTripMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/trips/${id}`, { status: "archived" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      toast({ title: "Trip archived" });
+      navigate("/trips");
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const deleteTripMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/trips/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      toast({ title: "Trip deleted permanently" });
+      navigate("/trips");
     },
     onError: (e: Error) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -1930,6 +1960,32 @@ export default function TripEditPage() {
             >
               <Copy className="w-3.5 h-3.5 mr-1" /> Duplicate
             </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-trip-danger-menu">
+                  <MoreVertical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuItem
+                  onClick={() => archiveTripMutation.mutate()}
+                  data-testid="button-archive-trip"
+                >
+                  <Archive className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                  Archive trip
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => setConfirmDeleteOpen(true)}
+                  data-testid="button-delete-trip"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-2" />
+                  Delete permanently
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -2198,6 +2254,31 @@ export default function TripEditPage() {
         open={editTripOpen}
         onOpenChange={setEditTripOpen}
       />
+
+      <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">Delete trip permanently?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete <span className="font-medium text-foreground">{trip.title}</span> and all its
+            versions, segments, and documents. This cannot be undone.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)} data-testid="button-cancel-delete">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteTripMutation.mutate()}
+              disabled={deleteTripMutation.isPending}
+              data-testid="button-confirm-delete-trip"
+            >
+              {deleteTripMutation.isPending ? "Deleting..." : "Delete permanently"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
