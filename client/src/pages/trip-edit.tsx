@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -21,7 +21,11 @@ import {
   Drawer, DrawerContent, DrawerTrigger, DrawerClose,
 } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle,
+} from "@/components/ui/sheet";
 import {
   Select,
   SelectContent,
@@ -40,7 +44,9 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { SegmentEditor, type TemplateData } from "@/components/segment-editor";
-import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking } from "@shared/schema";
+import { DestinationInput } from "@/components/destination-input";
+import { CurrencyInput } from "@/components/currency-input";
+import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking, DestinationEntry } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
 import { format, addDays, differenceInDays } from "date-fns";
 
@@ -766,6 +772,331 @@ function ClientPreferencesPanel({ clientId, clientName }: { clientId: string; cl
   );
 }
 
+function EditTripSheet({ trip, open, onOpenChange }: {
+  trip: TripWithClient;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [title, setTitle] = useState(trip.title);
+  const [description, setDescription] = useState(trip.description || "");
+  const [destinations, setDestinations] = useState<DestinationEntry[]>(
+    (trip as any).destinations || []
+  );
+  const [clientId, setClientId] = useState(trip.clientId || "");
+  const [startDate, setStartDate] = useState(
+    trip.startDate ? format(new Date(trip.startDate), "yyyy-MM-dd") : ""
+  );
+  const [endDate, setEndDate] = useState(
+    trip.endDate ? format(new Date(trip.endDate), "yyyy-MM-dd") : ""
+  );
+  const [budget, setBudget] = useState(trip.budget != null ? String(trip.budget) : "");
+  const [currency, setCurrency] = useState(trip.currency || "USD");
+  const [coverImageUrl, setCoverImageUrl] = useState(trip.coverImageUrl || "");
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setTitle(trip.title);
+      setDescription(trip.description || "");
+      setDestinations((trip as any).destinations || []);
+      setClientId(trip.clientId || "");
+      setStartDate(trip.startDate ? format(new Date(trip.startDate), "yyyy-MM-dd") : "");
+      setEndDate(trip.endDate ? format(new Date(trip.endDate), "yyyy-MM-dd") : "");
+      setBudget(trip.budget != null ? String(trip.budget) : "");
+      setCurrency(trip.currency || "USD");
+      setCoverImageUrl(trip.coverImageUrl || "");
+      setClientSearch("");
+    }
+  }, [open, trip]);
+
+  const { data: clients, isLoading: clientsLoading } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+    enabled: open,
+  });
+
+  const selectedClient = useMemo(() => {
+    if (!clientId || !clients) return null;
+    return clients.find((c) => c.id === clientId) || null;
+  }, [clientId, clients]);
+
+  const filteredClients = useMemo(() => {
+    if (!clients) return [];
+    if (!clientSearch.trim()) return clients;
+    const q = clientSearch.toLowerCase();
+    return clients.filter((c) =>
+      c.fullName.toLowerCase().includes(q) ||
+      c.email?.toLowerCase().includes(q)
+    );
+  }, [clients, clientSearch]);
+
+  const updateMutation = useMutation({
+    mutationFn: async () => {
+      const destinationStr = destinations.map(d => d.name).join(", ") || trip.destination || "";
+      const payload: any = {
+        title,
+        destination: destinationStr,
+        destinations,
+        description: description || null,
+        clientId: clientId || null,
+        startDate: startDate ? new Date(startDate).toISOString() : null,
+        endDate: endDate ? new Date(endDate).toISOString() : null,
+        budget: budget ? parseInt(budget) : null,
+        currency,
+        coverImageUrl: coverImageUrl || null,
+      };
+      const res = await apiRequest("PATCH", `/api/trips/${trip.id}`, payload);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", trip.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      toast({ title: "Trip updated", description: "Details saved successfully." });
+      onOpenChange(false);
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent className="overflow-y-auto sm:max-w-lg">
+        <SheetHeader>
+          <SheetTitle className="font-serif text-xl">Edit Trip Details</SheetTitle>
+        </SheetHeader>
+        <div className="space-y-5 pt-6">
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 block">Trip Title</Label>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Amalfi Coast Honeymoon"
+              data-testid="input-edit-trip-title"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <MapPin className="w-3 h-3" strokeWidth={1.5} />
+              Destinations
+            </Label>
+            <DestinationInput
+              value={destinations}
+              onChange={setDestinations}
+              placeholder="Search cities or type freely..."
+              testId="input-edit-trip-destination"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 block">Description</Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Brief description of this trip..."
+              className="resize-none"
+              rows={3}
+              data-testid="input-edit-trip-description"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <User className="w-3 h-3" strokeWidth={1.5} />
+              Client
+            </Label>
+            <Popover open={clientPopoverOpen} onOpenChange={setClientPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start font-normal"
+                  data-testid="button-edit-select-client"
+                >
+                  {selectedClient ? (
+                    <span className="flex items-center gap-2">
+                      <User className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.5} />
+                      {selectedClient.fullName}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Select a client (optional)</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-0" align="start">
+                <div className="p-2 border-b border-border/50">
+                  <div className="relative">
+                    <MapPin className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" strokeWidth={1.5} />
+                    <Input
+                      placeholder="Search clients..."
+                      value={clientSearch}
+                      onChange={(e) => setClientSearch(e.target.value)}
+                      className="pl-8 border-0 focus-visible:ring-0 shadow-none"
+                      data-testid="input-edit-search-client"
+                    />
+                  </div>
+                </div>
+                <div className="max-h-48 overflow-y-auto p-1">
+                  {clientId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientId("");
+                        setClientPopoverOpen(false);
+                        setClientSearch("");
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-muted-foreground rounded-md hover:bg-muted transition-colors"
+                      data-testid="button-edit-clear-client"
+                    >
+                      Clear selection
+                    </button>
+                  )}
+                  {clientsLoading ? (
+                    <div className="p-3 space-y-2">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-3/4" />
+                    </div>
+                  ) : filteredClients.length > 0 ? (
+                    filteredClients.map((client) => (
+                      <button
+                        key={client.id}
+                        type="button"
+                        onClick={() => {
+                          setClientId(client.id);
+                          setClientPopoverOpen(false);
+                          setClientSearch("");
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-md hover:bg-muted transition-colors flex items-center justify-between gap-2"
+                        data-testid={`button-edit-client-option-${client.id}`}
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{client.fullName}</p>
+                          {client.email && (
+                            <p className="text-xs text-muted-foreground">{client.email}</p>
+                          )}
+                        </div>
+                        {clientId === client.id && (
+                          <Check className="w-4 h-4 text-primary shrink-0" strokeWidth={2} />
+                        )}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="p-3 text-xs text-muted-foreground text-center">No clients found</p>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <Calendar className="w-3 h-3" strokeWidth={1.5} />
+              Dates
+            </Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">Start</Label>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  data-testid="input-edit-trip-start-date"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px] text-muted-foreground mb-1 block">End</Label>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  data-testid="input-edit-trip-end-date"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <DollarSign className="w-3 h-3" strokeWidth={1.5} />
+              Budget
+            </Label>
+            <div className="flex gap-2">
+              <Select value={currency} onValueChange={setCurrency}>
+                <SelectTrigger className="w-24" data-testid="select-edit-trip-currency">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["USD", "EUR", "GBP", "CHF", "AUD", "CAD", "JPY"].map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <CurrencyInput
+                value={budget}
+                onChange={setBudget}
+                currency={currency}
+                placeholder="10,000"
+                testId="input-edit-trip-budget"
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <Image className="w-3 h-3" strokeWidth={1.5} />
+              Cover Image URL
+            </Label>
+            <Input
+              value={coverImageUrl}
+              onChange={(e) => setCoverImageUrl(e.target.value)}
+              placeholder="https://..."
+              data-testid="input-edit-trip-cover-image"
+            />
+            {coverImageUrl && (
+              <div className="mt-2 aspect-[21/9] overflow-hidden rounded-md">
+                <img
+                  src={coverImageUrl}
+                  alt="Cover preview"
+                  className="w-full h-full object-cover"
+                  onError={(e) => { e.currentTarget.style.display = "none"; }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => onOpenChange(false)}
+              data-testid="button-edit-trip-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={() => updateMutation.mutate()}
+              disabled={!title.trim() || updateMutation.isPending}
+              data-testid="button-edit-trip-save"
+            >
+              {updateMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                "Save Changes"
+              )}
+            </Button>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 function DuplicateTripDialog({ tripId, tripTitle, open, onOpenChange }: {
   tripId: string;
   tripTitle: string;
@@ -1127,6 +1458,7 @@ export default function TripEditPage() {
   };
 
   const [addSegmentType, setAddSegmentType] = useState<string | null>(null);
+  const [editTripOpen, setEditTripOpen] = useState(false);
 
   const openAddSegment = (day: number, type?: string) => {
     setEditingSegment(null);
@@ -1189,9 +1521,18 @@ export default function TripEditPage() {
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <div className="min-w-0">
-              <h1 className="font-serif text-lg md:text-xl tracking-tight truncate" data-testid="text-editor-trip-title">
-                {trip.title}
-              </h1>
+              <div className="flex items-center gap-0.5">
+                <h1 className="font-serif text-lg md:text-xl tracking-tight truncate" data-testid="text-editor-trip-title">
+                  {trip.title}
+                </h1>
+                <button
+                  onClick={() => setEditTripOpen(true)}
+                  className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground ml-1 shrink-0"
+                  data-testid="button-edit-trip-details"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                 {trip.clientName && (
                   <span className="flex items-center gap-1">
@@ -1528,6 +1869,12 @@ export default function TripEditPage() {
         tripTitle={trip.title}
         open={duplicateDialogOpen}
         onOpenChange={setDuplicateDialogOpen}
+      />
+
+      <EditTripSheet
+        trip={trip}
+        open={editTripOpen}
+        onOpenChange={setEditTripOpen}
       />
     </div>
   );
