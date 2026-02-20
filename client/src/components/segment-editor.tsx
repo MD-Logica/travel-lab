@@ -138,10 +138,29 @@ const bookingClasses = [
   { value: "economy", label: "Economy" },
 ];
 
-function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
+interface ConnectionLeg {
+  metadata: Record<string, any>;
+}
+
+function FlightSearchPanel({
+  legLabel,
+  defaultDate,
+  defaultDepartureHint,
+  metadata,
+  onChange,
+  testIdSuffix,
+}: {
+  legLabel?: string;
+  defaultDate?: string;
+  defaultDepartureHint?: string;
+  metadata: Record<string, any>;
+  onChange: (m: Record<string, any>) => void;
+  testIdSuffix?: string;
+}) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  const suffix = testIdSuffix || "";
   const [searchNumber, setSearchNumber] = useState(metadata.flightNumber || "");
-  const [searchDate, setSearchDate] = useState("");
+  const [searchDate, setSearchDate] = useState(defaultDate || "");
   const [isSearching, setIsSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<any>(null);
   const [searchError, setSearchError] = useState("");
@@ -197,25 +216,33 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
 
   return (
     <div className="space-y-3">
+      {legLabel && (
+        <div className="flex items-center gap-2 pt-1">
+          <Badge variant="outline" className="text-xs">{legLabel}</Badge>
+          {defaultDepartureHint && (
+            <span className="text-xs text-muted-foreground">{defaultDepartureHint}</span>
+          )}
+        </div>
+      )}
       <SectionHeading>Search Flight</SectionHeading>
       <div className="flex gap-2 items-end flex-wrap">
         <div className="flex-1 min-w-[120px]">
           <FieldLabel>Flight Number</FieldLabel>
-          <Input value={searchNumber} onChange={(e) => setSearchNumber(e.target.value)} placeholder="BA560" data-testid="input-flight-search-number"
+          <Input value={searchNumber} onChange={(e) => setSearchNumber(e.target.value)} placeholder="BA560" data-testid={`input-flight-search-number${suffix}`}
             onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSearch(); } }} />
         </div>
         <div className="flex-1 min-w-[120px]">
           <FieldLabel>Date (optional)</FieldLabel>
-          <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} data-testid="input-flight-search-date" />
+          <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} data-testid={`input-flight-search-date${suffix}`} />
         </div>
-        <Button variant="default" size="default" onClick={handleSearch} disabled={isSearching || !searchNumber.trim()} data-testid="button-search-flight">
+        <Button variant="default" size="default" onClick={handleSearch} disabled={isSearching || !searchNumber.trim()} data-testid={`button-search-flight${suffix}`}>
           {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4 mr-1.5" />}
           Search
         </Button>
       </div>
 
       {searchResult && (
-        <div className="border border-border rounded-md p-3 space-y-2 bg-accent/20" data-testid="card-flight-result">
+        <div className="border border-border rounded-md p-3 space-y-2 bg-accent/20" data-testid={`card-flight-result${suffix}`}>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm">{searchResult.flightNumber}</span>
             {searchResult.airline && <span className="text-sm text-muted-foreground">{searchResult.airline}</span>}
@@ -237,7 +264,7 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
             </div>
           )}
           {searchResult.aircraft && <div className="text-xs text-muted-foreground/40">Aircraft: {searchResult.aircraft}</div>}
-          <Button size="sm" onClick={applyFlightData} data-testid="button-use-flight">
+          <Button size="sm" onClick={applyFlightData} data-testid={`button-use-flight${suffix}`}>
             <Check className="w-3.5 h-3.5 mr-1.5" />
             Use this flight
           </Button>
@@ -245,25 +272,25 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
       )}
 
       {searchError && (
-        <p className="text-sm text-muted-foreground/60 italic" data-testid="text-flight-not-found">{searchError}</p>
+        <p className="text-sm text-muted-foreground/60 italic" data-testid={`text-flight-not-found${suffix}`}>{searchError}</p>
       )}
 
       <SectionHeading>Flight Details</SectionHeading>
       <FieldRow>
         <div>
           <FieldLabel>Airline</FieldLabel>
-          <Input value={metadata.airline || ""} onChange={(e) => set("airline", e.target.value)} placeholder="British Airways" data-testid="input-airline" />
+          <Input value={metadata.airline || ""} onChange={(e) => set("airline", e.target.value)} placeholder="British Airways" data-testid={`input-airline${suffix}`} />
         </div>
         <div>
           <FieldLabel>Flight Number</FieldLabel>
-          <Input value={metadata.flightNumber || ""} onChange={(e) => set("flightNumber", e.target.value)} placeholder="BA 560" data-testid="input-flight-number" />
+          <Input value={metadata.flightNumber || ""} onChange={(e) => set("flightNumber", e.target.value)} placeholder="BA 560" data-testid={`input-flight-number${suffix}`} />
         </div>
       </FieldRow>
       <FieldRow>
         <div>
           <FieldLabel>Booking Class</FieldLabel>
           <Select value={metadata.bookingClass || ""} onValueChange={(v) => set("bookingClass", v)}>
-            <SelectTrigger data-testid="select-booking-class">
+            <SelectTrigger data-testid={`select-booking-class${suffix}`}>
               <SelectValue placeholder="Select class" />
             </SelectTrigger>
             <SelectContent>
@@ -275,41 +302,154 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
         </div>
         <div>
           <FieldLabel>Confirmation Number</FieldLabel>
-          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} placeholder="ABC123" data-testid="input-flight-confirmation" />
+          <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} placeholder="ABC123" data-testid={`input-flight-confirmation${suffix}`} />
         </div>
       </FieldRow>
 
       <SectionHeading>Departure</SectionHeading>
       <div>
         <FieldLabel>Airport</FieldLabel>
-        <Input value={metadata.departureAirport || ""} onChange={(e) => set("departureAirport", e.target.value)} placeholder="JFK - John F. Kennedy" data-testid="input-departure-airport" />
+        <Input value={metadata.departureAirport || ""} onChange={(e) => set("departureAirport", e.target.value)} placeholder="JFK - John F. Kennedy" data-testid={`input-departure-airport${suffix}`} />
       </div>
       <FieldRow>
         <div>
           <FieldLabel>Date</FieldLabel>
-          <Input type="date" value={metadata.departureDate || ""} onChange={(e) => set("departureDate", e.target.value)} data-testid="input-departure-date" />
+          <Input type="date" value={metadata.departureDate || ""} onChange={(e) => set("departureDate", e.target.value)} data-testid={`input-departure-date${suffix}`} />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
-          <Input type="time" value={metadata.departureTime || ""} onChange={(e) => set("departureTime", e.target.value)} data-testid="input-departure-time" />
+          <Input type="time" value={metadata.departureTime || ""} onChange={(e) => set("departureTime", e.target.value)} data-testid={`input-departure-time${suffix}`} />
         </div>
       </FieldRow>
 
       <SectionHeading>Arrival</SectionHeading>
       <div>
         <FieldLabel>Airport</FieldLabel>
-        <Input value={metadata.arrivalAirport || ""} onChange={(e) => set("arrivalAirport", e.target.value)} placeholder="LHR - Heathrow" data-testid="input-arrival-airport" />
+        <Input value={metadata.arrivalAirport || ""} onChange={(e) => set("arrivalAirport", e.target.value)} placeholder="LHR - Heathrow" data-testid={`input-arrival-airport${suffix}`} />
       </div>
       <FieldRow>
         <div>
           <FieldLabel>Date</FieldLabel>
-          <Input type="date" value={metadata.arrivalDate || ""} onChange={(e) => set("arrivalDate", e.target.value)} data-testid="input-arrival-date" />
+          <Input type="date" value={metadata.arrivalDate || ""} onChange={(e) => set("arrivalDate", e.target.value)} data-testid={`input-arrival-date${suffix}`} />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
-          <Input type="time" value={metadata.arrivalTime || ""} onChange={(e) => set("arrivalTime", e.target.value)} data-testid="input-arrival-time" />
+          <Input type="time" value={metadata.arrivalTime || ""} onChange={(e) => set("arrivalTime", e.target.value)} data-testid={`input-arrival-time${suffix}`} />
         </div>
       </FieldRow>
+    </div>
+  );
+}
+
+function FlightFields({ metadata, onChange, connectionLegs, onConnectionLegsChange }: {
+  metadata: Record<string, any>;
+  onChange: (m: Record<string, any>) => void;
+  connectionLegs: ConnectionLeg[];
+  onConnectionLegsChange: (legs: ConnectionLeg[]) => void;
+}) {
+  const [connectionMode, setConnectionMode] = useState(connectionLegs.length > 0);
+  const [journeyId, setJourneyId] = useState<string | null>(metadata.journeyId || null);
+
+  const addConnectionLeg = () => {
+    const id = journeyId || crypto.randomUUID();
+    if (!journeyId) {
+      setJourneyId(id);
+      onChange({ ...metadata, journeyId: id, legNumber: 1 });
+    }
+    const legNum = connectionLegs.length + 2;
+    const prevMeta = connectionLegs.length > 0
+      ? connectionLegs[connectionLegs.length - 1].metadata
+      : metadata;
+    onConnectionLegsChange([
+      ...connectionLegs,
+      { metadata: { journeyId: id, legNumber: legNum, departureDate: prevMeta.arrivalDate || "" } },
+    ]);
+    setConnectionMode(true);
+  };
+
+  const updateConnectionLeg = (index: number, legMeta: Record<string, any>) => {
+    const updated = [...connectionLegs];
+    updated[index] = { metadata: legMeta };
+    onConnectionLegsChange(updated);
+  };
+
+  const removeConnectionLeg = (index: number) => {
+    const updated = connectionLegs.filter((_, i) => i !== index);
+    onConnectionLegsChange(updated);
+    if (updated.length === 0) {
+      setConnectionMode(false);
+      const { journeyId: _, legNumber: __, ...rest } = metadata;
+      onChange(rest);
+      setJourneyId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <FlightSearchPanel
+        metadata={metadata}
+        onChange={onChange}
+        legLabel={connectionMode ? "Leg 1" : undefined}
+      />
+
+      {metadata.flightNumber && !connectionMode && connectionLegs.length === 0 && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full mt-2"
+          onClick={addConnectionLeg}
+          data-testid="button-add-connecting-flight"
+        >
+          <Plus className="w-3.5 h-3.5 mr-1.5" />
+          Add connecting flight
+        </Button>
+      )}
+
+      {connectionLegs.map((leg, i) => {
+        const prevMeta = i === 0 ? metadata : connectionLegs[i - 1].metadata;
+        const depHint = prevMeta.arrivalAirport
+          ? `Departing from ${prevMeta.arrivalAirport}`
+          : undefined;
+        return (
+          <div key={i} className="border-t border-border/50 pt-3 mt-3">
+            <div className="flex items-center justify-between mb-2">
+              <Badge variant="outline" className="text-xs">Connecting Flight (Leg {i + 2})</Badge>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => removeConnectionLeg(i)}
+                className="h-6 px-2 text-xs text-muted-foreground"
+                data-testid={`button-remove-connection-${i + 2}`}
+              >
+                <X className="w-3 h-3 mr-1" /> Remove
+              </Button>
+            </div>
+            <FlightSearchPanel
+              metadata={leg.metadata}
+              onChange={(m) => updateConnectionLeg(i, m)}
+              defaultDate={prevMeta.arrivalDate || ""}
+              defaultDepartureHint={depHint}
+              testIdSuffix={`-leg${i + 2}`}
+            />
+          </div>
+        );
+      })}
+
+      {connectionMode && connectionLegs.length < 2 && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full mt-2"
+          onClick={addConnectionLeg}
+          data-testid="button-add-another-connection"
+        >
+          <Plus className="w-3.5 h-3.5 mr-1.5" />
+          Add another connection
+        </Button>
+      )}
     </div>
   );
 }
@@ -901,8 +1041,7 @@ function PhotosField({ photos, onChange }: { photos: string[]; onChange: (p: str
   );
 }
 
-const typeFieldComponents: Record<string, typeof FlightFields> = {
-  flight: FlightFields,
+const typeFieldComponents: Record<string, (props: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) => JSX.Element> = {
   charter: CharterFlightFields,
   charter_flight: CharterFlightFields,
   hotel: HotelFields,
@@ -961,6 +1100,7 @@ export function SegmentEditor({
   const [metadata, setMetadata] = useState<Record<string, any>>((existingSegment?.metadata as Record<string, any>) || {});
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [templateLabel, setTemplateLabel] = useState("");
+  const [connectionLegs, setConnectionLegs] = useState<ConnectionLeg[]>([]);
 
   const resetForm = useCallback(() => {
     setType("activity");
@@ -977,6 +1117,7 @@ export function SegmentEditor({
     setMetadata({});
     setSaveAsTemplate(false);
     setTemplateLabel("");
+    setConnectionLegs([]);
   }, [defaultDay]);
 
   useEffect(() => {
@@ -1022,7 +1163,7 @@ export function SegmentEditor({
     mutationFn: async () => {
       const derivedTitle = type === "note" ? title : deriveTitle(type, metadata);
       const derivedSubtitle = type === "note" ? "" : deriveSubtitle(type, metadata);
-      const payload = {
+      const payload: Record<string, any> = {
         dayNumber,
         sortOrder: existingSegment?.sortOrder || 0,
         type,
@@ -1037,12 +1178,43 @@ export function SegmentEditor({
         photos: photos.length > 0 ? photos : null,
         metadata: Object.keys(metadata).length > 0 ? metadata : null,
       };
+      if (metadata.journeyId) {
+        payload.journeyId = metadata.journeyId;
+      }
       if (isEdit) {
         const res = await apiRequest("PATCH", `/api/trips/${tripId}/segments/${existingSegment.id}`, payload);
-        return res.json();
+        const result = await res.json();
+        return result;
       } else {
         const res = await apiRequest("POST", `/api/trips/${tripId}/versions/${versionId}/segments`, payload);
-        return res.json();
+        const result = await res.json();
+
+        for (const leg of connectionLegs) {
+          const legMeta = leg.metadata;
+          if (!legMeta.flightNumber && !legMeta.departureAirport) continue;
+          const legTitle = deriveTitle(type, legMeta);
+          const legSubtitle = deriveSubtitle(type, legMeta);
+          const legPayload: Record<string, any> = {
+            dayNumber,
+            sortOrder: 0,
+            type,
+            title: legTitle || "Connection",
+            subtitle: legSubtitle || null,
+            startTime: null,
+            endTime: null,
+            confirmationNumber: legMeta.confirmationNumber || null,
+            cost: null,
+            currency,
+            notes: null,
+            photos: null,
+            metadata: legMeta,
+          };
+          if (legMeta.journeyId) {
+            legPayload.journeyId = legMeta.journeyId;
+          }
+          await apiRequest("POST", `/api/trips/${tripId}/versions/${versionId}/segments`, legPayload);
+        }
+        return result;
       }
     },
     onSuccess: async () => {
@@ -1145,7 +1317,16 @@ export function SegmentEditor({
             </div>
           )}
 
-          <TypeFields metadata={metadata} onChange={setMetadata} />
+          {type === "flight" ? (
+            <FlightFields
+              metadata={metadata}
+              onChange={setMetadata}
+              connectionLegs={connectionLegs}
+              onConnectionLegsChange={setConnectionLegs}
+            />
+          ) : (
+            <TypeFields metadata={metadata} onChange={setMetadata} />
+          )}
 
           <SectionHeading>Shared Details</SectionHeading>
 
