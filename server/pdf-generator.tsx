@@ -2,6 +2,7 @@ import React from "react";
 import ReactPDF, { Document, Page, Text, View, Image, StyleSheet, Font } from "@react-pdf/renderer";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { formatDestinations } from "@shared/schema";
+import { differenceInMinutes, parseISO } from "date-fns";
 
 Font.register({
   family: "Serif",
@@ -232,6 +233,106 @@ function SegmentView({ segment, photos }: { segment: TripSegment; photos?: Resol
   );
 }
 
+function pdfLayoverDisplay(leg1Meta: Record<string, any>, leg2Meta: Record<string, any>): string | null {
+  const arrUtc = leg1Meta.arrivalTimeUtc;
+  const depUtc = leg2Meta.departureTimeUtc;
+  if (!arrUtc || !depUtc) return null;
+  try {
+    const mins = differenceInMinutes(parseISO(depUtc), parseISO(arrUtc));
+    if (mins < 0) return null;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  } catch { return null; }
+}
+
+function JourneyPdfView({ legs }: { legs: TripSegment[] }) {
+  const firstMeta = (legs[0].metadata || {}) as Record<string, any>;
+  const lastMeta = (legs[legs.length - 1].metadata || {}) as Record<string, any>;
+  const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+  const destIata = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+  const stopsCount = legs.length - 1;
+
+  return (
+    <View style={[s.segmentCard, { borderLeftColor: colors.flight }]}>
+      <Text style={s.segmentType}>connecting flight - {stopsCount} stop{stopsCount > 1 ? "s" : ""}</Text>
+      <Text style={s.segmentTitle}>{originIata} {">"} {destIata}</Text>
+      {legs.map((leg, i) => {
+        const meta = (leg.metadata || {}) as Record<string, any>;
+        const depIata = meta.departure?.iata || meta.departureAirport || "";
+        const arrIata = meta.arrival?.iata || meta.arrivalAirport || "";
+        const flightNum = meta.flightNumber || leg.title || "";
+        const airline = meta.airline || "";
+        const depTime = meta.departure?.scheduledTime || meta.departureTime || "";
+        const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
+        const confNum = meta.confirmationNumber || leg.confirmationNumber || "";
+        const bClass = meta.bookingClass ? bookingClassLabels[meta.bookingClass] || meta.bookingClass : "";
+
+        const layoverDisplay = i > 0 ? pdfLayoverDisplay(
+          (legs[i - 1].metadata || {}) as Record<string, any>, meta
+        ) : null;
+
+        return (
+          <View key={leg.id}>
+            {layoverDisplay && (
+              <Text style={{ fontSize: 8, color: colors.primary, marginTop: 4, marginBottom: 2 }}>
+                {layoverDisplay} layover
+              </Text>
+            )}
+            {i > 0 && !layoverDisplay && (
+              <Text style={{ fontSize: 8, color: colors.muted, marginTop: 4, marginBottom: 2 }}>Connection</Text>
+            )}
+            <View style={{ paddingLeft: 6, marginTop: i === 0 ? 2 : 0 }}>
+              <Text style={s.segmentDetail}>
+                {flightNum}{airline ? ` (${airline})` : ""}{bClass ? ` - ${bClass}` : ""}
+              </Text>
+              {depIata && arrIata && (
+                <Text style={s.segmentDetail}>{depIata} {">"} {arrIata}{depTime ? ` | ${depTime}` : ""}{arrTime ? ` - ${arrTime}` : ""}</Text>
+              )}
+              {confNum ? <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text> : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+type PdfDayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+
+function buildPdfDayItems(daySegments: TripSegment[]): PdfDayRenderItem[] {
+  const items: PdfDayRenderItem[] = [];
+  const seenJourneyIds = new Set<string>();
+  const journeyGroups = new Map<string, TripSegment[]>();
+
+  for (const seg of daySegments) {
+    if (seg.journeyId) {
+      if (!journeyGroups.has(seg.journeyId)) journeyGroups.set(seg.journeyId, []);
+      journeyGroups.get(seg.journeyId)!.push(seg);
+    }
+  }
+
+  for (const seg of daySegments) {
+    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+      if (!seenJourneyIds.has(seg.journeyId)) {
+        seenJourneyIds.add(seg.journeyId);
+        const legs = journeyGroups.get(seg.journeyId)!;
+        legs.sort((a, b) => {
+          const aLeg = (a.metadata as any)?.legNumber || 0;
+          const bLeg = (b.metadata as any)?.legNumber || 0;
+          return aLeg - bLeg;
+        });
+        items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else {
+      items.push({ kind: "segment", segment: seg });
+    }
+  }
+  return items;
+}
+
 interface PdfData {
   trip: Trip;
   organization: { name: string; logoUrl: string | null };
@@ -274,6 +375,7 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
 
         {dayNumbers.map((dayNum) => {
           const daySegments = segments.filter(seg => seg.dayNumber === dayNum);
+          const renderItems = buildPdfDayItems(daySegments);
           let dayLabel = `Day ${dayNum}`;
           if (trip.startDate) {
             const d = new Date(trip.startDate);
@@ -283,9 +385,12 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
           return (
             <View key={dayNum}>
               <Text style={s.dayHeader}>{dayLabel}</Text>
-              {daySegments.map((seg) => (
-                <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} />
-              ))}
+              {renderItems.map((item) => {
+                if (item.kind === "journey") {
+                  return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} />;
+                }
+                return <SegmentView key={item.segment.id} segment={item.segment} photos={photoMap.get(item.segment.id)} />;
+              })}
             </View>
           );
         })}
