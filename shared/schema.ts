@@ -460,6 +460,23 @@ export const invitationsRelations = relations(invitations, ({ one }) => ({
   }),
 }));
 
+export const clientRelationships = pgTable("client_relationships", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  clientIdA: varchar("client_id_a").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  clientIdB: varchar("client_id_b").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  relationshipLabel: text("relationship_label"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertClientRelationshipSchema = createInsertSchema(clientRelationships).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type ClientRelationship = typeof clientRelationships.$inferSelect;
+export type InsertClientRelationship = z.infer<typeof insertClientRelationshipSchema>;
+
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   profileId: varchar("profile_id").notNull(),

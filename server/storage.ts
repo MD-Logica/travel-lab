@@ -1,7 +1,7 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
   flightTracking, notifications, segmentTemplates, conversations, messages, pushSubscriptions,
-  invitations, clientCollaborators,
+  invitations, clientCollaborators, clientRelationships,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -132,6 +132,10 @@ export interface IStorage {
   removeClientCollaborator(id: string, orgId: string): Promise<boolean>;
   canAdvisorAccessClient(advisorId: string, clientId: string, orgId: string): Promise<boolean>;
   getTripsByAdvisor(orgId: string, advisorId: string): Promise<(Trip & { clientName: string | null })[]>;
+
+  getClientCompanions(clientId: string, orgId: string): Promise<{ id: string; companion: Client; relationshipLabel: string | null }[]>;
+  createClientRelationship(data: { orgId: string; clientIdA: string; clientIdB: string; relationshipLabel: string | null }): Promise<any>;
+  deleteClientRelationship(id: string, orgId: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1134,6 +1138,43 @@ export class DatabaseStorage implements IStorage {
       return bTime - aTime;
     });
     return allTrips;
+  }
+  async getClientCompanions(clientId: string, orgId: string): Promise<{ id: string; companion: Client; relationshipLabel: string | null }[]> {
+    const asA = await db
+      .select({ rel: clientRelationships, companion: clients })
+      .from(clientRelationships)
+      .innerJoin(clients, eq(clients.id, clientRelationships.clientIdB))
+      .where(and(eq(clientRelationships.clientIdA, clientId), eq(clientRelationships.orgId, orgId)));
+
+    const asB = await db
+      .select({ rel: clientRelationships, companion: clients })
+      .from(clientRelationships)
+      .innerJoin(clients, eq(clients.id, clientRelationships.clientIdA))
+      .where(and(eq(clientRelationships.clientIdB, clientId), eq(clientRelationships.orgId, orgId)));
+
+    return [
+      ...asA.map((r) => ({ id: r.rel.id, companion: r.companion, relationshipLabel: r.rel.relationshipLabel })),
+      ...asB.map((r) => ({ id: r.rel.id, companion: r.companion, relationshipLabel: r.rel.relationshipLabel })),
+    ];
+  }
+
+  async createClientRelationship(data: { orgId: string; clientIdA: string; clientIdB: string; relationshipLabel: string | null }): Promise<any> {
+    const [a, b] = data.clientIdA < data.clientIdB
+      ? [data.clientIdA, data.clientIdB]
+      : [data.clientIdB, data.clientIdA];
+    const [result] = await db.insert(clientRelationships).values({
+      orgId: data.orgId,
+      clientIdA: a,
+      clientIdB: b,
+      relationshipLabel: data.relationshipLabel,
+    }).returning();
+    return result;
+  }
+
+  async deleteClientRelationship(id: string, orgId: string): Promise<boolean> {
+    const result = await db.delete(clientRelationships)
+      .where(and(eq(clientRelationships.id, id), eq(clientRelationships.orgId, orgId)));
+    return (result.rowCount ?? 0) > 0;
   }
 }
 

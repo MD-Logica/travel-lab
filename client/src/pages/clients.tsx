@@ -18,6 +18,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Search, Plus, Mail, Phone, Plane, X, Users } from "lucide-react";
+import { PhoneInput } from "@/components/phone-input";
 import { Link } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Client, Profile } from "@shared/schema";
@@ -396,12 +397,11 @@ function AddClientDialog({
               <Label htmlFor="client-phone" className="text-xs uppercase tracking-wider text-muted-foreground">
                 Phone
               </Label>
-              <Input
-                id="client-phone"
-                placeholder="+1 555 0100"
+              <PhoneInput
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                data-testid="input-client-phone"
+                onChange={setPhone}
+                placeholder="555 0100"
+                testId="input-client-phone"
               />
             </div>
           </div>

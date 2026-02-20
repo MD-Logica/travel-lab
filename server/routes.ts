@@ -671,14 +671,18 @@ export async function registerRoutes(
     try {
       const client = await storage.getClient(req.params.id, req._orgId);
       if (!client) return res.status(404).json({ message: "Client not found" });
-      if (!client.email) return res.status(400).json({ message: "Client has no email address" });
+      const emailToSend = (req.body.email && req.body.email.trim()) || client.email;
+      if (!emailToSend) return res.status(400).json({ message: "No email address provided" });
+      if (emailToSend && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailToSend)) {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
 
       const updated = await storage.updateClient(req.params.id, req._orgId, {
         invited: "yes",
         invitedAt: new Date(),
       } as any);
 
-      res.json({ success: true, client: updated });
+      res.json({ success: true, client: updated, sentTo: emailToSend });
     } catch (error) {
       console.error("Invite client error:", error);
       res.status(500).json({ message: "Failed to send invitation" });
@@ -759,6 +763,48 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ message: "Failed to remove collaborator" });
+    }
+  });
+
+  app.get("/api/clients/:clientId/companions", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const companions = await storage.getClientCompanions(req.params.clientId, req._orgId);
+      res.json(companions);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch companions" });
+    }
+  });
+
+  app.post("/api/client-relationships", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { clientIdA, clientIdB, relationshipLabel } = req.body;
+      if (!clientIdA || !clientIdB) return res.status(400).json({ message: "Both client IDs required" });
+      if (clientIdA === clientIdB) return res.status(400).json({ message: "Cannot link a client to themselves" });
+      const clientA = await storage.getClient(clientIdA, req._orgId);
+      const clientB = await storage.getClient(clientIdB, req._orgId);
+      if (!clientA || !clientB) return res.status(404).json({ message: "Client not found" });
+      const result = await storage.createClientRelationship({
+        orgId: req._orgId,
+        clientIdA,
+        clientIdB,
+        relationshipLabel: relationshipLabel || null,
+      });
+      res.status(201).json(result);
+    } catch (error: any) {
+      if (error?.code === "23505") {
+        return res.status(409).json({ message: "Relationship already exists" });
+      }
+      res.status(500).json({ message: "Failed to create relationship" });
+    }
+  });
+
+  app.delete("/api/client-relationships/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const removed = await storage.deleteClientRelationship(req.params.id, req._orgId);
+      if (!removed) return res.status(404).json({ message: "Relationship not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete relationship" });
     }
   });
 

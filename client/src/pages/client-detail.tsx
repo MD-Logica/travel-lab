@@ -49,6 +49,7 @@ import {
   Users,
   UserPlus,
   Shield,
+  Search,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Link, useParams, useLocation } from "wouter";
@@ -1452,6 +1453,7 @@ export default function ClientDetailPage() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
   const [isEditing, setIsEditing] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
 
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -1518,6 +1520,49 @@ export default function ClientDetailPage() {
     onError: () => toast({ title: "Failed to remove collaborator", variant: "destructive" }),
   });
 
+  const { data: companions = [] } = useQuery<{ id: string; companion: Client; relationshipLabel: string | null }[]>({
+    queryKey: ["/api/clients", id, "companions"],
+  });
+
+  const [companionDialogOpen, setCompanionDialogOpen] = useState(false);
+  const [companionSearch, setCompanionSearch] = useState("");
+  const [selectedCompanionId, setSelectedCompanionId] = useState("");
+  const [companionLabel, setCompanionLabel] = useState("");
+  const [customLabel, setCustomLabel] = useState("");
+
+  const { data: allClients = [] } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+    enabled: companionDialogOpen,
+  });
+
+  const addCompanionMutation = useMutation({
+    mutationFn: async (data: { clientIdA: string; clientIdB: string; relationshipLabel: string }) => {
+      const res = await apiRequest("POST", "/api/client-relationships", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", id, "companions"] });
+      setCompanionDialogOpen(false);
+      setSelectedCompanionId("");
+      setCompanionLabel("");
+      setCustomLabel("");
+      setCompanionSearch("");
+      toast({ title: "Companion added" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const removeCompanionMutation = useMutation({
+    mutationFn: async (relationshipId: string) => {
+      await apiRequest("DELETE", `/api/client-relationships/${relationshipId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", id, "companions"] });
+      toast({ title: "Companion removed" });
+    },
+    onError: () => toast({ title: "Failed to remove companion", variant: "destructive" }),
+  });
+
   useEffect(() => {
     if (client && !isEditing) {
       setEditName(client.fullName);
@@ -1544,7 +1589,7 @@ export default function ClientDetailPage() {
 
   const inviteMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/clients/${id}/invite`, {});
+      const res = await apiRequest("POST", `/api/clients/${id}/invite`, { email: inviteEmail });
       return res.json();
     },
     onSuccess: () => {
@@ -1793,7 +1838,7 @@ export default function ClientDetailPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setShowInviteModal(true)}
+                        onClick={() => { setInviteEmail(client.email || ""); setShowInviteModal(true); }}
                         disabled={!client.email}
                         data-testid="button-invite-portal"
                       >
@@ -1971,6 +2016,67 @@ export default function ClientDetailPage() {
                 </CardContent>
               </Card>
 
+              <Card className="mb-8" data-testid="card-travel-companions">
+                <CardContent className="py-5 px-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Heart className="w-4 h-4 text-muted-foreground/50" strokeWidth={1.5} />
+                      <h3 className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium">
+                        Travel Companions
+                      </h3>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setCompanionDialogOpen(true)}
+                      data-testid="button-add-companion"
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Add
+                    </Button>
+                  </div>
+
+                  {companions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground/40 italic">No travel companions linked</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {companions.map((rel) => (
+                        <div
+                          key={rel.id}
+                          className="flex items-center gap-3 p-2.5 rounded-lg bg-muted/30 group"
+                          data-testid={`companion-card-${rel.companion.id}`}
+                        >
+                          <Avatar className="w-8 h-8 shrink-0">
+                            <AvatarFallback className={`text-xs font-medium ${getAvatarColor(rel.companion.fullName)}`}>
+                              {getInitials(rel.companion.fullName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <Link href={`/clients/${rel.companion.id}`}>
+                              <span className="text-sm font-medium hover:underline cursor-pointer" data-testid={`link-companion-${rel.companion.id}`}>
+                                {rel.companion.fullName}
+                              </span>
+                            </Link>
+                            {rel.relationshipLabel && (
+                              <Badge variant="secondary" className="ml-2 text-[10px] font-normal py-0 px-1.5 no-default-hover-elevate no-default-active-elevate">
+                                {rel.relationshipLabel}
+                              </Badge>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => removeCompanionMutation.mutate(rel.id)}
+                            className="opacity-0 group-hover:opacity-60 hover:!opacity-100 transition-opacity"
+                            data-testid={`button-remove-companion-${rel.companion.id}`}
+                          >
+                            <X className="w-3.5 h-3.5 text-muted-foreground" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {imminentTrip && (
                 <div className="mb-8">
                   <Link href={`/trips/${imminentTrip.id}/edit`}>
@@ -2110,7 +2216,12 @@ export default function ClientDetailPage() {
         </AnimatePresence>
       </div>
 
-      <Dialog open={showInviteModal} onOpenChange={setShowInviteModal}>
+      <Dialog open={showInviteModal} onOpenChange={(open) => {
+        setShowInviteModal(open);
+        if (!open) {
+          setInviteEmail(client.email || "");
+        }
+      }}>
         <DialogContent className="sm:max-w-md" data-testid="dialog-invite-portal">
           <DialogHeader>
             <DialogTitle className="font-serif text-xl tracking-tight" data-testid="text-invite-title">
@@ -2126,11 +2237,16 @@ export default function ClientDetailPage() {
                 Email
               </label>
               <Input
-                value={client.email || ""}
-                readOnly
-                className="text-sm bg-muted/30"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                type="email"
+                placeholder="email@example.com"
+                className="text-sm"
                 data-testid="input-invite-email"
               />
+              <p className="text-[11px] text-muted-foreground mt-1.5">
+                Edit to send to a different email address. Client's profile email will not be changed.
+              </p>
             </div>
             {client.invited === "yes" && (
               <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="text-already-invited">
@@ -2154,6 +2270,114 @@ export default function ClientDetailPage() {
               >
                 <Send className="w-3.5 h-3.5" />
                 {inviteMutation.isPending ? "Sending..." : "Send Invitation"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={companionDialogOpen} onOpenChange={(open) => {
+        setCompanionDialogOpen(open);
+        if (!open) {
+          setSelectedCompanionId("");
+          setCompanionLabel("");
+          setCustomLabel("");
+          setCompanionSearch("");
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl">Add Travel Companion</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Client</label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/50" />
+                <Input
+                  placeholder="Search clients..."
+                  value={companionSearch}
+                  onChange={(e) => setCompanionSearch(e.target.value)}
+                  className="pl-9 text-sm"
+                  data-testid="input-companion-search"
+                />
+              </div>
+              <div className="max-h-40 overflow-y-auto rounded-md border border-border/50">
+                {allClients
+                  .filter((c) =>
+                    c.id !== id &&
+                    !companions.some((comp) => comp.companion.id === c.id) &&
+                    (!companionSearch || c.fullName.toLowerCase().includes(companionSearch.toLowerCase()))
+                  )
+                  .map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelectedCompanionId(c.id)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors ${
+                        selectedCompanionId === c.id ? "bg-primary/10" : "hover:bg-muted/50"
+                      }`}
+                      data-testid={`option-companion-${c.id}`}
+                    >
+                      <Avatar className="w-6 h-6 shrink-0">
+                        <AvatarFallback className={`text-[9px] font-medium ${getAvatarColor(c.fullName)}`}>
+                          {getInitials(c.fullName)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="truncate">{c.fullName}</span>
+                      {selectedCompanionId === c.id && <Check className="w-3.5 h-3.5 ml-auto text-primary shrink-0" />}
+                    </button>
+                  ))}
+                {allClients.filter((c) =>
+                  c.id !== id &&
+                  !companions.some((comp) => comp.companion.id === c.id) &&
+                  (!companionSearch || c.fullName.toLowerCase().includes(companionSearch.toLowerCase()))
+                ).length === 0 && (
+                  <p className="text-xs text-muted-foreground/50 text-center py-4">No clients found</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs uppercase tracking-wider text-muted-foreground font-medium">Relationship</label>
+              <Select value={companionLabel} onValueChange={setCompanionLabel}>
+                <SelectTrigger className="text-sm" data-testid="select-companion-label">
+                  <SelectValue placeholder="Select relationship..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {["Spouse", "Partner", "Parent", "Child", "Sibling", "Grandparent", "Family", "Friend", "Colleague", "Other"].map((label) => (
+                    <SelectItem key={label} value={label}>{label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {companionLabel === "Other" && (
+                <Input
+                  placeholder="Enter relationship..."
+                  value={customLabel}
+                  onChange={(e) => setCustomLabel(e.target.value)}
+                  className="text-sm"
+                  data-testid="input-custom-label"
+                />
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setCompanionDialogOpen(false)} data-testid="button-cancel-companion">
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={!selectedCompanionId || !companionLabel || addCompanionMutation.isPending}
+                onClick={() => {
+                  const label = companionLabel === "Other" ? customLabel : companionLabel;
+                  addCompanionMutation.mutate({
+                    clientIdA: id!,
+                    clientIdB: selectedCompanionId,
+                    relationshipLabel: label,
+                  });
+                }}
+                data-testid="button-save-companion"
+              >
+                {addCompanionMutation.isPending ? "Saving..." : "Save"}
               </Button>
             </div>
           </div>
