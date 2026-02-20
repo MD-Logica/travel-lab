@@ -136,7 +136,7 @@ async function resolveSegmentPhotos(segments: TripSegment[]): Promise<Map<string
 
 const bookingClassLabels: Record<string, string> = { first: "First", business: "Business", premium_economy: "Premium Economy", economy: "Economy" };
 
-function SegmentView({ segment, photos }: { segment: TripSegment; photos?: ResolvedPhoto[] }) {
+function SegmentView({ segment, photos, showPricing = true }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const typeColor = getSegmentColor(segment.type);
   const details: string[] = [];
@@ -218,7 +218,7 @@ function SegmentView({ segment, photos }: { segment: TripSegment; photos?: Resol
       {confNum ? (
         <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
       ) : null}
-      {segment.cost != null && segment.cost > 0 ? (
+      {showPricing && segment.cost != null && segment.cost > 0 ? (
         <Text style={s.segmentDetail}>Cost: {formatCurrency(segment.cost, segment.currency || "USD")}</Text>
       ) : null}
       {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
@@ -246,7 +246,7 @@ function pdfLayoverDisplay(leg1Meta: Record<string, any>, leg2Meta: Record<strin
   } catch { return null; }
 }
 
-function JourneyPdfView({ legs }: { legs: TripSegment[] }) {
+function JourneyPdfView({ legs, showPricing = true }: { legs: TripSegment[]; showPricing?: boolean }) {
   const firstMeta = (legs[0].metadata || {}) as Record<string, any>;
   const lastMeta = (legs[legs.length - 1].metadata || {}) as Record<string, any>;
   const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
@@ -344,6 +344,7 @@ interface PdfData {
 
 function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<string, ResolvedPhoto[]> }) {
   const { trip, organization, advisor, client, version, segments } = data;
+  const showPricing = version.showPricing ?? true;
 
   const dayNumbers = Array.from(new Set(segments.map(s => s.dayNumber))).sort((a, b) => a - b);
 
@@ -387,9 +388,9 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
               <Text style={s.dayHeader}>{dayLabel}</Text>
               {renderItems.map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} />;
+                  return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} />;
                 }
-                return <SegmentView key={item.segment.id} segment={item.segment} photos={photoMap.get(item.segment.id)} />;
+                return <SegmentView key={item.segment.id} segment={item.segment} photos={photoMap.get(item.segment.id)} showPricing={showPricing} />;
               })}
             </View>
           );

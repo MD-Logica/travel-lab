@@ -422,7 +422,7 @@ function GenericCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function JourneyViewCard({ legs }: { legs: TripSegment[] }) {
+function JourneyViewCard({ legs, showPricing }: { legs: TripSegment[]; showPricing?: boolean }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
   const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
@@ -556,6 +556,16 @@ function JourneyViewCard({ legs }: { legs: TripSegment[] }) {
               );
             })}
           </div>
+          {showPricing && (() => {
+            const totalCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0);
+            return totalCost > 0 ? (
+              <div className="flex justify-end mt-2 pt-2 border-t border-border/30">
+                <span className="text-xs text-muted-foreground" data-testid={`view-journey-cost-${firstLeg.journeyId}`}>
+                  {formatViewCurrency(totalCost, legs[0].currency || "USD")}
+                </span>
+              </div>
+            ) : null;
+          })()}
         </div>
       </div>
     </div>
@@ -599,17 +609,42 @@ function buildViewDayRenderItems(daySegments: TripSegment[]): ViewDayRenderItem[
   return items;
 }
 
-function SegmentView({ segment }: { segment: TripSegment }) {
-  switch (segment.type) {
-    case "flight": return <FlightCard segment={segment} />;
-    case "charter":
-    case "charter_flight": return <CharterFlightCard segment={segment} />;
-    case "hotel": return <HotelCard segment={segment} />;
-    case "restaurant": return <RestaurantCard segment={segment} />;
-    case "activity": return <ActivityCard segment={segment} />;
-    case "note": return <NoteCard segment={segment} />;
-    default: return <GenericCard segment={segment} />;
+function formatViewCurrency(amount: number, currency: string = "USD"): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+  }).format(amount);
+}
+
+function SegmentView({ segment, showPricing }: { segment: TripSegment; showPricing?: boolean }) {
+  const card = (() => {
+    switch (segment.type) {
+      case "flight": return <FlightCard segment={segment} />;
+      case "charter":
+      case "charter_flight": return <CharterFlightCard segment={segment} />;
+      case "hotel": return <HotelCard segment={segment} />;
+      case "restaurant": return <RestaurantCard segment={segment} />;
+      case "activity": return <ActivityCard segment={segment} />;
+      case "note": return <NoteCard segment={segment} />;
+      default: return <GenericCard segment={segment} />;
+    }
+  })();
+
+  if (showPricing && segment.cost != null && segment.cost > 0) {
+    return (
+      <div>
+        {card}
+        <div className="flex justify-end mt-1 mr-1">
+          <span className="text-xs text-muted-foreground" data-testid={`view-segment-cost-${segment.id}`}>
+            {formatViewCurrency(segment.cost, segment.currency || "USD")}
+          </span>
+        </div>
+      </div>
+    );
   }
+
+  return card;
 }
 
 function DayAccordion({
@@ -617,11 +652,13 @@ function DayAccordion({
   segments,
   dayDate,
   defaultOpen,
+  showPricing,
 }: {
   dayNumber: number;
   segments: TripSegment[];
   dayDate: Date | null;
   defaultOpen: boolean;
+  showPricing?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -653,9 +690,9 @@ function DayAccordion({
             <div className="pb-6 space-y-3">
               {buildViewDayRenderItems(segments).map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} />;
+                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} />;
                 }
-                return <SegmentView key={item.segment.id} segment={item.segment} />;
+                return <SegmentView key={item.segment.id} segment={item.segment} showPricing={showPricing} />;
               })}
             </div>
           </motion.div>
@@ -933,10 +970,29 @@ export default function TripViewPage() {
                 segments={segments}
                 dayDate={getDayDate(trip.startDate, dayNumber)}
                 defaultOpen={dayNumber <= 2}
+                showPricing={!!activeVersion?.showPricing}
               />
             ))
           )}
         </div>
+
+        {activeVersion?.showPricing && (() => {
+          const allSegments = activeVersion.segments || [];
+          const totalCost = allSegments.reduce((sum, s) => sum + (s.cost || 0), 0);
+          if (totalCost <= 0) return null;
+          const currency = allSegments.find(s => s.currency)?.currency || trip.currency || "USD";
+          return (
+            <>
+              <Separator className="opacity-50" />
+              <div className="flex items-center justify-between py-6" data-testid="view-total-cost">
+                <span className="text-base font-serif font-semibold">Total</span>
+                <span className="text-base font-serif font-semibold">
+                  {formatViewCurrency(totalCost, currency)}
+                </span>
+              </div>
+            </>
+          );
+        })()}
 
         {trip.description && (
           <>

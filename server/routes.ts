@@ -1019,14 +1019,30 @@ export async function registerRoutes(
   app.post("/api/trips/:tripId/versions", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const { sourceVersionId, name } = z.object({
-        sourceVersionId: z.string(),
+        sourceVersionId: z.string().optional(),
         name: z.string().min(1, "Version name is required"),
       }).parse(req.body);
-      const newVersion = await storage.duplicateTripVersion(sourceVersionId, req.params.tripId, req._orgId, name);
-      res.status(201).json(newVersion);
+
+      if (sourceVersionId) {
+        const newVersion = await storage.duplicateTripVersion(sourceVersionId, req.params.tripId, req._orgId, name);
+        res.status(201).json(newVersion);
+      } else {
+        const existingVersions = await storage.getTripVersions(req.params.tripId, req._orgId);
+        const nextNumber = existingVersions.length > 0
+          ? Math.max(...existingVersions.map(v => v.versionNumber)) + 1
+          : 1;
+        const newVersion = await storage.createTripVersion({
+          tripId: req.params.tripId,
+          orgId: req._orgId,
+          versionNumber: nextNumber,
+          name,
+          isPrimary: false,
+        });
+        res.status(201).json(newVersion);
+      }
     } catch (error: any) {
       if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
-      console.error("Duplicate version error:", error);
+      console.error("Create version error:", error);
       res.status(500).json({ message: "Failed to create version" });
     }
   });

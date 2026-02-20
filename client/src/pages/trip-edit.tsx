@@ -1614,6 +1614,24 @@ export default function TripEditPage() {
     return segments.reduce((sum, s) => sum + (s.cost || 0), 0);
   }, [segments]);
 
+  const addBlankVersionMutation = useMutation({
+    mutationFn: async () => {
+      const nextNum = versions.length + 1;
+      const res = await apiRequest("POST", `/api/trips/${id}/versions`, {
+        name: `Version ${nextNum}`,
+      });
+      return res.json();
+    },
+    onSuccess: (newVer: TripVersion) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+      setActiveVersionId(newVer.id);
+      toast({ title: "New blank version created" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
   const duplicateVersionMutation = useMutation({
     mutationFn: async (sourceId: string) => {
       const nextNum = versions.length + 1;
@@ -1682,7 +1700,7 @@ export default function TripEditPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
-      toast({ title: currentVersion?.showPricing ? "Pricing hidden" : "Pricing visible" });
+      toast({ title: currentVersion?.showPricing ? "Pricing hidden from client" : "Pricing visible to client" });
     },
     onError: (e: Error) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -1918,7 +1936,7 @@ export default function TripEditPage() {
                 ))}
               </PopoverContent>
             </Popover>
-            {totalCost > 0 && currentVersion?.showPricing && (
+            {totalCost > 0 && (
               <Badge variant="secondary" className="text-xs" data-testid="badge-total-cost">
                 <DollarSign className="w-3 h-3 mr-0.5" />
                 {(trip.currency || "USD")} {totalCost.toLocaleString()}
@@ -2091,17 +2109,15 @@ export default function TripEditPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => {
-              if (currentVersionId) duplicateVersionMutation.mutate(currentVersionId);
-            }}
-            disabled={duplicateVersionMutation.isPending}
-            data-testid="button-add-version"
+            onClick={() => addBlankVersionMutation.mutate()}
+            disabled={addBlankVersionMutation.isPending}
+            data-testid="button-add-blank-version"
           >
-            <Plus className="w-3.5 h-3.5 mr-1" /> Version
+            <Plus className="w-3.5 h-3.5 mr-1" /> New version
           </Button>
           <div className="ml-auto flex items-center gap-1.5 shrink-0">
             <DollarSign className="w-3 h-3 text-muted-foreground" />
-            <span className="text-[11px] text-muted-foreground">Show Pricing</span>
+            <span className="text-[11px] text-muted-foreground">Show pricing to client</span>
             <Switch
               checked={!!currentVersion?.showPricing}
               onCheckedChange={(checked) => togglePricingMutation.mutate(checked)}
@@ -2172,7 +2188,7 @@ export default function TripEditPage() {
                 const dayNum = dayInfo.dayNumber;
                 const daySegments = segmentsByDay.get(dayNum) || [];
                 const dayDate = dayInfo.date;
-                const showPricing = !!currentVersion?.showPricing;
+                const showPricing = true;
 
                 return (
                   <motion.div
