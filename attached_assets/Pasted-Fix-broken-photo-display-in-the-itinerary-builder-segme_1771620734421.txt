@@ -1,0 +1,126 @@
+Fix broken photo display in the itinerary builder segment cards
+and add photo display to the client-facing trip preview.
+Photos currently do not display anywhere due to two bugs.
+
+Do not change anything outside of what is described.
+
+─── BUG 1: DOUBLE-PROXY in segment-editor.tsx ───────────────────────────────
+
+In segment-editor.tsx, find the three onPlaceSelect handlers
+in HotelFields, RestaurantFields, and ActivityFields.
+
+They currently convert photoRefs to proxy URLs before storing:
+  photos: details.photoRefs?.length
+    ? details.photoRefs.map((r: string) => getPhotoUrl(r))
+    : metadata.photos,
+
+Change all three to store raw refs directly:
+  photos: details.photoRefs?.length
+    ? details.photoRefs
+    : metadata.photos,
+
+─── BUG 2: DOUBLE-WRAP in trip-edit.tsx ─────────────────────────────────────
+
+In trip-edit.tsx, the photo display at lines ~208-211 wraps
+every ref in the proxy URL unconditionally. This is correct
+for raw refs, but breaks for any already-proxied URLs in
+existing saved data. Add a guard:
+
+  return refs.slice(0, limit).map((r: string) => {
+    if (r.startsWith("/api/") || r.startsWith("http")) return r;
+    return `/api/places/photo?ref=${encodeURIComponent(r)}`;
+  });
+
+─── COLLAPSIBLE PHOTO GALLERY in itinerary builder ──────────────────────────
+
+Currently trip-edit.tsx shows photos as always-visible thumbnails.
+Replace with a collapsible toggle per segment card.
+
+Each segment card component in trip-edit.tsx that has photos
+(hotel, restaurant, activity) should manage its own expanded state.
+
+Replace the current photo thumbnail block with:
+
+  const [photosExpanded, setPhotosExpanded] = useState(false);
+
+  {photos.length > 0 && (
+    <div className="mt-2 border-t border-border/30 pt-2">
+      <button
+        type="button"
+        onClick={() => setPhotosExpanded(p => !p)}
+        className="flex items-center gap-1.5 text-xs text-muted-foreground
+          hover:text-foreground transition-colors w-full"
+      >
+        <ImageIcon className="w-3 h-3" />
+        <span>{photos.length} photo{photos.length > 1 ? "s" : ""}</span>
+        <ChevronDown className={`w-3 h-3 ml-auto transition-transform duration-200
+          ${photosExpanded ? "rotate-180" : ""}`} />
+      </button>
+      {photosExpanded && (
+        <div className="flex gap-2 mt-2 flex-wrap">
+          {photos.map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt=""
+              className="w-20 h-20 rounded-md object-cover"
+              loading="lazy"
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )}
+
+Add ChevronDown and ImageIcon to imports if not present.
+
+─── ADD PHOTOS TO CLIENT PREVIEW (trip-view.tsx) ────────────────────────────
+
+The client preview page (trip-view.tsx) has HotelCard,
+RestaurantCard, and ActivityCard components that currently
+display NO photos at all — there is no photo rendering code.
+
+Add photo display to each of these three card components.
+Photos should always be visible in the preview (no toggle)
+since this is the client-facing luxury view.
+
+For each card, add this photo rendering block inside the
+card's content div, after the existing detail rows:
+
+  {(() => {
+    const refs: string[] = meta.photos || meta.photoRefs || [];
+    const limit = segment.type === "hotel" ? 4 : 3;
+    const photoUrls = refs.slice(0, limit).map((r: string) => {
+      if (r.startsWith("/api/") || r.startsWith("http")) return r;
+      return `/api/places/photo?ref=${encodeURIComponent(r)}`;
+    });
+    if (photoUrls.length === 0) return null;
+    return (
+      <div className="flex gap-2 overflow-x-auto mt-3 pb-1 -mx-4 px-4">
+        {photoUrls.map((src, i) => (
+          <img
+            key={i}
+            src={src}
+            alt=""
+            className="w-36 h-24 rounded-lg object-cover flex-shrink-0"
+            loading="lazy"
+            onError={(e) => { e.currentTarget.style.display = "none"; }}
+          />
+        ))}
+      </div>
+    );
+  })()}
+
+Apply to HotelCard, RestaurantCard, and ActivityCard.
+Hotel shows up to 4 photos, restaurant and activity up to 3.
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+1. Open a hotel segment editor, search "Cipriani Venice",
+   select it — photos appear in the editor preview immediately
+2. Save — segment card in builder shows photo toggle
+3. Click toggle — photos expand and load without broken icons
+4. Open the client preview link — hotel photos visible
+   automatically, no toggle needed, horizontal scroll if many
+5. No broken image icons anywhere in builder or preview

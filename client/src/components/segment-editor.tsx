@@ -399,7 +399,7 @@ function HotelFields({ metadata, onChange }: { metadata: Record<string, any>; on
       website: details.website || metadata.website,
       mapsUrl: details.mapsUrl || metadata.mapsUrl,
       starRating: details.rating ? Math.round(details.rating) : metadata.starRating,
-      photos: details.photoRefs?.length ? details.photoRefs.map((r: string) => getPhotoUrl(r)) : metadata.photos,
+      photos: details.photoRefs?.length ? details.photoRefs : metadata.photos,
       placeDescription: details.editorialSummary || details.firstReview || metadata.placeDescription,
     });
   };
@@ -584,7 +584,7 @@ function RestaurantFields({ metadata, onChange }: { metadata: Record<string, any
       mapsUrl: details.mapsUrl || metadata.mapsUrl,
       cuisine: cuisineType ? cuisineType.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase()) : metadata.cuisine,
       priceLevel: details.priceLevel != null ? priceLevelLabels[details.priceLevel] || "" : metadata.priceLevel,
-      photos: details.photoRefs?.length ? details.photoRefs.slice(0, 3).map((r: string) => getPhotoUrl(r)) : metadata.photos,
+      photos: details.photoRefs?.length ? details.photoRefs.slice(0, 3) : metadata.photos,
     });
   };
   return (
@@ -697,7 +697,7 @@ function ActivityFields({ metadata, onChange }: { metadata: Record<string, any>;
       website: details.website || metadata.website,
       mapsUrl: details.mapsUrl || metadata.mapsUrl,
       category: placeCategory ? (activityCategories.find(c => placeCategory.includes(c.value))?.value || metadata.category) : metadata.category,
-      photos: details.photoRefs?.length ? details.photoRefs.slice(0, 3).map((r: string) => getPhotoUrl(r)) : metadata.photos,
+      photos: details.photoRefs?.length ? details.photoRefs.slice(0, 3) : metadata.photos,
     });
   };
   return (

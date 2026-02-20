@@ -208,8 +208,12 @@ function SegmentCard({
     const refs = meta.photos || meta.photoRefs || [];
     if (!Array.isArray(refs)) return [];
     const limit = segment.type === "hotel" ? 3 : 2;
-    return refs.slice(0, limit).map((r: string) => `/api/places/photo?ref=${encodeURIComponent(r)}`);
+    return refs.slice(0, limit).map((r: string) => {
+      if (r.startsWith("/api/") || r.startsWith("http")) return r;
+      return `/api/places/photo?ref=${encodeURIComponent(r)}`;
+    });
   })();
+  const [photosExpanded, setPhotosExpanded] = useState(false);
 
   let primaryText = "";
   let secondaryText = "";
@@ -343,10 +347,32 @@ function SegmentCard({
             )}
           </div>
           {photos.length > 0 && (
-            <div className="flex gap-1.5 mt-2">
-              {photos.map((src, i) => (
-                <img key={i} src={src} alt="" className="w-[80px] h-[80px] rounded-md object-cover" loading="lazy" data-testid={`img-segment-photo-${segment.id}-${i}`} />
-              ))}
+            <div className="mt-2 border-t border-border/30 pt-2">
+              <button
+                type="button"
+                onClick={() => setPhotosExpanded(p => !p)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors w-full"
+                data-testid={`button-toggle-photos-${segment.id}`}
+              >
+                <Image className="w-3 h-3" />
+                <span>{photos.length} photo{photos.length > 1 ? "s" : ""}</span>
+                <ChevronDown className={`w-3 h-3 ml-auto transition-transform duration-200 ${photosExpanded ? "rotate-180" : ""}`} />
+              </button>
+              {photosExpanded && (
+                <div className="flex gap-2 mt-2 flex-wrap">
+                  {photos.map((src, i) => (
+                    <img
+                      key={i}
+                      src={src}
+                      alt=""
+                      className="w-20 h-20 rounded-md object-cover"
+                      loading="lazy"
+                      data-testid={`img-segment-photo-${segment.id}-${i}`}
+                      onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {segment.type !== "note" && segment.notes && (

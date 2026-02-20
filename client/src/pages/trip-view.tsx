@@ -230,6 +230,28 @@ function HotelCard({ segment }: { segment: TripSegment }) {
               <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
             )}
           </div>
+          {(() => {
+            const refs: string[] = meta.photos || meta.photoRefs || [];
+            const photoUrls = refs.slice(0, 4).map((r: string) => {
+              if (r.startsWith("/api/") || r.startsWith("http")) return r;
+              return `/api/places/photo?ref=${encodeURIComponent(r)}`;
+            });
+            if (photoUrls.length === 0) return null;
+            return (
+              <div className="flex gap-2 overflow-x-auto mt-3 pb-1 -mx-4 px-4">
+                {photoUrls.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt=""
+                    className="w-36 h-24 rounded-lg object-cover flex-shrink-0"
+                    loading="lazy"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -262,6 +284,28 @@ function RestaurantCard({ segment }: { segment: TripSegment }) {
               <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
             )}
           </div>
+          {(() => {
+            const refs: string[] = meta.photos || meta.photoRefs || [];
+            const photoUrls = refs.slice(0, 3).map((r: string) => {
+              if (r.startsWith("/api/") || r.startsWith("http")) return r;
+              return `/api/places/photo?ref=${encodeURIComponent(r)}`;
+            });
+            if (photoUrls.length === 0) return null;
+            return (
+              <div className="flex gap-2 overflow-x-auto mt-3 pb-1 -mx-4 px-4">
+                {photoUrls.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt=""
+                    className="w-36 h-24 rounded-lg object-cover flex-shrink-0"
+                    loading="lazy"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -295,6 +339,28 @@ function ActivityCard({ segment }: { segment: TripSegment }) {
               <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
             )}
           </div>
+          {(() => {
+            const refs: string[] = meta.photos || meta.photoRefs || [];
+            const photoUrls = refs.slice(0, 3).map((r: string) => {
+              if (r.startsWith("/api/") || r.startsWith("http")) return r;
+              return `/api/places/photo?ref=${encodeURIComponent(r)}`;
+            });
+            if (photoUrls.length === 0) return null;
+            return (
+              <div className="flex gap-2 overflow-x-auto mt-3 pb-1 -mx-4 px-4">
+                {photoUrls.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt=""
+                    className="w-36 h-24 rounded-lg object-cover flex-shrink-0"
+                    loading="lazy"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>
