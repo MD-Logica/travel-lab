@@ -17,10 +17,10 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Search, Plus, Mail, Phone, Plane, X } from "lucide-react";
+import { Search, Plus, Mail, Phone, Plane, X, Users } from "lucide-react";
 import { Link } from "wouter";
 import { useIsMobile } from "@/hooks/use-mobile";
-import type { Client } from "@shared/schema";
+import type { Client, Profile } from "@shared/schema";
 
 type ClientWithTripCount = Client & { tripCount: number };
 
@@ -67,6 +67,16 @@ export default function ClientsPage() {
   const { data: clients, isLoading } = useQuery<ClientWithTripCount[]>({
     queryKey: ["/api/clients"],
   });
+
+  const { data: members = [] } = useQuery<Profile[]>({
+    queryKey: ["/api/members"],
+  });
+
+  const advisorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    members.forEach((m) => map.set(m.id, m.fullName));
+    return map;
+  }, [members]);
 
   const filtered = useMemo(() => {
     if (!clients) return [];
@@ -158,9 +168,10 @@ export default function ClientsPage() {
           >
             <Card className="border-border/40 overflow-visible">
               <div className="divide-y divide-border/30">
-                <div className="hidden md:grid grid-cols-[1fr_1fr_100px_140px] gap-4 items-center px-5 py-3">
+                <div className="hidden md:grid grid-cols-[1fr_1fr_120px_100px_140px] gap-4 items-center px-5 py-3">
                   <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-medium">Name</span>
                   <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-medium">Contact</span>
+                  <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-medium">Advisor</span>
                   <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-medium text-center">Trips</span>
                   <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground font-medium">Tags</span>
                 </div>
@@ -169,7 +180,7 @@ export default function ClientsPage() {
                   <motion.div key={client.id} custom={i} initial="hidden" animate="visible" variants={fadeUp}>
                     <Link href={`/clients/${client.id}`}>
                       <div
-                        className="grid grid-cols-1 md:grid-cols-[1fr_1fr_100px_140px] gap-3 md:gap-4 items-center px-5 py-4 hover-elevate cursor-pointer"
+                        className="grid grid-cols-1 md:grid-cols-[1fr_1fr_120px_100px_140px] gap-3 md:gap-4 items-center px-5 py-4 hover-elevate cursor-pointer"
                         data-testid={`row-client-${client.id}`}
                       >
                         <div className="flex items-center gap-3 min-w-0">
@@ -203,6 +214,16 @@ export default function ClientsPage() {
                           )}
                           {!client.email && !client.phone && (
                             <span className="text-muted-foreground/40">No contact info</span>
+                          )}
+                        </div>
+
+                        <div className="hidden md:flex items-center min-w-0">
+                          {client.assignedAdvisorId && advisorMap.get(client.assignedAdvisorId) ? (
+                            <span className="text-xs text-muted-foreground truncate" data-testid={`text-advisor-${client.id}`}>
+                              {advisorMap.get(client.assignedAdvisorId)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/30">—</span>
                           )}
                         </div>
 

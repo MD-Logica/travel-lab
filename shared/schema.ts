@@ -54,6 +54,7 @@ export const profiles = pgTable("profiles", {
   phone: text("phone"),
   avatarUrl: text("avatar_url"),
   invitedBy: varchar("invited_by"),
+  canViewAllClients: boolean("can_view_all_clients").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -69,10 +70,19 @@ export const clients = pgTable("clients", {
   avatarUrl: text("avatar_url"),
   invited: text("invited").default("no"),
   invitedAt: timestamp("invited_at"),
+  assignedAdvisorId: varchar("assigned_advisor_id"),
   preferences: jsonb("preferences"),
   preferencesUpdatedAt: timestamp("preferences_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const clientCollaborators = pgTable("client_collaborators", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  advisorId: varchar("advisor_id").notNull(),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const trips = pgTable("trips", {
@@ -401,6 +411,12 @@ export type Profile = typeof profiles.$inferSelect;
 export type InsertProfile = z.infer<typeof insertProfileSchema>;
 export type Client = typeof clients.$inferSelect;
 export type InsertClient = z.infer<typeof insertClientSchema>;
+export type ClientCollaborator = typeof clientCollaborators.$inferSelect;
+export const insertClientCollaboratorSchema = createInsertSchema(clientCollaborators).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertClientCollaborator = z.infer<typeof insertClientCollaboratorSchema>;
 export const insertTripVersionSchema = createInsertSchema(tripVersions).omit({
   id: true,
   createdAt: true,

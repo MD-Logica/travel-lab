@@ -22,8 +22,9 @@ import {
   User, Building2, CreditCard, Lock, Shield, Crown,
   Calendar, UserPlus, MoreVertical, Trash2, Pencil,
   Bookmark, Plane, Ship, Hotel, Car, UtensilsCrossed,
-  Activity, StickyNote, RefreshCw, X, Clock, Send,
+  Activity, StickyNote, RefreshCw, X, Clock, Send, Eye,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import type { Organization, Profile, Invitation } from "@shared/schema";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -247,6 +248,20 @@ function OrganizationSection({ profile }: { profile: Profile }) {
     },
   });
 
+  const togglePermissionMutation = useMutation({
+    mutationFn: async ({ memberId, canViewAllClients }: { memberId: string; canViewAllClients: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/team/${memberId}/permissions`, { canViewAllClients });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/members"] });
+      toast({ title: "Permissions updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update permissions", variant: "destructive" });
+    },
+  });
+
   const removeMemberMutation = useMutation({
     mutationFn: async (memberId: string) => {
       await apiRequest("DELETE", `/api/members/${memberId}`);
@@ -404,6 +419,21 @@ function OrganizationSection({ profile }: { profile: Profile }) {
                       <th className="text-left py-3 px-4 font-medium text-xs uppercase tracking-wider text-muted-foreground">Role</th>
                       <th className="text-left py-3 px-4 font-medium text-xs uppercase tracking-wider text-muted-foreground hidden md:table-cell">Joined</th>
                       {isOwner && (
+                        <th className="text-center py-3 px-4 font-medium text-xs uppercase tracking-wider text-muted-foreground hidden lg:table-cell w-28">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex items-center gap-1 cursor-help">
+                                <Eye className="w-3 h-3" />
+                                All Clients
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[200px] text-xs">
+                              Allow this advisor to view all clients, not just their assigned ones
+                            </TooltipContent>
+                          </Tooltip>
+                        </th>
+                      )}
+                      {isOwner && (
                         <th className="text-right py-3 px-4 font-medium text-xs uppercase tracking-wider text-muted-foreground w-20">Actions</th>
                       )}
                     </tr>
@@ -455,6 +485,27 @@ function OrganizationSection({ profile }: { profile: Profile }) {
                           <td className="py-3 px-4 text-muted-foreground text-xs hidden md:table-cell">
                             {m.createdAt ? format(new Date(m.createdAt), "MMM d, yyyy") : "—"}
                           </td>
+                          {isOwner && (
+                            <td className="py-3 px-4 text-center hidden lg:table-cell">
+                              {m.role === "owner" ? (
+                                <Badge variant="secondary" className="text-[9px]">Always</Badge>
+                              ) : !isMe ? (
+                                <Switch
+                                  checked={!!m.canViewAllClients}
+                                  onCheckedChange={(checked) =>
+                                    togglePermissionMutation.mutate({ memberId: m.id, canViewAllClients: checked })
+                                  }
+                                  data-testid={`switch-view-all-${m.id}`}
+                                />
+                              ) : (
+                                <Switch
+                                  checked={!!m.canViewAllClients}
+                                  disabled
+                                  data-testid={`switch-view-all-${m.id}`}
+                                />
+                              )}
+                            </td>
+                          )}
                           {isOwner && (
                             <td className="py-3 px-4 text-right">
                               {!isMe && (

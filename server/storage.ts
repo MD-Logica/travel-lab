@@ -1,7 +1,7 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
   flightTracking, notifications, segmentTemplates, conversations, messages, pushSubscriptions,
-  invitations,
+  invitations, clientCollaborators,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -16,9 +16,10 @@ import {
   type Message, type InsertMessage,
   type PushSubscription,
   type Invitation, type InsertInvitation,
+  type ClientCollaborator, type InsertClientCollaborator,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, count, sql, or, ilike, desc } from "drizzle-orm";
+import { eq, and, count, sql, or, ilike, desc, inArray } from "drizzle-orm";
 
 export interface IStorage {
   createOrganization(org: InsertOrganization): Promise<Organization>;
@@ -123,6 +124,13 @@ export interface IStorage {
     client: { fullName: string; email: string | null } | null;
     versions: (TripVersion & { segments: TripSegment[] })[];
   } | undefined>;
+
+  getClientsByAdvisor(orgId: string, advisorId: string): Promise<(Client & { tripCount: number })[]>;
+  getClientCollaborators(clientId: string, orgId: string): Promise<(ClientCollaborator & { advisorName: string; advisorEmail: string | null })[]>;
+  addClientCollaborator(data: InsertClientCollaborator): Promise<ClientCollaborator>;
+  removeClientCollaborator(id: string, orgId: string): Promise<boolean>;
+  canAdvisorAccessClient(advisorId: string, clientId: string, orgId: string): Promise<boolean>;
+  getTripsByAdvisor(orgId: string, advisorId: string): Promise<(Trip & { clientName: string | null })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -986,6 +994,128 @@ export class DatabaseStorage implements IStorage {
 
   async getPushSubscriptionsForOrg(orgId: string): Promise<PushSubscription[]> {
     return db.select().from(pushSubscriptions).where(eq(pushSubscriptions.orgId, orgId));
+  }
+
+  async getClientsByAdvisor(orgId: string, advisorId: string): Promise<(Client & { tripCount: number })[]> {
+    const collabClientIds = await db
+      .select({ clientId: clientCollaborators.clientId })
+      .from(clientCollaborators)
+      .where(and(eq(clientCollaborators.advisorId, advisorId), eq(clientCollaborators.orgId, orgId)));
+
+    const collabIds = collabClientIds.map((r) => r.clientId);
+
+    const rows = await db
+      .select({
+        client: clients,
+        tripCount: sql<number>`cast(count(${trips.id}) as int)`,
+      })
+      .from(clients)
+      .leftJoin(trips, eq(clients.id, trips.clientId))
+      .where(
+        and(
+          eq(clients.orgId, orgId),
+          collabIds.length > 0
+            ? or(eq(clients.assignedAdvisorId, advisorId), inArray(clients.id, collabIds))
+            : eq(clients.assignedAdvisorId, advisorId)
+        )
+      )
+      .groupBy(clients.id)
+      .orderBy(sql`${clients.fullName} ASC`);
+
+    return rows.map((r) => ({ ...r.client, tripCount: r.tripCount }));
+  }
+
+  async getClientCollaborators(clientId: string, orgId: string): Promise<(ClientCollaborator & { advisorName: string; advisorEmail: string | null })[]> {
+    const rows = await db
+      .select({
+        collab: clientCollaborators,
+        advisorName: profiles.fullName,
+        advisorEmail: profiles.email,
+      })
+      .from(clientCollaborators)
+      .innerJoin(profiles, eq(clientCollaborators.advisorId, profiles.id))
+      .where(and(eq(clientCollaborators.clientId, clientId), eq(clientCollaborators.orgId, orgId)));
+
+    return rows.map((r) => ({ ...r.collab, advisorName: r.advisorName, advisorEmail: r.advisorEmail }));
+  }
+
+  async addClientCollaborator(data: InsertClientCollaborator): Promise<ClientCollaborator> {
+    const existing = await db.select().from(clientCollaborators)
+      .where(and(
+        eq(clientCollaborators.clientId, data.clientId),
+        eq(clientCollaborators.advisorId, data.advisorId),
+        eq(clientCollaborators.orgId, data.orgId),
+      ));
+    if (existing.length > 0) return existing[0];
+    const [result] = await db.insert(clientCollaborators).values(data).returning();
+    return result;
+  }
+
+  async removeClientCollaborator(id: string, orgId: string): Promise<boolean> {
+    const result = await db.delete(clientCollaborators)
+      .where(and(eq(clientCollaborators.id, id), eq(clientCollaborators.orgId, orgId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async canAdvisorAccessClient(advisorId: string, clientId: string, orgId: string): Promise<boolean> {
+    const profile = await this.getProfile(advisorId);
+    if (!profile) return false;
+    if (profile.role === "owner" || profile.canViewAllClients) return true;
+
+    const client = await this.getClient(clientId, orgId);
+    if (!client) return false;
+    if (client.assignedAdvisorId === advisorId) return true;
+
+    const collabs = await db.select().from(clientCollaborators)
+      .where(and(
+        eq(clientCollaborators.clientId, clientId),
+        eq(clientCollaborators.advisorId, advisorId),
+        eq(clientCollaborators.orgId, orgId),
+      ));
+    return collabs.length > 0;
+  }
+
+  async getTripsByAdvisor(orgId: string, advisorId: string): Promise<(Trip & { clientName: string | null })[]> {
+    const collabClientIds = await db
+      .select({ clientId: clientCollaborators.clientId })
+      .from(clientCollaborators)
+      .where(and(eq(clientCollaborators.advisorId, advisorId), eq(clientCollaborators.orgId, orgId)));
+
+    const collabIds = collabClientIds.map((r) => r.clientId);
+
+    const clientCondition = collabIds.length > 0
+      ? or(eq(clients.assignedAdvisorId, advisorId), inArray(clients.id, collabIds))
+      : eq(clients.assignedAdvisorId, advisorId);
+
+    const rows = await db
+      .select({
+        trip: trips,
+        clientName: clients.fullName,
+      })
+      .from(trips)
+      .innerJoin(clients, eq(trips.clientId, clients.id))
+      .where(and(eq(trips.orgId, orgId), clientCondition))
+      .orderBy(sql`${trips.createdAt} DESC`);
+
+    const tripsWithoutClient = await db
+      .select({
+        trip: trips,
+      })
+      .from(trips)
+      .where(and(eq(trips.orgId, orgId), eq(trips.advisorId, advisorId), sql`${trips.clientId} IS NULL`))
+      .orderBy(sql`${trips.createdAt} DESC`);
+
+    const allTrips = [
+      ...rows.map((r) => ({ ...r.trip, clientName: r.clientName })),
+      ...tripsWithoutClient.map((r) => ({ ...r.trip, clientName: null })),
+    ];
+    allTrips.sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bTime - aTime;
+    });
+    return allTrips;
   }
 }
 

@@ -418,7 +418,12 @@ export async function registerRoutes(
 
   app.get("/api/trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const tripsWithClients = await storage.getTripsWithClientByOrg(req._orgId);
+      const profile = req._profile;
+      if (profile.role === "owner" || profile.canViewAllClients) {
+        const tripsWithClients = await storage.getTripsWithClientByOrg(req._orgId);
+        return res.json(tripsWithClients);
+      }
+      const tripsWithClients = await storage.getTripsByAdvisor(req._orgId, profile.id);
       res.json(tripsWithClients);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch trips" });
@@ -533,7 +538,12 @@ export async function registerRoutes(
 
   app.get("/api/clients", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const clientsList = await storage.getClientsByOrgWithTripCount(req._orgId);
+      const profile = req._profile;
+      if (profile.role === "owner" || profile.canViewAllClients) {
+        const clientsList = await storage.getClientsByOrgWithTripCount(req._orgId);
+        return res.json(clientsList);
+      }
+      const clientsList = await storage.getClientsByAdvisor(req._orgId, profile.id);
       res.json(clientsList);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch clients" });
@@ -611,6 +621,7 @@ export async function registerRoutes(
         phone: z.string().optional().or(z.literal("")).or(z.null()),
         notes: z.string().optional().or(z.literal("")).or(z.null()),
         tags: z.array(z.string()).optional().or(z.null()),
+        assignedAdvisorId: z.string().optional().or(z.null()),
       });
       const parsed = updateSchema.parse(req.body);
       const client = await storage.updateClient(req.params.id, req._orgId, parsed);
@@ -656,6 +667,84 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Update preferences error:", error);
       res.status(500).json({ message: "Failed to update preferences" });
+    }
+  });
+
+  app.patch("/api/clients/:id/assign-advisor", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const profile = req._profile;
+      if (profile.role !== "owner") {
+        return res.status(403).json({ message: "Only owners can assign advisors" });
+      }
+      const { advisorId } = req.body;
+      const client = await storage.updateClient(req.params.id, req._orgId, {
+        assignedAdvisorId: advisorId || null,
+      } as any);
+      if (!client) return res.status(404).json({ message: "Client not found" });
+      res.json(client);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to assign advisor" });
+    }
+  });
+
+  app.get("/api/clients/:id/collaborators", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const collaborators = await storage.getClientCollaborators(req.params.id, req._orgId);
+      res.json(collaborators);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch collaborators" });
+    }
+  });
+
+  app.post("/api/clients/:id/collaborators", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const profile = req._profile;
+      if (profile.role !== "owner") {
+        return res.status(403).json({ message: "Only owners can manage collaborators" });
+      }
+      const { advisorId } = req.body;
+      if (!advisorId) return res.status(400).json({ message: "advisorId is required" });
+
+      const collab = await storage.addClientCollaborator({
+        clientId: req.params.id,
+        advisorId,
+        orgId: req._orgId,
+      });
+      res.json(collab);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to add collaborator" });
+    }
+  });
+
+  app.delete("/api/clients/:clientId/collaborators/:collabId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const profile = req._profile;
+      if (profile.role !== "owner") {
+        return res.status(403).json({ message: "Only owners can manage collaborators" });
+      }
+      const removed = await storage.removeClientCollaborator(req.params.collabId, req._orgId);
+      if (!removed) return res.status(404).json({ message: "Collaborator not found" });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to remove collaborator" });
+    }
+  });
+
+  app.patch("/api/team/:memberId/permissions", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const profile = req._profile;
+      if (profile.role !== "owner") {
+        return res.status(403).json({ message: "Only owners can change permissions" });
+      }
+      const { canViewAllClients } = req.body;
+      if (typeof canViewAllClients !== "boolean") {
+        return res.status(400).json({ message: "canViewAllClients must be a boolean" });
+      }
+      const updated = await storage.updateProfile(req.params.memberId, { canViewAllClients } as any);
+      if (!updated) return res.status(404).json({ message: "Member not found" });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to update permissions" });
     }
   });
 

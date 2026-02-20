@@ -46,10 +46,13 @@ import {
   File,
   Image,
   Loader2,
+  Users,
+  UserPlus,
+  Shield,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Link, useParams, useLocation } from "wouter";
-import type { Client, Trip, TripDocument } from "@shared/schema";
+import type { Client, Trip, TripDocument, Profile, ClientCollaborator } from "@shared/schema";
 import { format } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1462,6 +1465,59 @@ export default function ClientDetailPage() {
     queryKey: ["/api/clients", id, "trips"],
   });
 
+  const { data: profile } = useQuery<Profile>({
+    queryKey: ["/api/profile"],
+  });
+
+  const { data: members = [] } = useQuery<Profile[]>({
+    queryKey: ["/api/members"],
+  });
+
+  type CollabWithAdvisor = ClientCollaborator & { advisorName: string; advisorEmail: string | null };
+  const { data: collaborators = [] } = useQuery<CollabWithAdvisor[]>({
+    queryKey: ["/api/clients", id, "collaborators"],
+  });
+
+  const isOwner = profile?.role === "owner";
+  const advisors = members.filter((m) => m.role === "advisor" || m.role === "owner" || m.role === "assistant");
+
+  const assignAdvisorMutation = useMutation({
+    mutationFn: async (advisorId: string | null) => {
+      const res = await apiRequest("PATCH", `/api/clients/${id}/assign-advisor`, { advisorId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/clients"] });
+      toast({ title: "Advisor assigned" });
+    },
+    onError: () => toast({ title: "Failed to assign advisor", variant: "destructive" }),
+  });
+
+  const addCollabMutation = useMutation({
+    mutationFn: async (advisorId: string) => {
+      const res = await apiRequest("POST", `/api/clients/${id}/collaborators`, { advisorId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", id, "collaborators"] });
+      toast({ title: "Collaborator added" });
+    },
+    onError: () => toast({ title: "Failed to add collaborator", variant: "destructive" }),
+  });
+
+  const removeCollabMutation = useMutation({
+    mutationFn: async (collabId: string) => {
+      const res = await apiRequest("DELETE", `/api/clients/${id}/collaborators/${collabId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/clients", id, "collaborators"] });
+      toast({ title: "Collaborator removed" });
+    },
+    onError: () => toast({ title: "Failed to remove collaborator", variant: "destructive" }),
+  });
+
   useEffect(() => {
     if (client && !isEditing) {
       setEditName(client.fullName);
@@ -1808,6 +1864,109 @@ export default function ClientDetailPage() {
                       testId="stat-last-trip"
                     />
                     <SnapshotStat label="Member Since" value={memberSince} testId="stat-member-since" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="mb-8">
+                <CardContent className="py-5 px-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Users className="w-4 h-4 text-muted-foreground/50" strokeWidth={1.5} />
+                    <h3 className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground/50 font-medium">
+                      Advisor Assignment
+                    </h3>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex-1 min-w-[200px]">
+                        <label className="text-xs text-muted-foreground mb-1.5 block">Lead Advisor</label>
+                        {isOwner ? (
+                          <Select
+                            value={client.assignedAdvisorId || "__none__"}
+                            onValueChange={(val) => assignAdvisorMutation.mutate(val === "__none__" ? null : val)}
+                          >
+                            <SelectTrigger className="h-9 text-sm" data-testid="select-assigned-advisor">
+                              <SelectValue placeholder="Unassigned" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Unassigned</SelectItem>
+                              {advisors.map((a) => (
+                                <SelectItem key={a.id} value={a.id}>{a.fullName}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <Avatar className="w-6 h-6">
+                              <AvatarFallback className="text-[9px] bg-muted font-medium">
+                                {client.assignedAdvisorId
+                                  ? getInitials(advisors.find((a) => a.id === client.assignedAdvisorId)?.fullName || "?")
+                                  : "?"}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="text-sm">
+                              {client.assignedAdvisorId
+                                ? advisors.find((a) => a.id === client.assignedAdvisorId)?.fullName || "Unknown"
+                                : "Unassigned"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1.5 block">Collaborating Advisors</label>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {collaborators.map((c) => (
+                          <Badge
+                            key={c.id}
+                            variant="secondary"
+                            className="text-xs font-normal gap-1.5 py-1 px-2.5"
+                            data-testid={`badge-collaborator-${c.id}`}
+                          >
+                            <Avatar className="w-4 h-4">
+                              <AvatarFallback className="text-[7px] bg-muted font-medium">
+                                {getInitials(c.advisorName)}
+                              </AvatarFallback>
+                            </Avatar>
+                            {c.advisorName}
+                            {isOwner && (
+                              <button
+                                onClick={() => removeCollabMutation.mutate(c.id)}
+                                className="ml-0.5 opacity-60 hover:opacity-100 transition-opacity"
+                                data-testid={`button-remove-collab-${c.id}`}
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </Badge>
+                        ))}
+                        {collaborators.length === 0 && (
+                          <span className="text-xs text-muted-foreground/40 italic">No collaborators</span>
+                        )}
+                        {isOwner && (
+                          <Select
+                            value=""
+                            onValueChange={(advisorId) => addCollabMutation.mutate(advisorId)}
+                          >
+                            <SelectTrigger className="h-7 w-7 p-0 border-dashed" data-testid="button-add-collaborator">
+                              <UserPlus className="w-3.5 h-3.5 text-muted-foreground" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {advisors
+                                .filter((a) => a.id !== client.assignedAdvisorId && !collaborators.some((c) => c.advisorId === a.id))
+                                .map((a) => (
+                                  <SelectItem key={a.id} value={a.id}>{a.fullName}</SelectItem>
+                                ))}
+                              {advisors.filter((a) => a.id !== client.assignedAdvisorId && !collaborators.some((c) => c.advisorId === a.id)).length === 0 && (
+                                <div className="px-2 py-1.5 text-xs text-muted-foreground">No more advisors to add</div>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

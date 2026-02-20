@@ -17,8 +17,9 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 
 ## Data Model
 - **organizations**: id, name, slug, plan (trial/pro/enterprise), plan_status, trial_ends_at, max_advisors, max_clients
-- **profiles**: id (= auth user id), org_id, role (owner/advisor/assistant/client), full_name, email, phone, avatar_url
-- **clients**: id, org_id, full_name, email, phone, notes, tags, preferences (jsonb), preferences_updated_at
+- **profiles**: id (= auth user id), org_id, role (owner/advisor/assistant/client), full_name, email, phone, avatar_url, can_view_all_clients (boolean)
+- **clients**: id, org_id, full_name, email, phone, notes, tags, assigned_advisor_id, preferences (jsonb), preferences_updated_at
+- **client_collaborators**: id, client_id, advisor_id, org_id, created_at
 - **trips**: id, org_id, title, destination (text, legacy), destinations (jsonb, DestinationEntry[]), description, cover_image_url, start_date, end_date, status, budget, currency, notes
 - **trip_versions**: id, trip_id, org_id, version_number, name, is_primary
 - **trip_segments**: id, version_id, trip_id, org_id, day_number, sort_order, type (flight/charter/hotel/transport/restaurant/activity/note), title, subtitle, start_time, end_time, confirmation_number, cost, currency, notes
@@ -65,6 +66,7 @@ Travel Lab is a multi-tenant SaaS travel planning platform for luxury travel age
 - Install prompt: shows after 30s on first mobile visit
 
 ## Recent Changes
+- 2026-02-20: Multi-advisor collaboration system — canViewAllClients boolean on profiles, assignedAdvisorId on clients, client_collaborators table for shared access; advisor-scoped client/trip queries (advisors see only assigned + collaborating clients, owners see all); client detail page shows lead advisor selector (owner only) and collaborator badges with add/remove; clients list shows Advisor column; settings team table has "All Clients" toggle per member (Switch component, owner only); API routes: PATCH /api/clients/:id/assign-advisor, GET/POST/DELETE /api/clients/:id/collaborators, PATCH /api/team/:memberId/permissions
 - 2026-02-19: Settings page refactor — three-tab layout (Profile/Organisation/Billing); Profile: editable name, read-only email with lock icon+tooltip, phone with PhoneInput country code selector, initials avatar, conditional save button; Organisation: org name/logo editing, team members table with avatar+name/email/role/joined/actions columns, inline role change dropdown (owner only, can't demote self), remove member with confirmation dialog, "Invite team member" modal with email+role selector+descriptions+plan limit enforcement, pending invitations shown in table with Pending badge+expiry+resend/cancel; Billing: plan badge, trial days countdown, disabled "Manage billing" stub; invitations table in DB, invitation CRUD API routes, accept invitation endpoint, team management routes (role change, member removal)
 - 2026-02-19: Multi-city destination system — `destinations` jsonb column on trips for structured multi-destination support; DestinationInput component with Google Places cities autocomplete, free-text entry, tag-style chips, keyboard navigation, blur auto-commit, deduplication; formatDestinations/formatDestinationsShort display helpers; CurrencyInput integrated in trip-new/trip-detail budget fields; PDF export hardened with transport/charter segment support, currency formatting via Intl.NumberFormat, defensive null checks, try-catch error handling
 - 2026-02-19: Analytics page (/dashboard/analytics) — premium editorial design with Recharts; date range selector (30d/3m/12m/all time); 4 summary stat cards (total trips, active trips, total clients, portfolio value); trips-over-time area chart; top destinations horizontal bar chart; trips-by-status donut chart; most active clients table (clickable to profile); advisor activity table (owner only); graceful empty states; sidebar navigation with BarChart2 icon
