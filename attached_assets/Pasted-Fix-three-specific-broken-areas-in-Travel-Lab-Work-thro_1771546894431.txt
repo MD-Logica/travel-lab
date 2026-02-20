@@ -1,0 +1,222 @@
+Fix three specific broken areas in Travel Lab. Work through each
+one in order. Do not change anything outside of what is described.
+
+─── FIX 1: FLIGHT SEARCH — FLIGHTLABS ───────────────────────────────────────
+
+Rebuild the flight API integration using the correct FlightLabs
+endpoints. Previous attempts used wrong URLs and parameter names.
+Use exactly what is specified below — do not deviate.
+
+FLIGHTLABS_API_KEY must be in Replit Secrets.
+
+TWO SEPARATE ENDPOINTS ARE USED FOR TWO DIFFERENT PURPOSES:
+
+━━ ENDPOINT A: Flight Info by Flight Number ━━━━━━━━━━━━━━━━━━━━━━━━━━
+Used for: segment editor search — advisor types a flight number
+to auto-fill segment details.
+
+  URL: https://www.goflightlabs.com/flight
+  Method: GET
+  Parameters (snake_case — use exactly these names):
+    access_key: [FLIGHTLABS_API_KEY]    ← required
+    flight_number: [e.g. "BA001"]       ← required, snake_case
+    date: [YYYY-MM-DD]                  ← optional
+
+  Response structure — all-caps field names:
+    data[0].DATE      → flight date "20 Mar 2024"
+    data[0].FROM      → departure "London (LHR)" — parse city and IATA
+    data[0].TO        → arrival "New York (JFK)" — parse city and IATA
+    data[0].AIRCRAFT  → aircraft type
+    data[0].STD       → scheduled departure time "HH:mm"
+    data[0].ATD       → actual departure time "HH:mm" or "—"
+    data[0].STA       → scheduled arrival time "HH:mm"
+    data[0].STATUS    → "Scheduled" / "En Route" / "Landed"
+
+  Parse city and IATA from FROM/TO fields:
+    "London (LHR)" → city: "London", iata: "LHR"
+    Use regex: /^(.*?)\s*\(([A-Z]{3})\)$/
+    const match = raw.FROM.match(/^(.*?)\s*\(([A-Z]{3})\)$/)
+    const depCity = match?.[1] ?? raw.FROM
+    const depIata = match?.[2] ?? ''
+
+  Build server-side proxy: GET /api/flights/search
+    Accepts: flightNumber, date as query params
+    Calls Endpoint A
+    Returns normalized object:
+    {
+      flight: {
+        flightNumber: [input flight number],
+        airline: '',           ← not returned by this endpoint, leave blank
+        aircraft: data[0].AIRCRAFT,
+        departure: {
+          city: [parsed from FROM],
+          iata: [parsed from FROM],
+          scheduledTime: data[0].STD,   ← "HH:mm" format
+          actualTime: data[0].ATD !== '—' ? data[0].ATD : null,
+        },
+        arrival: {
+          city: [parsed from TO],
+          iata: [parsed from TO],
+          scheduledTime: data[0].STA,   ← "HH:mm" format
+        },
+        date: data[0].DATE,
+        status: data[0].STATUS
+      }
+    }
+
+  If data array is empty: return { error: "No flight found." }
+  Never expose raw API errors to the frontend.
+  Log raw response server-side during testing:
+    console.log('[FlightLabs] raw:', JSON.stringify(data).slice(0, 500))
+
+━━ ENDPOINT B: Real-Time Flights ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Used for: background flight status monitoring job (Prompt A3).
+NOT used in the segment editor search.
+
+  URL: https://www.goflightlabs.com/flights
+  Method: GET
+  Parameters (mixed case — use exactly these names):
+    access_key: [FLIGHTLABS_API_KEY]    ← required
+    flightIata: [e.g. "BA001"]          ← camelCase
+    limit: 1
+
+  Response fields (snake_case):
+    data[0].flight_iata   → flight code
+    data[0].dep_iata      → departure airport IATA
+    data[0].arr_iata      → arrival airport IATA
+    data[0].status        → "scheduled" / "en-route" / "landed"
+    data[0].updated       → UNIX timestamp of last update
+
+  Build server-side proxy: GET /api/flights/status
+    Accepts: flightIata as query param
+    Calls Endpoint B
+    Returns:
+    {
+      status: data[0].status,
+      depIata: data[0].dep_iata,
+      arrIata: data[0].arr_iata,
+      updatedAt: data[0].updated
+    }
+
+  Update the background monitoring job from Prompt A3 to call
+  /api/flights/status instead of any previous endpoint.
+  The polling logic, monitoring window, and notification
+  sequencing from Prompt A3 remain exactly the same —
+  only the API call and response parsing change.
+
+IN THE FLIGHT SEARCH COMPONENT:
+  Update the fetch call to: /api/flights/search?flightNumber=[num]&date=[date]
+  Note: STD and STA are returned as "HH:mm" strings, not full
+  datetimes. When populating the segment editor time fields,
+  combine the search date with the time:
+    departureTime = searchDate + 'T' + data.flight.departure.scheduledTime
+    e.g. "2025-06-02T15:45"
+  This gives a valid datetime-local input value.
+
+Test with a real flight (e.g. "BA001") and today's date.
+Check server logs to confirm the raw response before assuming
+the integration is broken.
+
+─── FIX 2: SEGMENT CARDS — DISPLAY RICH DATA ────────────────────────────────
+
+Currently segment cards in the itinerary builder only show
+segment.title and segment.subtitle. All rich data stored in
+segment.data is never displayed. Fix every segment type.
+
+FLIGHT card:
+  Primary: segment.data.flightNumber (large)
+  Secondary: segment.data.departure?.iata + " → " + segment.data.arrival?.iata
+  Cities: segment.data.departure?.city + " → " + segment.data.arrival?.city
+  Time: segment.data.departure?.scheduledTime
+  Status badge if segment.data.status is set and not "Scheduled"
+  Booking class badge if segment.data.bookingClass is set
+  Confirmation number in monospace if segment.confirmation_number exists
+
+CHARTER FLIGHT card:
+  Primary: segment.data.operator || "Private Charter"
+  Secondary: segment.data.departureLocation + " → " + segment.data.arrivalLocation
+  Time: formatted from segment.start_time
+  Small "Charter" badge
+  Reference number if segment.confirmation_number exists
+
+HOTEL card:
+  Primary: segment.data.hotelName
+  Secondary: check-in → check-out formatted as "2 Jun → 9 Jun"
+  Room type if segment.data.roomType is set
+  Address in small muted text if segment.data.address is set
+  Star rating as fine line stars if segment.data.starRating is set
+  Photos: up to 3 thumbnails (80px square, rounded) via
+    /api/places/photo?ref=[ref] proxy
+  Confirmation number in monospace if present
+
+RESTAURANT card:
+  Primary: segment.data.restaurantName
+  Secondary: formatted time from segment.start_time +
+    party size if segment.data.partySize is set
+  Address in small muted text if segment.data.address is set
+  Cuisine as fine pill if segment.data.cuisine is set
+  Photos: up to 2 thumbnails via proxy
+  Confirmation number if present
+
+ACTIVITY card:
+  Primary: segment.data.activityName
+  Secondary: time + location if segment.data.location is set
+  Duration if segment.data.duration is set
+  Photos: up to 2 thumbnails via proxy
+  Confirmation number if present
+
+TRANSPORT card:
+  Primary: segment.data.provider || segment.data.transportType || "Transport"
+  Secondary: segment.data.pickupLocation + " → " + segment.data.dropoffLocation
+  Time: formatted from segment.start_time
+  Driver name if segment.data.driverName is set
+  Confirmation number if present
+
+NOTE card:
+  Primary: segment.data.noteTitle || "Note"
+  Type icon: Info = ℹ · Tip = ★ · Important = ! · Warning = ⚠
+  First 100 characters of segment.data.content as preview
+
+ALL CARDS:
+  Use optional chaining on every field: segment.data?.hotelName ?? ''
+  If a field is null or undefined: do not render that line at all
+  Never show "undefined", "null", or blank lines
+  Photos always served via /api/places/photo proxy — never direct
+  Google URLs client-side
+
+─── FIX 3: PDF EXPORT ───────────────────────────────────────────────────────
+
+PDF export is failing. The cause is @react-pdf/renderer failing
+to load external images at render time. Fix as follows.
+
+For all segment photos in the PDF:
+  Fetch each image server-side as a buffer before rendering.
+  Convert to base64 data URI and pass to the PDF Image component.
+
+  try {
+    const photoRes = await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_URL}/api/places/photo?ref=${ref}`
+    )
+    const buffer = await photoRes.arrayBuffer()
+    const base64 = Buffer.from(buffer).toString('base64')
+    const dataUri = `data:image/jpeg;base64,${base64}`
+    // use dataUri as src in PDF <Image> component
+  } catch {
+    // skip silently — never crash the PDF for one failed image
+  }
+
+For all segment data fields:
+  Use optional chaining and fallbacks on every field:
+    segment.data?.hotelName ?? ''
+    segment.data?.restaurantName ?? ''
+    segment.data?.flightNumber ?? ''
+  A missing field renders as nothing — never throws an error.
+
+PDF content per segment should match the segment cards —
+show the same rich data now displayed in the builder.
+
+After fixing, test end to end:
+  1. Create a trip with a hotel and restaurant via Google Places
+  2. Click Download PDF
+  3. Confirm it generates without error
+  4. Confirm photos render and all segment details are correct

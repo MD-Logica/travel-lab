@@ -1,5 +1,5 @@
 import React from "react";
-import ReactPDF, { Document, Page, Text, View, StyleSheet, Font } from "@react-pdf/renderer";
+import ReactPDF, { Document, Page, Text, View, Image, StyleSheet, Font } from "@react-pdf/renderer";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { formatDestinations } from "@shared/schema";
 
@@ -88,99 +88,122 @@ function formatCurrency(amount: number, currency: string): string {
   }
 }
 
-function SegmentView({ segment }: { segment: TripSegment }) {
+async function fetchPhotoAsBase64(ref: string): Promise<string | null> {
+  try {
+    const baseUrl = `http://localhost:${process.env.PORT || 5000}`;
+    const photoRes = await fetch(`${baseUrl}/api/places/photo?ref=${encodeURIComponent(ref)}`);
+    if (!photoRes.ok) return null;
+    const buffer = await photoRes.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    return `data:image/jpeg;base64,${base64}`;
+  } catch {
+    return null;
+  }
+}
+
+interface ResolvedPhoto {
+  dataUri: string;
+}
+
+async function resolveSegmentPhotos(segments: TripSegment[]): Promise<Map<string, ResolvedPhoto[]>> {
+  const photoMap = new Map<string, ResolvedPhoto[]>();
+  const tasks: Promise<void>[] = [];
+
+  for (const seg of segments) {
+    const meta = (seg.metadata || {}) as Record<string, any>;
+    const refs: string[] = meta.photos || meta.photoRefs || [];
+    if (!Array.isArray(refs) || refs.length === 0) continue;
+
+    const limit = seg.type === "hotel" ? 3 : 2;
+    const segRefs = refs.slice(0, limit);
+
+    tasks.push(
+      (async () => {
+        const resolved: ResolvedPhoto[] = [];
+        for (const ref of segRefs) {
+          const dataUri = await fetchPhotoAsBase64(ref);
+          if (dataUri) resolved.push({ dataUri });
+        }
+        if (resolved.length > 0) photoMap.set(seg.id, resolved);
+      })()
+    );
+  }
+
+  await Promise.all(tasks);
+  return photoMap;
+}
+
+const bookingClassLabels: Record<string, string> = { first: "First", business: "Business", premium_economy: "Premium Economy", economy: "Economy" };
+
+function SegmentView({ segment, photos }: { segment: TripSegment; photos?: ResolvedPhoto[] }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const typeColor = getSegmentColor(segment.type);
   const details: string[] = [];
+  let title = "";
 
   try {
     if (segment.type === "flight") {
-      const dep = getMetaValue(meta, "departureAirport");
-      const arr = getMetaValue(meta, "arrivalAirport");
-      if (dep && arr) details.push(`${dep} > ${arr}`);
-      const fn = getMetaValue(meta, "flightNumber");
-      if (fn) details.push(`Flight ${fn}`);
-      const airline = getMetaValue(meta, "airline");
-      if (airline) details.push(airline);
-      const bookingClass = getMetaValue(meta, "bookingClass");
-      if (bookingClass) {
-        const classLabels: Record<string, string> = { first: "First", business: "Business", premium_economy: "Premium Economy", economy: "Economy" };
-        details.push(`Class: ${classLabels[bookingClass] || bookingClass}`);
-      }
-      const depTime = getMetaValue(meta, "departureTime");
-      const arrTime = getMetaValue(meta, "arrivalTime");
+      title = meta.flightNumber || segment.title || "Flight";
+      const depIata = meta.departure?.iata || meta.departureAirport || "";
+      const arrIata = meta.arrival?.iata || meta.arrivalAirport || "";
+      if (depIata && arrIata) details.push(`${depIata} > ${arrIata}`);
+      const depCity = meta.departure?.city || meta.departureAirportName || "";
+      const arrCity = meta.arrival?.city || meta.arrivalAirportName || "";
+      if (depCity && arrCity) details.push(`${depCity} > ${arrCity}`);
+      const depTime = meta.departure?.scheduledTime || meta.departureTime || "";
       if (depTime) details.push(`Departs: ${depTime}`);
+      const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
       if (arrTime) details.push(`Arrives: ${arrTime}`);
+      if (meta.bookingClass) details.push(`Class: ${bookingClassLabels[meta.bookingClass] || meta.bookingClass}`);
+      if (meta.status && meta.status !== "Scheduled") details.push(`Status: ${meta.status}`);
+      if (meta.aircraft) details.push(`Aircraft: ${meta.aircraft}`);
     } else if (segment.type === "charter" || segment.type === "charter_flight") {
-      const operator = getMetaValue(meta, "operator");
-      if (operator) details.push(`Operator: ${operator}`);
-      const aircraft = getMetaValue(meta, "aircraftType");
-      if (aircraft) details.push(`Aircraft: ${aircraft}`);
-      const tailNumber = getMetaValue(meta, "tailNumber");
-      if (tailNumber) details.push(`Tail: ${tailNumber}`);
-      const dep = getMetaValue(meta, "departureLocation");
-      const arr = getMetaValue(meta, "arrivalLocation");
+      title = meta.operator || "Private Charter";
+      const dep = meta.departureLocation || "";
+      const arr = meta.arrivalLocation || "";
       if (dep && arr) details.push(`${dep} > ${arr}`);
-      const depTime = getMetaValue(meta, "departureTime");
-      const arrTime = getMetaValue(meta, "arrivalTime");
-      if (depTime) details.push(`Departs: ${depTime}`);
-      if (arrTime) details.push(`Arrives: ${arrTime}`);
-      const fbo = getMetaValue(meta, "fboHandler");
-      if (fbo) details.push(`FBO: ${fbo}`);
+      if (meta.departureTime) details.push(`Departs: ${meta.departureTime}`);
+      if (meta.arrivalTime) details.push(`Arrives: ${meta.arrivalTime}`);
+      if (meta.aircraftType) details.push(`Aircraft: ${meta.aircraftType}`);
+      if (meta.fboHandler) details.push(`FBO: ${meta.fboHandler}`);
+      details.push("Charter");
     } else if (segment.type === "hotel") {
-      const name = getMetaValue(meta, "hotelName");
-      if (name) details.push(name);
-      const room = getMetaValue(meta, "roomType");
-      if (room) details.push(`Room: ${room}`);
-      const stars = getMetaValue(meta, "starRating");
-      if (stars && Number(stars) > 0) details.push(`${stars}-star`);
-      const checkIn = getMetaValue(meta, "checkIn");
-      const checkOut = getMetaValue(meta, "checkOut");
-      if (checkIn) details.push(`Check-in: ${checkIn}`);
-      if (checkOut) details.push(`Check-out: ${checkOut}`);
+      title = meta.hotelName || segment.title || "Hotel";
+      if (meta.checkIn && meta.checkOut) details.push(`${meta.checkIn} > ${meta.checkOut}`);
+      if (meta.roomType) details.push(`Room: ${meta.roomType}`);
+      if (meta.address) details.push(meta.address);
+      if (meta.starRating && Number(meta.starRating) > 0) details.push(`${"*".repeat(Number(meta.starRating))} star`);
     } else if (segment.type === "restaurant") {
-      const name = getMetaValue(meta, "restaurantName");
-      if (name) details.push(name);
-      const cuisine = getMetaValue(meta, "cuisine");
-      if (cuisine) details.push(`Cuisine: ${cuisine}`);
-      const guest = getMetaValue(meta, "guestName");
-      if (guest) details.push(`Guest: ${guest}`);
-      const partySize = getMetaValue(meta, "partySize");
-      if (partySize) details.push(`Party: ${partySize}`);
-    } else if (segment.type === "transport") {
-      const provider = getMetaValue(meta, "provider");
-      if (provider) details.push(`Provider: ${provider}`);
-      const tType = getMetaValue(meta, "transportType");
-      if (tType) details.push(tType.charAt(0).toUpperCase() + tType.slice(1));
-      const vehicle = getMetaValue(meta, "vehicleType");
-      if (vehicle) details.push(`Vehicle: ${vehicle}`);
-      const pickup = getMetaValue(meta, "pickupLocation");
-      const dropoff = getMetaValue(meta, "dropoffLocation");
-      if (pickup) details.push(`Pickup: ${pickup}`);
-      if (dropoff) details.push(`Dropoff: ${dropoff}`);
+      title = meta.restaurantName || segment.title || "Restaurant";
+      if (segment.startTime) details.push(`Time: ${segment.startTime}`);
+      if (meta.partySize) details.push(`Party: ${meta.partySize} guests`);
+      if (meta.address) details.push(meta.address);
+      if (meta.cuisine) details.push(`Cuisine: ${meta.cuisine}`);
     } else if (segment.type === "activity") {
-      const provider = getMetaValue(meta, "provider");
-      if (provider) details.push(`Provider: ${provider}`);
-      const category = getMetaValue(meta, "category");
-      if (category) details.push(`Category: ${category}`);
-      const meeting = getMetaValue(meta, "meetingPoint");
-      if (meeting) details.push(`Meeting: ${meeting}`);
-      const duration = getMetaValue(meta, "duration");
-      if (duration) details.push(`Duration: ${duration}`);
+      title = meta.activityName || segment.title || "Activity";
+      if (segment.startTime) details.push(`Time: ${segment.startTime}`);
+      if (meta.location) details.push(meta.location);
+      if (meta.duration) details.push(`Duration: ${meta.duration}`);
+    } else if (segment.type === "transport") {
+      title = meta.provider || meta.transportType || segment.title || "Transport";
+      const pickup = meta.pickupLocation || "";
+      const dropoff = meta.dropoffLocation || "";
+      if (pickup && dropoff) details.push(`${pickup} > ${dropoff}`);
+      if (segment.startTime) details.push(`Time: ${segment.startTime}`);
+      if (meta.driverName) details.push(`Driver: ${meta.driverName}`);
     } else if (segment.type === "note") {
-      const noteType = getMetaValue(meta, "noteType");
-      if (noteType) details.push(`[${noteType.toUpperCase()}]`);
-      const content = getMetaValue(meta, "content");
-      if (content) details.push(content.slice(0, 200));
+      title = meta.noteTitle || segment.title || "Note";
+      if (meta.noteType) details.push(`[${meta.noteType.toUpperCase()}]`);
+      if (meta.content) details.push(meta.content.slice(0, 200));
+    } else {
+      title = segment.title || segment.type || "Segment";
+      if (segment.startTime) details.push(`Time: ${segment.startTime}${segment.endTime ? ` - ${segment.endTime}` : ""}`);
     }
-
-    if (segment.startTime) details.push(`Time: ${segment.startTime}${segment.endTime ? ` - ${segment.endTime}` : ""}`);
-  } catch (err) {
+  } catch {
     details.push("(details unavailable)");
   }
 
-  const title = segment.title || segment.type || "Segment";
-  const confNum = getMetaValue(meta, "confirmationNumber") || segment.confirmationNumber || "";
+  const confNum = meta.confirmationNumber || segment.confirmationNumber || "";
   const typeLabel = segment.type === "charter_flight" ? "private flight" : (segment.type === "charter" ? "private flight" : segment.type || "other");
 
   return (
@@ -198,6 +221,13 @@ function SegmentView({ segment }: { segment: TripSegment }) {
         <Text style={s.segmentDetail}>Cost: {formatCurrency(segment.cost, segment.currency || "USD")}</Text>
       ) : null}
       {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
+      {photos && photos.length > 0 ? (
+        <View style={{ flexDirection: "row", gap: 4, marginTop: 6 }}>
+          {photos.map((p, i) => (
+            <Image key={i} src={p.dataUri} style={{ width: 60, height: 60, borderRadius: 3 }} />
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -211,7 +241,7 @@ interface PdfData {
   segments: TripSegment[];
 }
 
-function TripPdfDocument({ data }: { data: PdfData }) {
+function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<string, ResolvedPhoto[]> }) {
   const { trip, organization, advisor, client, version, segments } = data;
 
   const dayNumbers = Array.from(new Set(segments.map(s => s.dayNumber))).sort((a, b) => a - b);
@@ -254,7 +284,7 @@ function TripPdfDocument({ data }: { data: PdfData }) {
             <View key={dayNum}>
               <Text style={s.dayHeader}>{dayLabel}</Text>
               {daySegments.map((seg) => (
-                <SegmentView key={seg.id} segment={seg} />
+                <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} />
               ))}
             </View>
           );
@@ -272,5 +302,13 @@ export async function generateTripPdf(data: PdfData): Promise<NodeJS.ReadableStr
   if (!data.segments) data.segments = [];
   if (!data.version) throw new Error("No version provided for PDF generation");
   if (!data.trip) throw new Error("No trip provided for PDF generation");
-  return ReactPDF.renderToStream(<TripPdfDocument data={data} />);
+
+  let photoMap = new Map<string, ResolvedPhoto[]>();
+  try {
+    photoMap = await resolveSegmentPhotos(data.segments);
+  } catch (err) {
+    console.warn("[PDF] Failed to resolve segment photos:", err);
+  }
+
+  return ReactPDF.renderToStream(<TripPdfDocument data={data} photoMap={photoMap} />);
 }

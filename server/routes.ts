@@ -1685,157 +1685,95 @@ export async function registerRoutes(
     }
   });
 
-  // ── FlightLabs flight search proxy ──
+  // ── FlightLabs proxies ──
 
-  function parseFlightLabsLocation(locationStr: string): { city: string; iata: string } {
-    const match = locationStr?.match(/^(.+?)\s*\((\w{3})\)$/);
-    if (match) return { city: match[1].trim(), iata: match[2] };
-    return { city: locationStr || "", iata: "" };
+  function parseFlightLabsLocation(raw: string): { city: string; iata: string } {
+    const match = raw?.match(/^(.*?)\s*\(([A-Z]{3})\)$/);
+    return { city: match?.[1]?.trim() ?? raw ?? "", iata: match?.[2] ?? "" };
   }
 
-  const flMonths: Record<string, string> = {
-    Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-    Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
-  };
-  function parseFlightLabsDate(dateStr: string): string {
-    const m = dateStr?.match(/(\d{1,2})\s+(\w{3})\s+(\d{4})/);
-    if (!m) return "";
-    const month = flMonths[m[2]] || "01";
-    return `${m[3]}-${month}-${m[1].padStart(2, "0")}`;
-  }
-
-  app.post("/api/flights/search", isAuthenticated, async (req: any, res) => {
+  // Endpoint A: Flight Info by Flight Number (segment editor search)
+  app.get("/api/flights/search", isAuthenticated, async (req: any, res) => {
     try {
       const apiKey = process.env.FLIGHTLABS_API_KEY;
-      if (!apiKey) {
-        console.warn("[FlightSearch] FLIGHTLABS_API_KEY not configured");
-        return res.status(503).json({ message: "Flight search API not configured" });
-      }
-      const { flightNumber, date } = req.body;
-      if (!flightNumber || typeof flightNumber !== "string") {
-        return res.status(400).json({ message: "flightNumber required" });
-      }
-      const cleaned = flightNumber.replace(/\s+/g, "").toUpperCase();
-      const airlineCode = cleaned.replace(/[0-9]/g, "");
+      if (!apiKey) return res.status(503).json({ error: "Flight search API not configured" });
 
-      // Strategy 1: Try /flight endpoint (detailed schedule data)
-      try {
-        const params = new URLSearchParams({ access_key: apiKey, flight_number: cleaned });
-        const url = `https://app.goflightlabs.com/flight?${params}`;
-        const apiRes = await fetch(url);
-        const data = await apiRes.json();
+      const flightNumber = (req.query.flightNumber as string || "").replace(/\s+/g, "").toUpperCase();
+      const date = req.query.date as string || "";
+      if (!flightNumber) return res.status(400).json({ error: "flightNumber required" });
 
-        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
-          let flights = data.data;
-          if (date) {
-            const filtered = flights.filter((f: any) => {
-              if (!f.DATE) return false;
-              const parsed = parseFlightLabsDate(f.DATE);
-              return parsed === date;
-            });
-            if (filtered.length > 0) flights = filtered;
-          }
+      const params: Record<string, string> = { access_key: apiKey, flight_number: flightNumber };
+      if (date) params.date = date;
 
-          const today = new Date().toISOString().slice(0, 10);
-          const closestFlight = flights.find((f: any) => {
-            const parsed = parseFlightLabsDate(f.DATE);
-            return parsed >= today;
-          }) || flights[0];
+      const url = `https://www.goflightlabs.com/flight?${new URLSearchParams(params)}`;
+      const apiRes = await fetch(url);
+      const data = await apiRes.json();
 
-          const f = closestFlight;
-          const dep = parseFlightLabsLocation(f.FROM);
-          const arr = parseFlightLabsLocation(f.TO);
+      console.log("[FlightLabs] raw:", JSON.stringify(data).slice(0, 500));
 
-          let departureTime = "";
-          let arrivalTime = "";
-          const dateStr = parseFlightLabsDate(f.DATE);
-          if (dateStr && f.STD && f.STD !== "—") {
-            const timeMatch = f.STD.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-            if (timeMatch) {
-              let hours = parseInt(timeMatch[1]);
-              if (timeMatch[3]?.toUpperCase() === "PM" && hours !== 12) hours += 12;
-              if (timeMatch[3]?.toUpperCase() === "AM" && hours === 12) hours = 0;
-              departureTime = `${dateStr}T${hours.toString().padStart(2, "0")}:${timeMatch[2]}:00`;
-            }
-          }
-          if (dateStr && f.STA && f.STA !== "—") {
-            const timeMatch = f.STA.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
-            if (timeMatch) {
-              let hours = parseInt(timeMatch[1]);
-              if (timeMatch[3]?.toUpperCase() === "PM" && hours !== 12) hours += 12;
-              if (timeMatch[3]?.toUpperCase() === "AM" && hours === 12) hours = 0;
-              arrivalTime = `${dateStr}T${hours.toString().padStart(2, "0")}:${timeMatch[2]}:00`;
-            }
-          }
-
-          return res.json({
-            found: true,
-            flight: {
-              airline: airlineCode || "",
-              airlineIata: airlineCode || "",
-              flightNumber: cleaned,
-              departureAirport: dep.city,
-              departureIata: dep.iata,
-              departureTime,
-              departureTerminal: "",
-              departureGate: "",
-              arrivalAirport: arr.city,
-              arrivalIata: arr.iata,
-              arrivalTime,
-              arrivalTerminal: "",
-              arrivalGate: "",
-              status: f.STATUS || "",
-              aircraft: f.AIRCRAFT || "",
-            },
-          });
-        }
-      } catch (e) {
-        console.warn("[FlightSearch] /flight endpoint failed, trying fallback:", e);
+      if (!Array.isArray(data?.data) || data.data.length === 0) {
+        return res.json({ error: "No flight found." });
       }
 
-      // Strategy 2: Fallback to advanced-real-time-flights (live tracking data)
-      try {
-        const rtParams = new URLSearchParams({ access_key: apiKey, flight_iata: cleaned });
-        const rtUrl = `https://app.goflightlabs.com/advanced-real-time-flights?${rtParams}`;
-        const rtRes = await fetch(rtUrl);
-        const rtData = await rtRes.json();
+      const raw = data.data[0];
+      const dep = parseFlightLabsLocation(raw.FROM || "");
+      const arr = parseFlightLabsLocation(raw.TO || "");
 
-        const allFlights = rtData?.data || (Array.isArray(rtData) ? rtData : []);
-        const matched = allFlights.filter((f: any) =>
-          f.flight_iata?.toUpperCase() === cleaned
-        );
-
-        if (matched.length > 0) {
-          const f = matched[0];
-          return res.json({
-            found: true,
-            flight: {
-              airline: f.airline_iata || airlineCode || "",
-              airlineIata: f.airline_iata || airlineCode || "",
-              flightNumber: f.flight_iata || cleaned,
-              departureAirport: "",
-              departureIata: f.dep_iata || "",
-              departureTime: "",
-              departureTerminal: "",
-              departureGate: "",
-              arrivalAirport: "",
-              arrivalIata: f.arr_iata || "",
-              arrivalTime: "",
-              arrivalTerminal: "",
-              arrivalGate: "",
-              status: f.status || "",
-              aircraft: f.aircraft_icao || "",
-            },
-          });
-        }
-      } catch (e) {
-        console.warn("[FlightSearch] advanced-real-time fallback also failed:", e);
-      }
-
-      res.json({ found: false, flight: null });
+      res.json({
+        flight: {
+          flightNumber,
+          airline: "",
+          aircraft: raw.AIRCRAFT || "",
+          departure: {
+            city: dep.city,
+            iata: dep.iata,
+            scheduledTime: raw.STD && raw.STD !== "—" ? raw.STD : "",
+            actualTime: raw.ATD && raw.ATD !== "—" ? raw.ATD : null,
+          },
+          arrival: {
+            city: arr.city,
+            iata: arr.iata,
+            scheduledTime: raw.STA && raw.STA !== "—" ? raw.STA : "",
+          },
+          date: raw.DATE || "",
+          status: raw.STATUS || "",
+        },
+      });
     } catch (error) {
-      console.error("[FlightSearch] Error:", error);
-      res.status(500).json({ message: "Flight search failed" });
+      console.error("[FlightLabs] search error:", error);
+      res.json({ error: "No flight found." });
+    }
+  });
+
+  // Endpoint B: Real-Time Flights (background monitoring)
+  app.get("/api/flights/status", isAuthenticated, async (req: any, res) => {
+    try {
+      const apiKey = process.env.FLIGHTLABS_API_KEY;
+      if (!apiKey) return res.status(503).json({ error: "Flight status API not configured" });
+
+      const flightIata = (req.query.flightIata as string || "").replace(/\s+/g, "").toUpperCase();
+      if (!flightIata) return res.status(400).json({ error: "flightIata required" });
+
+      const params = new URLSearchParams({ access_key: apiKey, flightIata, limit: "1" });
+      const url = `https://www.goflightlabs.com/flights?${params}`;
+      const apiRes = await fetch(url);
+      const data = await apiRes.json();
+
+      console.log("[FlightLabs] status raw:", JSON.stringify(data).slice(0, 500));
+
+      const flights = data?.data || (Array.isArray(data) ? data : []);
+      if (flights.length === 0) return res.json({ error: "No flight status found." });
+
+      const f = flights[0];
+      res.json({
+        status: f.status || f.flight_status || "",
+        depIata: f.dep_iata || "",
+        arrIata: f.arr_iata || "",
+        updatedAt: f.updated || null,
+      });
+    } catch (error) {
+      console.error("[FlightLabs] status error:", error);
+      res.json({ error: "No flight status found." });
     }
   });
 

@@ -199,30 +199,87 @@ function SegmentCard({
   const isCommercialFlight = segment.type === "flight";
   const isCharterFlight = segment.type === "charter_flight" || segment.type === "charter";
 
-  let displayTitle: string;
-  let displaySubtitle: string;
-  if (segment.type === "note") {
-    displayTitle = segment.title || "Note";
-    displaySubtitle = "";
-  } else if (isCommercialFlight) {
-    const parts = [meta.airline, meta.flightNumber].filter(Boolean);
-    displayTitle = parts.length > 0 ? parts.join(" · ") : (segment.title || "Flight");
-    const depAirport = meta.departureAirport || "";
-    const arrAirport = meta.arrivalAirport || "";
-    displaySubtitle = depAirport && arrAirport ? `${depAirport} → ${arrAirport}` : "";
+  const noteTypeLabels: Record<string, string> = { info: "Info", tip: "Tip", important: "Important", warning: "Warning" };
+  const formatShortDate = (d: string | null | undefined) => {
+    if (!d) return "";
+    try { return format(new Date(d), "d MMM"); } catch { return d; }
+  };
+  const photos: string[] = (() => {
+    const refs = meta.photos || meta.photoRefs || [];
+    if (!Array.isArray(refs)) return [];
+    const limit = segment.type === "hotel" ? 3 : 2;
+    return refs.slice(0, limit).map((r: string) => `/api/places/photo?ref=${encodeURIComponent(r)}`);
+  })();
+
+  let primaryText = "";
+  let secondaryText = "";
+  const extraLines: string[] = [];
+  const badges: { label: string; variant?: "secondary" | "outline" }[] = [];
+
+  if (isCommercialFlight) {
+    primaryText = meta.flightNumber || segment.title || "Flight";
+    const depIata = meta.departure?.iata || meta.departureAirport || "";
+    const arrIata = meta.arrival?.iata || meta.arrivalAirport || "";
+    if (depIata && arrIata) secondaryText = `${depIata} \u2192 ${arrIata}`;
+    const depCity = meta.departure?.city || meta.departureAirportName || "";
+    const arrCity = meta.arrival?.city || meta.arrivalAirportName || "";
+    if (depCity && arrCity) extraLines.push(`${depCity} \u2192 ${arrCity}`);
+    if (meta.departure?.scheduledTime) extraLines.push(`Departs: ${meta.departure.scheduledTime}`);
+    else if (meta.departureTime) extraLines.push(`Departs: ${meta.departureTime}`);
+    if (meta.status && meta.status !== "Scheduled") badges.push({ label: meta.status, variant: "outline" });
+    if (meta.bookingClass) badges.push({ label: bookingClassLabels[meta.bookingClass] || meta.bookingClass, variant: "secondary" });
   } else if (isCharterFlight) {
-    displayTitle = meta.operator || "Private Flight";
+    primaryText = meta.operator || "Private Charter";
     const depLoc = meta.departureLocation || "";
     const arrLoc = meta.arrivalLocation || "";
-    displaySubtitle = depLoc && arrLoc ? `${depLoc} → ${arrLoc}` : "";
+    if (depLoc && arrLoc) secondaryText = `${depLoc} \u2192 ${arrLoc}`;
+    badges.push({ label: "Charter", variant: "secondary" });
+  } else if (segment.type === "hotel") {
+    primaryText = meta.hotelName || segment.title || "Hotel";
+    const ci = formatShortDate(meta.checkIn);
+    const co = formatShortDate(meta.checkOut);
+    if (ci && co) secondaryText = `${ci} \u2192 ${co}`;
+    if (meta.roomType) extraLines.push(`Room: ${meta.roomType}`);
+    if (meta.address) extraLines.push(meta.address);
+    if (meta.starRating && Number(meta.starRating) > 0) {
+      extraLines.push(`${meta.starRating}-star`);
+    }
+  } else if (segment.type === "restaurant") {
+    primaryText = meta.restaurantName || segment.title || "Restaurant";
+    const timePart = segment.startTime || "";
+    const partyPart = meta.partySize ? `${meta.partySize} guests` : "";
+    secondaryText = [timePart, partyPart].filter(Boolean).join(" \u00b7 ");
+    if (meta.address) extraLines.push(meta.address);
+    if (meta.cuisine) badges.push({ label: meta.cuisine, variant: "outline" });
+  } else if (segment.type === "activity") {
+    primaryText = meta.activityName || segment.title || "Activity";
+    const timePart = segment.startTime || "";
+    const locPart = meta.location || "";
+    secondaryText = [timePart, locPart].filter(Boolean).join(" \u00b7 ");
+    if (meta.duration) extraLines.push(`Duration: ${meta.duration}`);
+  } else if (segment.type === "transport") {
+    primaryText = meta.provider || meta.transportType || segment.title || "Transport";
+    const pickup = meta.pickupLocation || "";
+    const dropoff = meta.dropoffLocation || "";
+    if (pickup && dropoff) secondaryText = `${pickup} \u2192 ${dropoff}`;
+    if (meta.driverName) extraLines.push(`Driver: ${meta.driverName}`);
+  } else if (segment.type === "note") {
+    primaryText = meta.noteTitle || segment.title || "Note";
+    const noteLabel = noteTypeLabels[meta.noteType || ""] || "";
+    if (noteLabel) badges.push({ label: noteLabel, variant: "outline" });
+    if (meta.content) extraLines.push(meta.content.slice(0, 100));
   } else {
-    displayTitle = deriveSegmentTitle(segment.type, meta) || segment.title || cfg.label;
-    displaySubtitle = deriveSegmentSubtitle(segment.type, meta) || segment.subtitle || "";
+    primaryText = deriveSegmentTitle(segment.type, meta) || segment.title || cfg.label;
+    secondaryText = deriveSegmentSubtitle(segment.type, meta) || segment.subtitle || "";
   }
 
-  const depTime = isCommercialFlight ? meta.departureTime : (isCharterFlight ? meta.departureTime : null);
-  const arrTime = isCommercialFlight ? meta.arrivalTime : (isCharterFlight ? meta.arrivalTime : null);
-  const timeDisplay = depTime && arrTime ? `${depTime} → ${arrTime}` : depTime || arrTime || null;
+  const depTime = isCommercialFlight
+    ? (meta.departure?.scheduledTime || meta.departureTime)
+    : isCharterFlight ? meta.departureTime : null;
+  const arrTime = isCommercialFlight
+    ? (meta.arrival?.scheduledTime || meta.arrivalTime)
+    : isCharterFlight ? meta.arrivalTime : null;
+  const timeDisplay = depTime && arrTime ? `${depTime} \u2192 ${arrTime}` : depTime || arrTime || null;
 
   return (
     <Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>
@@ -234,24 +291,17 @@ function SegmentCard({
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-sm font-medium truncate" data-testid={`text-segment-title-${segment.id}`}>{displayTitle}</p>
-                {isCommercialFlight && meta.bookingClass && (
-                  <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`badge-class-${segment.id}`}>
-                    {bookingClassLabels[meta.bookingClass] || meta.bookingClass}
-                  </Badge>
-                )}
-                {isCharterFlight && (
-                  <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`badge-charter-${segment.id}`}>
-                    <Diamond className="w-2.5 h-2.5 mr-0.5" />
-                    Charter
-                  </Badge>
-                )}
+                <p className={`font-medium truncate ${isCommercialFlight && meta.flightNumber ? "text-base" : "text-sm"}`} data-testid={`text-segment-title-${segment.id}`}>{primaryText}</p>
+                {badges.map((b, i) => (
+                  <Badge key={i} variant={b.variant || "secondary"} className="text-[10px] shrink-0">{b.label}</Badge>
+                ))}
               </div>
-              {displaySubtitle && (
-                <p className="text-xs text-muted-foreground truncate mt-0.5">
-                  {displaySubtitle}
-                </p>
+              {secondaryText && (
+                <p className="text-xs text-muted-foreground truncate mt-0.5">{secondaryText}</p>
               )}
+              {extraLines.map((line, i) => (
+                <p key={i} className="text-[11px] text-muted-foreground/70 truncate mt-0.5">{line}</p>
+              ))}
             </div>
             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" style={{ visibility: "visible" }}>
               <Button size="icon" variant="ghost" onClick={() => onEdit(segment)} data-testid={`button-edit-segment-${segment.id}`}>
@@ -292,10 +342,15 @@ function SegmentCard({
               </span>
             )}
           </div>
-          {(segment.notes || (segment.type === "note" && meta.content)) && (
-            <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">
-              {segment.type === "note" && meta.content ? meta.content : segment.notes}
-            </p>
+          {photos.length > 0 && (
+            <div className="flex gap-1.5 mt-2">
+              {photos.map((src, i) => (
+                <img key={i} src={src} alt="" className="w-[80px] h-[80px] rounded-md object-cover" loading="lazy" data-testid={`img-segment-photo-${segment.id}-${i}`} />
+              ))}
+            </div>
+          )}
+          {segment.type !== "note" && segment.notes && (
+            <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{segment.notes}</p>
           )}
           {segment.type === "flight" && tracking && (
             <div className="flex items-center gap-2 mt-2 flex-wrap" data-testid={`flight-status-${segment.id}`}>

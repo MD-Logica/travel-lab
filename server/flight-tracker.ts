@@ -74,7 +74,7 @@ function normalizeFlightNumber(fn: string): { airlineCode: string; number: strin
   return { airlineCode: "", number: cleaned };
 }
 
-export async function fetchFlightStatus(flightNumber: string, date: string): Promise<FlightStatus | null> {
+export async function fetchFlightStatus(flightNumber: string, _date: string): Promise<FlightStatus | null> {
   const apiKey = process.env.FLIGHTLABS_API_KEY;
   if (!apiKey) {
     console.warn("[FlightTracker] FLIGHTLABS_API_KEY not configured");
@@ -87,32 +87,19 @@ export async function fetchFlightStatus(flightNumber: string, date: string): Pro
   try {
     const params = new URLSearchParams({
       access_key: apiKey,
-      flight_iata: flightIata,
+      flightIata: flightIata,
+      limit: "1",
     });
-    const url = `https://app.goflightlabs.com/advanced-real-time-flights?${params}`;
+    const url = `https://www.goflightlabs.com/flights?${params}`;
     const res = await fetch(url);
     const data = await res.json();
 
-    let flights: FlightLabsFlight[] = [];
-    if (data?.data && Array.isArray(data.data)) {
-      flights = data.data;
-    } else if (Array.isArray(data)) {
-      flights = data;
-    }
+    console.log("[FlightTracker] raw:", JSON.stringify(data).slice(0, 500));
+
+    const flights = data?.data || (Array.isArray(data) ? data : []);
 
     if (flights.length === 0) {
-      const schedParams = new URLSearchParams({
-        access_key: apiKey,
-        flight_iata: flightIata,
-      });
-      const schedUrl = `https://app.goflightlabs.com/flights?${schedParams}`;
-      const schedRes = await fetch(schedUrl);
-      const schedData = await schedRes.json();
-      flights = schedData?.data || (Array.isArray(schedData) ? schedData : []);
-    }
-
-    if (flights.length === 0) {
-      console.warn(`[FlightTracker] No data for ${flightIata} on ${date}`);
+      console.warn(`[FlightTracker] No data for ${flightIata}`);
       return null;
     }
 
