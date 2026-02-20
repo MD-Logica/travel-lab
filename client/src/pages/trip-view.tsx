@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
+import { calculateLayover, isRedEye, journeyTotalTime } from "@/lib/journey-utils";
 
 const segmentIcons: Record<string, typeof Plane> = {
   flight: Plane, charter: Diamond, charter_flight: Diamond, hotel: Hotel, transport: Car,
@@ -421,6 +422,183 @@ function GenericCard({ segment }: { segment: TripSegment }) {
   );
 }
 
+function JourneyViewCard({ legs }: { legs: TripSegment[] }) {
+  const firstLeg = legs[0];
+  const lastLeg = legs[legs.length - 1];
+  const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
+  const lastMeta = (lastLeg.metadata || {}) as Record<string, any>;
+
+  const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+  const destIata = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+  const stopsCount = legs.length - 1;
+  const totalTime = journeyTotalTime(firstMeta, lastMeta);
+
+  const firstDepTime = firstMeta.departure?.scheduledTime || firstMeta.departureTime || "";
+  const lastArrTime = lastMeta.arrival?.scheduledTime || lastMeta.arrivalTime || "";
+
+  const layovers: (ReturnType<typeof calculateLayover>)[] = [];
+  for (let i = 0; i < legs.length - 1; i++) {
+    const legAMeta = (legs[i].metadata || {}) as Record<string, any>;
+    const legBMeta = (legs[i + 1].metadata || {}) as Record<string, any>;
+    layovers.push(calculateLayover(legAMeta, legBMeta));
+  }
+
+  const hasRedEye = firstMeta.departureTimeLocal
+    ? isRedEye(firstMeta.departureTimeLocal)
+    : firstMeta.departureTime ? isRedEye(firstMeta.departureTime) : false;
+
+  return (
+    <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-journey-${firstLeg.journeyId}`}>
+      <div className="flex items-stretch">
+        <div className="w-1.5 bg-sky-500 shrink-0" />
+        <div className="flex-1 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-sky-50 dark:bg-sky-950/40">
+              <Plane className="w-3.5 h-3.5 text-sky-600" strokeWidth={1.5} />
+            </div>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Connecting Flight</span>
+            <Badge variant="outline" className="text-[10px]">
+              {stopsCount} stop{stopsCount > 1 ? "s" : ""}
+            </Badge>
+            {hasRedEye && (
+              <Badge variant="outline" className="text-[10px] border-indigo-300 text-indigo-600 dark:border-indigo-700 dark:text-indigo-400">
+                Red-eye
+              </Badge>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3 mb-3">
+            <div className="text-center">
+              <p className="text-2xl font-serif font-semibold tracking-tight">{originIata}</p>
+              {firstDepTime && <p className="text-xs text-muted-foreground mt-0.5">{firstDepTime}</p>}
+            </div>
+            <div className="flex-1 flex flex-col items-center gap-1">
+              <div className="flex items-center w-full gap-1">
+                <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
+                {legs.slice(0, -1).map((leg, i) => {
+                  const m = (leg.metadata || {}) as Record<string, any>;
+                  const stopIata = m.arrival?.iata || m.arrivalAirport || "?";
+                  return (
+                    <span key={i} className="flex items-center gap-1">
+                      <span className="text-[10px] font-medium text-muted-foreground bg-muted/80 rounded px-1.5 py-0.5">{stopIata}</span>
+                      <div className="w-4 border-t border-dashed border-muted-foreground/30" />
+                    </span>
+                  );
+                })}
+                <Plane className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+              </div>
+              {totalTime && (
+                <span className="text-[10px] text-muted-foreground/60">{totalTime} total</span>
+              )}
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-serif font-semibold tracking-tight">{destIata}</p>
+              {lastArrTime && <p className="text-xs text-muted-foreground mt-0.5">{lastArrTime}</p>}
+            </div>
+          </div>
+
+          <div className="space-y-0 border-l-2 border-sky-200/60 dark:border-sky-800/40 ml-3 pl-3">
+            {legs.map((leg, i) => {
+              const meta = (leg.metadata || {}) as Record<string, any>;
+              const depIata = meta.departure?.iata || meta.departureAirport || "";
+              const arrIata = meta.arrival?.iata || meta.arrivalAirport || "";
+              const depTime = meta.departure?.scheduledTime || meta.departureTime || "";
+              const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
+              const flightNum = meta.flightNumber || leg.title || "Flight";
+              const airline = meta.airline || "";
+              return (
+                <div key={leg.id}>
+                  {i > 0 && layovers[i - 1] && (
+                    <div className="py-1.5 flex items-center gap-2 text-[11px]">
+                      <div className={`w-2 h-2 rounded-full ${
+                        layovers[i - 1]!.flag === "tight" ? "bg-amber-500" :
+                        layovers[i - 1]!.flag === "long" ? "bg-muted-foreground/40" :
+                        "bg-emerald-500"
+                      }`} />
+                      <span className={`font-medium ${
+                        layovers[i - 1]!.flag === "tight" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                      }`}>
+                        {layovers[i - 1]!.display} layover
+                      </span>
+                      {layovers[i - 1]!.flag === "tight" && (
+                        <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600">Tight</Badge>
+                      )}
+                      {layovers[i - 1]!.airportChange && (
+                        <Badge variant="outline" className="text-[9px] border-red-300 text-red-600">Airport change</Badge>
+                      )}
+                    </div>
+                  )}
+                  {i > 0 && !layovers[i - 1] && (
+                    <div className="py-1.5 flex items-center gap-2 text-[11px] text-muted-foreground/50">
+                      <div className="w-2 h-2 rounded-full bg-muted-foreground/20" />
+                      <span>Connection</span>
+                    </div>
+                  )}
+                  <div className="py-2" data-testid={`view-journey-leg-${leg.id}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{flightNum}</span>
+                      {airline && <span className="text-xs text-muted-foreground">{airline}</span>}
+                      {meta.bookingClass && (
+                        <Badge variant="secondary" className="text-[9px]">{bookingClassLabels[meta.bookingClass] || meta.bookingClass}</Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                      {depIata && arrIata && <span>{depIata} &rarr; {arrIata}</span>}
+                      {depTime && arrTime && (
+                        <>
+                          <span className="text-muted-foreground/40">&middot;</span>
+                          <span>{depTime} &rarr; {arrTime}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ViewDayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+
+function buildViewDayRenderItems(daySegments: TripSegment[]): ViewDayRenderItem[] {
+  const items: ViewDayRenderItem[] = [];
+  const seenJourneyIds = new Set<string>();
+  const journeyGroups = new Map<string, TripSegment[]>();
+
+  for (const seg of daySegments) {
+    if (seg.journeyId) {
+      if (!journeyGroups.has(seg.journeyId)) {
+        journeyGroups.set(seg.journeyId, []);
+      }
+      journeyGroups.get(seg.journeyId)!.push(seg);
+    }
+  }
+
+  for (const seg of daySegments) {
+    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+      if (!seenJourneyIds.has(seg.journeyId)) {
+        seenJourneyIds.add(seg.journeyId);
+        const legs = journeyGroups.get(seg.journeyId)!;
+        legs.sort((a, b) => {
+          const aLeg = (a.metadata as any)?.legNumber || 0;
+          const bLeg = (b.metadata as any)?.legNumber || 0;
+          return aLeg - bLeg;
+        });
+        items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else {
+      items.push({ kind: "segment", segment: seg });
+    }
+  }
+  return items;
+}
+
 function SegmentView({ segment }: { segment: TripSegment }) {
   switch (segment.type) {
     case "flight": return <FlightCard segment={segment} />;
@@ -473,9 +651,12 @@ function DayAccordion({
             className="overflow-hidden"
           >
             <div className="pb-6 space-y-3">
-              {segments.map((seg) => (
-                <SegmentView key={seg.id} segment={seg} />
-              ))}
+              {buildViewDayRenderItems(segments).map((item) => {
+                if (item.kind === "journey") {
+                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} />;
+                }
+                return <SegmentView key={item.segment.id} segment={item.segment} />;
+              })}
             </div>
           </motion.div>
         )}
