@@ -1,0 +1,198 @@
+Replace all FlightLabs API integration with AeroDataBox.
+Add AERODATABOX_API_KEY to Replit Secrets.
+This key will be provided by the user — prompt them to add it
+before running any code.
+
+Do not change anything outside of what is described in this prompt.
+Do not remove any existing functionality unrelated to flight search.
+
+─── API DETAILS ─────────────────────────────────────────────────────────────
+
+AeroDataBox is accessed via API.Market.
+Base URL: https://aerodatabox.p.rapidapi.com
+Authentication: two headers required on every request:
+  X-RapidAPI-Key: [AERODATABOX_API_KEY]
+  X-RapidAPI-Host: aerodatabox.p.rapidapi.com
+
+─── ENDPOINT A: FLIGHT SEARCH (segment editor) ──────────────────────────────
+
+Used when an advisor searches for a flight by number in the
+commercial flight segment editor.
+
+Endpoint: GET /flights/number/{flightNumber}/{date}
+  {flightNumber} — IATA flight number e.g. BA001
+  {date} — date in YYYY-MM-DD format e.g. 2026-02-21
+  Query params: withAircraftImage=false, withLocation=false
+
+If no date is provided by the advisor, use today's date as default.
+
+Example full URL:
+  https://aerodatabox.p.rapidapi.com/flights/number/BA001/2026-02-21
+    ?withAircraftImage=false&withLocation=false
+
+AeroDataBox returns an array. Use the first result.
+Response fields to map:
+  result[0].airline.name          → airline
+  result[0].number                → flightNumber (full IATA e.g. "BA 1")
+  result[0].departure.airport.iata → departure.iata
+  result[0].departure.airport.name → departure.airport
+  result[0].departure.scheduledTime.local → departure.scheduledTime
+  result[0].arrival.airport.iata  → arrival.iata
+  result[0].arrival.airport.name  → arrival.airport
+  result[0].arrival.scheduledTime.local → arrival.scheduledTime
+  result[0].status                → status
+  result[0].aircraft.model        → aircraft (if present)
+
+Rebuild /api/flights/search server route:
+  GET /api/flights/search
+  Accepts: flightNumber (string), date (YYYY-MM-DD, optional)
+
+  const flightNumber = (req.query.flightNumber as string || "")
+    .replace(/\s+/g, "").toUpperCase();
+  const date = req.query.date as string
+    || new Date().toISOString().split("T")[0];
+
+  const url =
+    `https://aerodatabox.p.rapidapi.com/flights/number/${flightNumber}/${date}`
+    + `?withAircraftImage=false&withLocation=false`;
+
+  const apiRes = await fetch(url, {
+    headers: {
+      "X-RapidAPI-Key": process.env.AERODATABOX_API_KEY!,
+      "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+    },
+  });
+
+  const data = await apiRes.json();
+  console.log("[AeroDataBox] raw:", JSON.stringify(data).slice(0, 500));
+
+  if (!Array.isArray(data) || data.length === 0) {
+    return res.json({ error: "No flight found for this number and date." });
+  }
+
+  const raw = data[0];
+
+  // scheduledTime.local is in format "2026-02-21 15:45+00:00"
+  // Extract just the time portion HH:mm for display
+  const parseTime = (dt: string) => dt ? dt.split(" ")[1]?.slice(0,5) : "";
+  const parseDate = (dt: string) => dt ? dt.split(" ")[0] : "";
+
+  const depScheduled = raw.departure?.scheduledTime?.local || "";
+  const arrScheduled = raw.arrival?.scheduledTime?.local || "";
+
+  res.json({
+    flight: {
+      flightNumber: raw.number || flightNumber,
+      airline: raw.airline?.name || "",
+      aircraft: raw.aircraft?.model || "",
+      status: raw.status || "",
+      departure: {
+        iata: raw.departure?.airport?.iata || "",
+        airport: raw.departure?.airport?.name || "",
+        scheduledTime: parseTime(depScheduled),
+        scheduledDate: parseDate(depScheduled) || date,
+      },
+      arrival: {
+        iata: raw.arrival?.airport?.iata || "",
+        airport: raw.arrival?.airport?.name || "",
+        scheduledTime: parseTime(arrScheduled),
+        scheduledDate: parseDate(arrScheduled) || date,
+      },
+    },
+  });
+
+─── APPLYING FLIGHT DATA IN THE FRONTEND ────────────────────────────────────
+
+In segment-editor.tsx, update applyFlightData to correctly
+populate all fields from the AeroDataBox response:
+
+  const applyFlightData = () => {
+    if (!searchResult) return;
+    const f = searchResult;
+    onChange({
+      ...metadata,
+      flightNumber: f.flightNumber || metadata.flightNumber,
+      airline: f.airline || metadata.airline,
+      aircraft: f.aircraft || metadata.aircraft,
+      status: f.status || "",
+      departureAirport: f.departure?.iata || metadata.departureAirport,
+      departureAirportName: f.departure?.airport || "",
+      departureDate: f.departure?.scheduledDate || searchDate || "",
+      departureTime: f.departure?.scheduledTime || "",
+      arrivalAirport: f.arrival?.iata || metadata.arrivalAirport,
+      arrivalAirportName: f.arrival?.airport || "",
+      arrivalDate: f.arrival?.scheduledDate || searchDate || "",
+      arrivalTime: f.arrival?.scheduledTime || "",
+      departure: f.departure,
+      arrival: f.arrival,
+    });
+    setSearchResult(null);
+  };
+
+─── ENDPOINT B: FLIGHT STATUS MONITORING (background job) ───────────────────
+
+Used by the background monitoring job from Prompt A3 to check
+live status of flights that are within the monitoring window.
+
+Endpoint: GET /flights/number/{flightNumber}/{date}
+  Same endpoint as search — AeroDataBox returns real-time status
+  when called for today's date.
+
+Update the fetchFlightStatus function in flight-tracker.ts:
+
+  const date = new Date().toISOString().split("T")[0];
+  const url =
+    `https://aerodatabox.p.rapidapi.com/flights/number/${flightNumber}/${date}`
+    + `?withAircraftImage=false&withLocation=false`;
+
+  const res = await fetch(url, {
+    headers: {
+      "X-RapidAPI-Key": process.env.AERODATABOX_API_KEY!,
+      "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+    },
+  });
+
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length === 0) return null;
+
+  const raw = data[0];
+
+  Map to FlightStatus object:
+    status: derive from raw.status:
+      "Scheduled" → "scheduled"
+      "EnRoute" → "on_time" or "delayed" depending on delay
+      "Landed" → "landed"
+      "Cancelled" → "cancelled"
+      "Diverted" → "cancelled"
+      default → "unknown"
+    departureGate: raw.departure?.gate || undefined
+    departureTerminal: raw.departure?.terminal?.name || undefined
+    arrivalGate: raw.arrival?.gate || undefined
+    arrivalTerminal: raw.arrival?.terminal?.name || undefined
+    scheduledDeparture: raw.departure?.scheduledTime?.utc || undefined
+    actualDeparture: raw.departure?.actualTime?.utc || undefined
+    estimatedDeparture: raw.departure?.revisedTime?.utc || undefined
+    scheduledArrival: raw.arrival?.scheduledTime?.utc || undefined
+    actualArrival: raw.arrival?.actualTime?.utc || undefined
+    estimatedArrival: raw.arrival?.revisedTime?.utc || undefined
+    departureDelay: raw.departure?.delay || undefined
+    arrivalDelay: raw.arrival?.delay || undefined
+
+─── REMOVE FLIGHTLABS ───────────────────────────────────────────────────────
+
+Remove all references to FLIGHTLABS_API_KEY from the codebase.
+Remove the FlightLabs-specific parseFlightLabsLocation helper function.
+Remove the /api/flights/diagnose endpoint if still present.
+The FLIGHTLABS_API_KEY secret can remain in Replit Secrets for now
+— do not touch Replit Secrets, only remove code references.
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+Test with flight "BA001" and date "2026-02-22":
+  1. Result card appears showing:
+     - Airline: British Airways
+     - Route: LHR → destination IATA
+     - Departure and arrival times populated
+  2. Click "Use this flight"
+  3. All fields auto-populate correctly in the segment editor
+  4. Airline name field is populated (this was blank with FlightLabs)
