@@ -59,9 +59,9 @@ function normalizeFlightNumber(fn: string): string {
 }
 
 export async function fetchFlightStatus(flightNumber: string, _date: string): Promise<FlightStatus | null> {
-  const apiKey = process.env.AERODATABOX_API_KEY;
+  const apiKey = process.env.AERODATABOX_RAPIDAPI_KEY;
   if (!apiKey) {
-    console.warn("[FlightTracker] AERODATABOX_API_KEY not configured");
+    console.warn("[FlightTracker] AERODATABOX_RAPIDAPI_KEY not configured");
     return null;
   }
 
@@ -69,13 +69,30 @@ export async function fetchFlightStatus(flightNumber: string, _date: string): Pr
   const date = new Date().toISOString().split("T")[0];
 
   try {
-    const url = `https://aerodatabox.p.api.market/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
+    const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
     const res = await fetch(url, {
       headers: {
-        "x-magicapi-key": apiKey,
+        "X-RapidAPI-Key": apiKey,
+        "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
       },
     });
-    const data = await res.json();
+
+    if (res.status === 204 || res.status === 404) {
+      console.warn(`[FlightTracker] No data for ${flightIata} (${res.status})`);
+      return null;
+    }
+
+    const text = await res.text();
+    if (!text || !text.trim()) {
+      console.warn(`[FlightTracker] Empty response for ${flightIata}`);
+      return null;
+    }
+
+    let data: any;
+    try { data = JSON.parse(text); } catch {
+      console.warn(`[FlightTracker] Invalid JSON for ${flightIata}`);
+      return null;
+    }
 
     console.log("[FlightTracker] raw:", JSON.stringify(data).slice(0, 500));
 

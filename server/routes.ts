@@ -1699,20 +1699,32 @@ export async function registerRoutes(
   // Flight search (segment editor)
   app.get("/api/flights/search", isAuthenticated, async (req: any, res) => {
     try {
-      const apiKey = process.env.AERODATABOX_API_KEY;
+      const apiKey = process.env.AERODATABOX_RAPIDAPI_KEY;
       if (!apiKey) return res.status(503).json({ error: "Flight search API not configured" });
 
       const flightNumber = (req.query.flightNumber as string || "").replace(/\s+/g, "").toUpperCase();
       const date = req.query.date as string || new Date().toISOString().split("T")[0];
       if (!flightNumber) return res.status(400).json({ error: "flightNumber required" });
 
-      const url = `https://aerodatabox.p.api.market/flights/number/${flightNumber}/${date}?withAircraftImage=false&withLocation=false`;
+      const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightNumber}/${date}?withAircraftImage=false&withLocation=false`;
       const apiRes = await fetch(url, {
         headers: {
-          "x-magicapi-key": apiKey,
+          "X-RapidAPI-Key": apiKey,
+          "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
         },
       });
-      const data = await apiRes.json();
+
+      if (apiRes.status === 204 || apiRes.status === 404) {
+        return res.json({ error: "No flight found for this number and date." });
+      }
+
+      const text = await apiRes.text();
+      if (!text || !text.trim()) {
+        return res.json({ error: "No flight found for this number and date." });
+      }
+
+      let data: any;
+      try { data = JSON.parse(text); } catch { return res.json({ error: "No flight found for this number and date." }); }
 
       console.log("[AeroDataBox] raw:", JSON.stringify(data).slice(0, 500));
 
@@ -1753,20 +1765,32 @@ export async function registerRoutes(
   // Flight status (background monitoring proxy)
   app.get("/api/flights/status", isAuthenticated, async (req: any, res) => {
     try {
-      const apiKey = process.env.AERODATABOX_API_KEY;
+      const apiKey = process.env.AERODATABOX_RAPIDAPI_KEY;
       if (!apiKey) return res.status(503).json({ error: "Flight status API not configured" });
 
       const flightIata = (req.query.flightIata as string || "").replace(/\s+/g, "").toUpperCase();
       if (!flightIata) return res.status(400).json({ error: "flightIata required" });
 
       const date = new Date().toISOString().split("T")[0];
-      const url = `https://aerodatabox.p.api.market/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
+      const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
       const apiRes = await fetch(url, {
         headers: {
-          "x-magicapi-key": apiKey,
+          "X-RapidAPI-Key": apiKey,
+          "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
         },
       });
-      const data = await apiRes.json();
+
+      if (apiRes.status === 204 || apiRes.status === 404) {
+        return res.json({ error: "No flight status found." });
+      }
+
+      const text = await apiRes.text();
+      if (!text || !text.trim()) {
+        return res.json({ error: "No flight status found." });
+      }
+
+      let data: any;
+      try { data = JSON.parse(text); } catch { return res.json({ error: "No flight status found." }); }
 
       console.log("[AeroDataBox] status raw:", JSON.stringify(data).slice(0, 500));
 
