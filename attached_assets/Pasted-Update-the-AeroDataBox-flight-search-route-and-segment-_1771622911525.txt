@@ -1,0 +1,82 @@
+Update the AeroDataBox flight search route and segment editor
+to capture and store UTC times alongside local times.
+This is required for accurate layover calculations in FIX-15.
+Only change what is described — nothing else.
+
+─── CHANGE 1: server/routes.ts — update /api/flights/search ─────────────────
+
+Find the block starting at line ~1736:
+  const depScheduled = raw.departure?.scheduledTime?.local || "";
+  const arrScheduled = raw.arrival?.scheduledTime?.local || "";
+
+Replace with:
+  const depScheduled = raw.departure?.scheduledTime?.local || "";
+  const depUtc       = raw.departure?.scheduledTime?.utc   || "";
+  const arrScheduled = raw.arrival?.scheduledTime?.local   || "";
+  const arrUtc       = raw.arrival?.scheduledTime?.utc     || "";
+
+Then find the res.json({ flight: { ... } }) block and update
+the departure and arrival objects to include the new fields:
+
+  departure: {
+    iata:           raw.departure?.airport?.iata || "",
+    airport:        raw.departure?.airport?.name || "",
+    scheduledTime:  parseAeroTime(depScheduled),
+    scheduledDate:  parseAeroDate(depScheduled) || date,
+    scheduledUtc:   depUtc,       // full UTC ISO e.g. "2026-02-21T14:45:00Z"
+    scheduledLocal: depScheduled, // full local e.g. "2026-02-21 15:45+01:00"
+  },
+  arrival: {
+    iata:           raw.arrival?.airport?.iata || "",
+    airport:        raw.arrival?.airport?.name || "",
+    scheduledTime:  parseAeroTime(arrScheduled),
+    scheduledDate:  parseAeroDate(arrScheduled) || date,
+    scheduledUtc:   arrUtc,       // full UTC ISO string
+    scheduledLocal: arrScheduled, // full local string with offset
+  },
+
+Do not change parseAeroTime or parseAeroDate — they are still
+used for the display fields (HH:mm) and remain correct.
+Do not change any other part of the route.
+
+─── CHANGE 2: client/src/components/segment-editor.tsx ──────────────────────
+
+Find the applyFlightData function at line ~171.
+It currently sets these metadata fields from f.departure and
+f.arrival. Add four new fields:
+
+  onChange({
+    ...metadata,
+    flightNumber:        f.flightNumber || metadata.flightNumber,
+    airline:             f.airline || metadata.airline,
+    aircraft:            f.aircraft || metadata.aircraft,
+    status:              f.status || "",
+    departureAirport:    f.departure?.iata || metadata.departureAirport,
+    departureAirportName:f.departure?.airport || "",
+    departureDate:       f.departure?.scheduledDate || searchDate || "",
+    departureTime:       f.departure?.scheduledTime || "",
+    departureTimeUtc:    f.departure?.scheduledUtc  || "",  // ← ADD
+    departureTimeLocal:  f.departure?.scheduledLocal || "", // ← ADD
+    arrivalAirport:      f.arrival?.iata || metadata.arrivalAirport,
+    arrivalAirportName:  f.arrival?.airport || "",
+    arrivalDate:         f.arrival?.scheduledDate || searchDate || "",
+    arrivalTime:         f.arrival?.scheduledTime || "",
+    arrivalTimeUtc:      f.arrival?.scheduledUtc  || "",   // ← ADD
+    arrivalTimeLocal:    f.arrival?.scheduledLocal || "",  // ← ADD
+    departure:           f.departure,
+    arrival:             f.arrival,
+  });
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+1. Search flight "BA831" in the segment editor
+2. Click "Use this flight"
+3. Open browser dev tools → Network tab → find the segments
+   POST or PATCH call → inspect the metadata payload
+4. Confirm all four new fields are present and non-empty:
+   departureTimeUtc:   "20XX-XX-XXT[time]Z"
+   departureTimeLocal: "20XX-XX-XX [time]+[offset]"
+   arrivalTimeUtc:     "20XX-XX-XXT[time]Z"
+   arrivalTimeLocal:   "20XX-XX-XX [time]+[offset]"
+5. Confirm existing fields (departureTime, arrivalTime as HH:mm,
+   departureDate, arrivalDate) are unchanged and still saving

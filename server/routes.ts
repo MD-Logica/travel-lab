@@ -1823,7 +1823,9 @@ export async function registerRoutes(
 
       const raw = data[0];
       const depScheduled = raw.departure?.scheduledTime?.local || "";
+      const depUtc       = raw.departure?.scheduledTime?.utc   || "";
       const arrScheduled = raw.arrival?.scheduledTime?.local || "";
+      const arrUtc       = raw.arrival?.scheduledTime?.utc     || "";
 
       res.json({
         flight: {
@@ -1836,12 +1838,16 @@ export async function registerRoutes(
             airport: raw.departure?.airport?.name || "",
             scheduledTime: parseAeroTime(depScheduled),
             scheduledDate: parseAeroDate(depScheduled) || date,
+            scheduledUtc: depUtc,
+            scheduledLocal: depScheduled,
           },
           arrival: {
             iata: raw.arrival?.airport?.iata || "",
             airport: raw.arrival?.airport?.name || "",
             scheduledTime: parseAeroTime(arrScheduled),
             scheduledDate: parseAeroDate(arrScheduled) || date,
+            scheduledUtc: arrUtc,
+            scheduledLocal: arrScheduled,
           },
         },
       });
