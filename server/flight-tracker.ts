@@ -69,11 +69,10 @@ export async function fetchFlightStatus(flightNumber: string, _date: string): Pr
   const date = new Date().toISOString().split("T")[0];
 
   try {
-    const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
+    const url = `https://aerodatabox.p.api.market/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
     const res = await fetch(url, {
       headers: {
-        "X-RapidAPI-Key": apiKey,
-        "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+        "x-magicapi-key": apiKey,
       },
     });
     const data = await res.json();

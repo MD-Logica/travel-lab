@@ -1706,11 +1706,10 @@ export async function registerRoutes(
       const date = req.query.date as string || new Date().toISOString().split("T")[0];
       if (!flightNumber) return res.status(400).json({ error: "flightNumber required" });
 
-      const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightNumber}/${date}?withAircraftImage=false&withLocation=false`;
+      const url = `https://aerodatabox.p.api.market/flights/number/${flightNumber}/${date}?withAircraftImage=false&withLocation=false`;
       const apiRes = await fetch(url, {
         headers: {
-          "X-RapidAPI-Key": apiKey,
-          "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+          "x-magicapi-key": apiKey,
         },
       });
       const data = await apiRes.json();
@@ -1761,11 +1760,10 @@ export async function registerRoutes(
       if (!flightIata) return res.status(400).json({ error: "flightIata required" });
 
       const date = new Date().toISOString().split("T")[0];
-      const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
+      const url = `https://aerodatabox.p.api.market/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
       const apiRes = await fetch(url, {
         headers: {
-          "X-RapidAPI-Key": apiKey,
-          "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+          "x-magicapi-key": apiKey,
         },
       });
       const data = await apiRes.json();
