@@ -171,25 +171,28 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
   const applyFlightData = () => {
     if (!searchResult) return;
     const f = searchResult;
-    const dateForFields = searchDate || metadata.departureDate || "";
-    const depTime = f.departure?.scheduledTime || "";
-    const arrTime = f.arrival?.scheduledTime || "";
+
+    const depTime = f.departureDateTime || f.departure?.scheduledTime || "";
+    const arrTime = f.arrivalDateTime || f.arrival?.scheduledTime || "";
+    const depDate = f.departureDate || searchDate || "";
+    const arrDate = f.departureDate || searchDate || "";
+
     onChange({
       ...metadata,
-      airline: f.airline || metadata.airline,
       flightNumber: f.flightNumber || metadata.flightNumber,
-      departure: f.departure,
-      arrival: f.arrival,
+      airline: f.airline || metadata.airline,
       aircraft: f.aircraft || metadata.aircraft,
       status: f.status || "",
       departureAirport: f.departure?.iata || metadata.departureAirport,
       departureAirportName: f.departure?.city || metadata.departureAirportName || "",
-      departureDate: dateForFields || metadata.departureDate || "",
-      departureTime: depTime || metadata.departureTime || "",
+      departureDate: depDate,
+      departureTime: depTime.includes("T") ? depTime.split("T")[1].slice(0, 5) : depTime,
       arrivalAirport: f.arrival?.iata || metadata.arrivalAirport,
       arrivalAirportName: f.arrival?.city || metadata.arrivalAirportName || "",
-      arrivalDate: dateForFields || metadata.arrivalDate || "",
-      arrivalTime: arrTime || metadata.arrivalTime || "",
+      arrivalDate: arrDate,
+      arrivalTime: arrTime.includes("T") ? arrTime.split("T")[1].slice(0, 5) : arrTime,
+      departure: f.departure,
+      arrival: f.arrival,
     });
     setSearchResult(null);
   };
@@ -240,6 +243,9 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
             <Check className="w-3.5 h-3.5 mr-1.5" />
             Use this flight
           </Button>
+          <p className="text-xs text-muted-foreground/60 mt-1">
+            Route and times auto-filled. Please enter airline name manually.
+          </p>
         </div>
       )}
 

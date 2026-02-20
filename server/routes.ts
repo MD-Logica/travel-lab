@@ -1702,8 +1702,10 @@ export async function registerRoutes(
       const date = req.query.date as string || "";
       if (!flightNumber) return res.status(400).json({ error: "flightNumber required" });
 
-      const params: Record<string, string> = { access_key: apiKey, flight_number: flightNumber };
-      if (date) params.date = date;
+      const params: Record<string, string> = {
+        access_key: apiKey,
+        flight_number: flightNumber,
+      };
 
       const url = `https://www.goflightlabs.com/flight?${new URLSearchParams(params)}`;
       const apiRes = await fetch(url);
@@ -1719,6 +1721,11 @@ export async function registerRoutes(
       const dep = parseFlightLabsLocation(raw.FROM || "");
       const arr = parseFlightLabsLocation(raw.TO || "");
 
+      const depDateTime = date && raw.STD && raw.STD !== "\u2014"
+        ? `${date}T${raw.STD}` : "";
+      const arrDateTime = date && raw.STA && raw.STA !== "\u2014"
+        ? `${date}T${raw.STA}` : "";
+
       res.json({
         flight: {
           flightNumber,
@@ -1727,14 +1734,17 @@ export async function registerRoutes(
           departure: {
             city: dep.city,
             iata: dep.iata,
-            scheduledTime: raw.STD && raw.STD !== "—" ? raw.STD : "",
-            actualTime: raw.ATD && raw.ATD !== "—" ? raw.ATD : null,
+            scheduledTime: raw.STD && raw.STD !== "\u2014" ? raw.STD : "",
+            actualTime: raw.ATD && raw.ATD !== "\u2014" ? raw.ATD : null,
           },
           arrival: {
             city: arr.city,
             iata: arr.iata,
-            scheduledTime: raw.STA && raw.STA !== "—" ? raw.STA : "",
+            scheduledTime: raw.STA && raw.STA !== "\u2014" ? raw.STA : "",
           },
+          departureDateTime: depDateTime,
+          arrivalDateTime: arrDateTime,
+          departureDate: date || "",
           date: raw.DATE || "",
           status: raw.STATUS || "",
         },

@@ -1,0 +1,135 @@
+Fix two specific issues with the FlightLabs flight search integration.
+The API is now returning results but fields are not populating correctly.
+
+─── ISSUE 1: DATE PARAMETER ─────────────────────────────────────────────────
+
+The date field is optional on the FlightLabs /flight endpoint and
+its behavior with future dates is unreliable. Make the following change:
+
+In /api/flights/search on the server:
+  Remove the date parameter from the FlightLabs API call entirely.
+  Do not pass date to FlightLabs at all — it causes "not found" errors
+  for future flights.
+
+  Keep accepting the date query parameter from the frontend, but use
+  it only to populate the departure and arrival date fields in the
+  normalized response — not to filter the API call.
+
+  Updated params object:
+    const params: Record<string, string> = {
+      access_key: apiKey,
+      flight_number: flightNumber,
+      // date intentionally omitted — unreliable for future flights
+    };
+
+  Then use the user-supplied date when building the response:
+    departureDate: date || "",   ← from the frontend query param
+    arrivalDate: date || "",     ← same date as default
+
+─── ISSUE 2: FIELD MAPPING — ALL-CAPS RESPONSE ──────────────────────────────
+
+The FlightLabs /flight endpoint returns ALL-CAPS field names and
+time-only strings, not full datetime strings. The current field
+mapping is incomplete. Fix the normalized response as follows:
+
+In /api/flights/search, update the res.json() response:
+
+  const dep = parseFlightLabsLocation(raw.FROM || "");
+  const arr = parseFlightLabsLocation(raw.TO || "");
+
+  // STD and STA are "HH:mm" strings e.g. "15:45"
+  // Combine with the user-supplied date to get full datetime
+  const depDateTime = date && raw.STD && raw.STD !== "—"
+    ? `${date}T${raw.STD}` : "";
+  const arrDateTime = date && raw.STA && raw.STA !== "—"
+    ? `${date}T${raw.STA}` : "";
+
+  res.json({
+    flight: {
+      flightNumber,
+      airline: "",           // FlightLabs /flight endpoint does not
+                             // return airline name — leave blank,
+                             // advisor can fill in manually
+      aircraft: raw.AIRCRAFT || "",
+      departure: {
+        city: dep.city,
+        iata: dep.iata,
+        scheduledTime: raw.STD && raw.STD !== "—" ? raw.STD : "",
+        actualTime: raw.ATD && raw.ATD !== "—" ? raw.ATD : null,
+      },
+      arrival: {
+        city: arr.city,
+        iata: arr.iata,
+        scheduledTime: raw.STA && raw.STA !== "—" ? raw.STA : "",
+      },
+      // Pass combined datetime strings for field population
+      departureDateTime: depDateTime,
+      arrivalDateTime: arrDateTime,
+      departureDate: date || "",
+      date: raw.DATE || "",
+      status: raw.STATUS || "",
+    },
+  });
+
+─── ISSUE 3: FRONTEND — APPLY FLIGHT DATA ───────────────────────────────────
+
+In segment-editor.tsx, the applyFlightData function needs to correctly
+handle the FlightLabs response format.
+
+Find the applyFlightData function inside FlightFields and update it:
+
+  const applyFlightData = () => {
+    if (!searchResult) return;
+    const f = searchResult;
+
+    // Use departureDateTime if available (combined date + time)
+    // Fall back to just the time string if no date was provided
+    const depTime = f.departureDateTime || f.departure?.scheduledTime || "";
+    const arrTime = f.arrivalDateTime || f.arrival?.scheduledTime || "";
+    const depDate = f.departureDate || searchDate || "";
+    const arrDate = f.departureDate || searchDate || "";
+
+    onChange({
+      ...metadata,
+      flightNumber: f.flightNumber || metadata.flightNumber,
+      airline: f.airline || metadata.airline,
+      aircraft: f.aircraft || metadata.aircraft,
+      status: f.status || "",
+      departureAirport: f.departure?.iata || metadata.departureAirport,
+      departureAirportName: f.departure?.city || metadata.departureAirportName || "",
+      departureDate: depDate,
+      departureTime: depTime.includes("T") ? depTime.split("T")[1].slice(0,5) : depTime,
+      arrivalAirport: f.arrival?.iata || metadata.arrivalAirport,
+      arrivalAirportName: f.arrival?.city || metadata.arrivalAirportName || "",
+      arrivalDate: arrDate,
+      arrivalTime: arrTime.includes("T") ? arrTime.split("T")[1].slice(0,5) : arrTime,
+      departure: f.departure,
+      arrival: f.arrival,
+    });
+    setSearchResult(null);
+  };
+
+─── SHOW AIRLINE FIELD AS MANUALLY REQUIRED ─────────────────────────────────
+
+In the flight search result card display, add a small note since
+airline name cannot be auto-populated from this API endpoint:
+
+  After the result card "Use this flight" button, add:
+    <p className="text-xs text-muted-foreground/60 mt-1">
+      ✓ Route and times auto-filled. Please enter airline name manually.
+    </p>
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+Test with flight "BA001" leaving the date blank:
+  1. Result card appears with route (dep iata → arr iata)
+  2. Click "Use this flight"
+  3. Departure airport, arrival airport fields populated
+  4. If date was entered: departure time and arrival time populated
+  5. Airline field is blank but clearly editable
+
+Test again with a date entered (e.g. 2026-02-21):
+  1. Same result card appears
+  2. Click "Use this flight"
+  3. Departure and arrival date fields populated with entered date
+  4. Time fields populated with STD/STA times from FlightLabs
