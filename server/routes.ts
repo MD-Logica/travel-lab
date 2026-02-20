@@ -9,9 +9,32 @@ import crypto from "crypto";
 import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
 import { checkSingleFlight } from "./flight-tracker";
+import { differenceInCalendarDays } from "date-fns";
 import webpush from "web-push";
 
 const objectStorageService = new ObjectStorageService();
+
+function assignDayFromDate(
+  departureDate: string,
+  tripStartDate: Date | string,
+  tripEndDate: Date | string | null
+): number {
+  const dep = new Date(departureDate + "T00:00:00");
+  const startStr = typeof tripStartDate === "string"
+    ? tripStartDate : tripStartDate.toISOString();
+  const start = new Date(startStr.split("T")[0] + "T00:00:00");
+  const diff = differenceInCalendarDays(dep, start);
+  const day = Math.max(1, diff + 1);
+
+  if (tripEndDate) {
+    const endStr = typeof tripEndDate === "string"
+      ? tripEndDate : tripEndDate.toISOString();
+    const end = new Date(endStr.split("T")[0] + "T00:00:00");
+    const maxDay = differenceInCalendarDays(end, start) + 1;
+    return Math.min(day, maxDay);
+  }
+  return day;
+}
 
 if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
   webpush.setVapidDetails(
@@ -784,8 +807,23 @@ export async function registerRoutes(
         notes: z.string().optional().nullable(),
         photos: z.array(z.string()).optional().nullable(),
         metadata: z.record(z.any()).optional().nullable(),
+        journeyId: z.string().optional().nullable(),
       });
       const parsed = segmentSchema.parse(req.body);
+
+      const trip = await storage.getTrip(req.params.tripId, req._orgId);
+      if (
+        trip?.startDate &&
+        (parsed.type === "flight" || parsed.type === "charter_flight") &&
+        (parsed.metadata as any)?.departureDate
+      ) {
+        parsed.dayNumber = assignDayFromDate(
+          (parsed.metadata as any).departureDate,
+          trip.startDate,
+          trip.endDate ?? null
+        );
+      }
+
       const segment = await storage.createTripSegment({
         ...parsed,
         versionId: req.params.versionId,
@@ -819,8 +857,25 @@ export async function registerRoutes(
         notes: z.string().optional().nullable(),
         photos: z.array(z.string()).optional().nullable(),
         metadata: z.record(z.any()).optional().nullable(),
+        journeyId: z.string().optional().nullable(),
       });
       const parsed = updateSchema.parse(req.body);
+
+      const segType = parsed.type || req.body.type;
+      if (
+        (segType === "flight" || segType === "charter_flight") &&
+        (parsed.metadata as any)?.departureDate
+      ) {
+        const trip = await storage.getTrip(req.params.tripId, req._orgId);
+        if (trip?.startDate) {
+          parsed.dayNumber = assignDayFromDate(
+            (parsed.metadata as any).departureDate,
+            trip.startDate,
+            trip.endDate ?? null
+          );
+        }
+      }
+
       const segment = await storage.updateTripSegment(req.params.segmentId, req._orgId, parsed);
       if (!segment) return res.status(404).json({ message: "Segment not found" });
       await syncFlightTracking(segment, req.params.tripId, req._orgId).catch(e => console.error("Flight tracking sync error:", e));
