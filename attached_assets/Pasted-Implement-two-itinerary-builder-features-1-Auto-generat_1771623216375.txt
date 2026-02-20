@@ -1,0 +1,428 @@
+Implement two itinerary builder features:
+  1. Auto-generate day slots from trip dates; auto-assign
+     flight segments to the correct day based on departure date
+  2. Connected flight journeys — group legs under one card
+     with layover time, flags, and warnings
+
+Prerequisite: PROMPT FIX-AERO3 must be applied first.
+The layover calculation depends on departureTimeUtc and
+arrivalTimeUtc being present in segment metadata.
+
+─── PART 1: DAY SLOT AUTO-GENERATION ───────────────────────────────────────
+
+In trip-edit.tsx, find where the day list is built.
+Currently days are stored manually and the advisor must click
+"Add Day" to create each slot.
+
+Replace the day list derivation with this logic:
+
+  import { eachDayOfInterval, differenceInCalendarDays,
+           format } from "date-fns";
+
+  const tripStart = trip.startDate ? new Date(trip.startDate) : null;
+  const tripEnd   = trip.endDate   ? new Date(trip.endDate)   : null;
+
+  const dayList = useMemo(() => {
+    // Date-anchored: auto-generate every day start→end
+    if (tripStart && tripEnd) {
+      return eachDayOfInterval({ start: tripStart, end: tripEnd })
+        .map((date, i) => ({
+          dayNumber: i + 1,
+          date,
+          label: `Day ${i + 1} — ${format(date, "EEEE, MMMM d")}`,
+        }));
+    }
+    // Flexible: use manually added days as before
+    return manualDays;
+  }, [trip.startDate, trip.endDate, manualDays]);
+
+When using auto-generated days, hide the "Add Day" button —
+the advisor cannot add days beyond the trip end date.
+They should edit the trip end date instead (via FIX-11 Edit
+Trip Details) to extend the itinerary.
+
+HYBRID — start date only, no end date:
+  Show all day numbers that have at least one segment,
+  plus one empty day slot after the last populated day.
+  Keep the "Add Day" button visible in this mode.
+
+NO DATES — keep existing behavior exactly as-is.
+
+─── PART 2: AUTO-ASSIGN FLIGHT TO CORRECT DAY ───────────────────────────────
+
+In the server segment creation handler:
+  POST /api/trips/:tripId/versions/:versionId/segments
+  PATCH /api/trips/:tripId/segments/:segmentId
+
+After the segment data is received, if:
+  - segment type is "flight" or "charter_flight"
+  - metadata.departureDate is present (YYYY-MM-DD)
+  - the trip has a startDate
+
+Then override the dayNumber silently:
+
+  import { differenceInCalendarDays } from "date-fns";
+
+  function assignDayFromDate(
+    departureDate: string,
+    tripStartDate: Date,
+    tripEndDate: Date | null
+  ): number {
+    const dep   = new Date(departureDate + "T00:00:00");
+    const start = new Date(
+      tripStartDate.toISOString().split("T")[0] + "T00:00:00"
+    );
+    const diff = differenceInCalendarDays(dep, start);
+    const day  = Math.max(1, diff + 1);
+
+    if (tripEndDate) {
+      const end = new Date(
+        tripEndDate.toISOString().split("T")[0] + "T00:00:00"
+      );
+      const maxDay = differenceInCalendarDays(end, start) + 1;
+      return Math.min(day, maxDay);
+    }
+    return day;
+  }
+
+  // In the route handler, after parsing req.body:
+  const trip = await storage.getTrip(tripId, orgId);
+  if (
+    trip?.startDate &&
+    (segmentType === "flight" || segmentType === "charter_flight") &&
+    metadata?.departureDate
+  ) {
+    segmentData.dayNumber = assignDayFromDate(
+      metadata.departureDate,
+      trip.startDate,
+      trip.endDate ?? null
+    );
+  }
+
+Apply this override to both POST and PATCH handlers.
+Do this silently — no response field indicating it happened.
+The client will see the segment appear in the correct day slot.
+
+─── PART 3: JOURNEY ID — DATA MODEL ─────────────────────────────────────────
+
+Add journeyId to the segments table:
+
+  ALTER TABLE trip_segments
+    ADD COLUMN IF NOT EXISTS journey_id varchar;
+
+Add to shared/schema.ts using Drizzle ORM syntax:
+  journeyId: varchar("journey_id"),
+
+Segments sharing the same journeyId are legs of one journey.
+journeyId is a UUID generated client-side when the first leg
+is saved. The second leg receives the same journeyId.
+Solo flights have journeyId = null.
+
+─── PART 4: "+ ADD CONNECTING FLIGHT" BUTTON ────────────────────────────────
+
+In segment-editor.tsx, in FlightFields, after the flight
+search result card is shown and "Use this flight" is clicked,
+show a secondary button below the applied flight details:
+
+  const [connectionMode, setConnectionMode] = useState(false);
+  const [journeyId, setJourneyId] = useState<string | null>(null);
+
+  // Show after applyFlightData() has been called and
+  // metadata.flightNumber is populated:
+  {metadata.flightNumber && !connectionMode && (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="w-full mt-2"
+      onClick={() => {
+        const id = crypto.randomUUID();
+        setJourneyId(id);
+        setConnectionMode(true);
+        // Pass journeyId up so it's saved with this leg:
+        onChange({ ...metadata, journeyId: id, legNumber: 1 });
+      }}
+      data-testid="button-add-connecting-flight"
+    >
+      <Plus className="w-3.5 h-3.5 mr-1.5" />
+      Add connecting flight
+    </Button>
+  )}
+
+When connectionMode is true, render a second FlightFields
+panel below the first with:
+  - Header: "Connecting Flight (Leg 2)"
+  - searchNumber pre-cleared (advisor searches new flight)
+  - searchDate pre-filled with metadata.arrivalDate (from leg 1)
+  - A small hint label below the date:
+      "Departing from {metadata.arrivalAirport} —
+       pre-fill departure airport after searching"
+
+When the advisor selects the connecting flight and clicks
+"Use this flight" for leg 2, store:
+  onChange({ ...leg2metadata, journeyId, legNumber: 2 });
+
+Allow up to 3 legs (cover most real-world connections).
+Show "Add another connection" after leg 2 is applied,
+using legNumber: 3.
+
+Pass journeyId through to the segment save payload so it
+is stored in the database journey_id column.
+
+─── PART 5: JOURNEY GROUPING LOGIC ──────────────────────────────────────────
+
+In trip-edit.tsx, before rendering segments for a day,
+group them by journeyId:
+
+  type SegmentGroup =
+    | { type: "solo";    segment: TripSegment }
+    | { type: "journey"; legs: TripSegment[] };
+
+  function groupSegments(segs: TripSegment[]): SegmentGroup[] {
+    const journeyMap = new Map<string, TripSegment[]>();
+    const result: SegmentGroup[] = [];
+
+    for (const seg of segs) {
+      if (seg.journeyId) {
+        const existing = journeyMap.get(seg.journeyId);
+        if (existing) {
+          existing.push(seg);
+        } else {
+          const group: TripSegment[] = [seg];
+          journeyMap.set(seg.journeyId, group);
+          result.push({ type: "journey", legs: group });
+        }
+      } else {
+        result.push({ type: "solo", segment: seg });
+      }
+    }
+
+    // Sort legs within each journey by legNumber
+    for (const g of result) {
+      if (g.type === "journey") {
+        g.legs.sort((a, b) =>
+          ((a.metadata as any)?.legNumber || 1) -
+          ((b.metadata as any)?.legNumber || 1)
+        );
+      }
+    }
+    return result;
+  }
+
+Render solo segments exactly as before.
+Render journey groups with the JourneyCard component below.
+
+─── PART 6: LAYOVER CALCULATION HELPERS ─────────────────────────────────────
+
+Add these pure utility functions in a new file:
+  client/src/lib/journey-utils.ts
+
+  import { differenceInMinutes, parseISO } from "date-fns";
+
+  export interface LayoverInfo {
+    minutes: number;
+    display: string;        // "1h 25m"
+    flag: "tight" | "long" | "normal";
+    airportChange: boolean;
+    leg1ArrivalIata: string;
+    leg2DepartureIata: string;
+  }
+
+  export function calculateLayover(
+    leg1Meta: Record<string, any>,
+    leg2Meta: Record<string, any>
+  ): LayoverInfo | null {
+    const arrUtc = leg1Meta.arrivalTimeUtc;
+    const depUtc = leg2Meta.departureTimeUtc;
+
+    if (!arrUtc || !depUtc) return null;
+
+    const arr = parseISO(arrUtc);
+    const dep = parseISO(depUtc);
+    const minutes = differenceInMinutes(dep, arr);
+
+    if (minutes < 0) return null; // data error, skip
+
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    const display = h > 0 ? `${h}h ${m}m` : `${m}m`;
+
+    const flag: LayoverInfo["flag"] =
+      minutes < 60  ? "tight"  :
+      minutes > 240 ? "long"   : "normal";
+
+    const leg1ArrivalIata   = leg1Meta.arrivalAirport  || "";
+    const leg2DepartureIata = leg2Meta.departureAirport || "";
+    const airportChange = (
+      !!leg1ArrivalIata &&
+      !!leg2DepartureIata &&
+      leg1ArrivalIata !== leg2DepartureIata
+    );
+
+    return { minutes, display, flag, airportChange,
+             leg1ArrivalIata, leg2DepartureIata };
+  }
+
+  export function isRedEye(localTimeString: string): boolean {
+    // localTimeString: "2026-02-21 23:00+01:00" or "23:00"
+    const timePart = localTimeString.includes(" ")
+      ? localTimeString.split(" ")[1]?.slice(0, 5)
+      : localTimeString.slice(0, 5);
+    if (!timePart) return false;
+    const [h] = timePart.split(":").map(Number);
+    return h >= 20 || h < 5;
+  }
+
+  export function journeyTotalTime(
+    firstLegMeta: Record<string, any>,
+    lastLegMeta:  Record<string, any>
+  ): string | null {
+    const depUtc = firstLegMeta.departureTimeUtc;
+    const arrUtc = lastLegMeta.arrivalTimeUtc;
+    if (!depUtc || !arrUtc) return null;
+    const mins = differenceInMinutes(parseISO(arrUtc), parseISO(depUtc));
+    if (mins <= 0) return null;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
+─── PART 7: JOURNEYCARD — ITINERARY BUILDER ─────────────────────────────────
+
+Create component: client/src/components/journey-card.tsx
+
+Import calculateLayover, isRedEye, journeyTotalTime
+from "@/lib/journey-utils".
+
+Props:
+  legs: TripSegment[]   (sorted by legNumber)
+  onEdit?: (seg: TripSegment) => void
+  onDelete?: (segId: string) => void
+
+Layout:
+
+  ┌──────────────────────────────────────────────┐
+  │ ✈ [DEP IATA] → [ARR IATA of last leg]       │
+  │   via [intermediate IATAs]  ·  Total: Xh Ym  │
+  ├──────────────────────────────────────────────┤
+  │  [AIRLINE] [FLIGHT#]  🌙(if red-eye)         │
+  │  [Dep Airport] ([IATA])  [DEP TIME local]    │
+  │  [Arr Airport] ([IATA])  [ARR TIME local]    │
+  ├── layover separator ─────────────────────────┤
+  │  🕐 Xh Ym layover at [IATA]                  │
+  │  [TIGHT CONNECTION badge if < 60min]         │
+  │  [⚠ Airport change warning if different]     │
+  ├──────────────────────────────────────────────┤
+  │  (repeat for each subsequent leg)            │
+  └──────────────────────────────────────────────┘
+
+LAYOVER SEPARATOR between legs:
+  <div className="flex items-center gap-2 py-2 px-3
+    bg-muted/40 border-y border-border/40 text-xs">
+    <Clock className="w-3.5 h-3.5 text-muted-foreground
+      shrink-0" />
+    <span className="text-muted-foreground">
+      {layover.display} layover
+      at {layover.leg1ArrivalIata}
+    </span>
+    {layover.flag === "tight" && (
+      <Badge className="ml-auto text-[10px] bg-amber-100
+        text-amber-800 border-amber-300">
+        Tight connection
+      </Badge>
+    )}
+  </div>
+
+AIRPORT CHANGE WARNING (when airportChange is true):
+  Show between the layover line and the next leg:
+  <div className="flex items-center gap-1.5 px-3 py-1.5
+    bg-red-50 dark:bg-red-950/30 border-y border-red-200
+    dark:border-red-900 text-xs text-red-700
+    dark:text-red-400">
+    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+    Airport change required:
+    {layover.leg1ArrivalIata} → {layover.leg2DepartureIata}
+    — allow extra transfer time
+  </div>
+
+RED-EYE: check isRedEye(meta.departureTimeLocal).
+Show 🌙 inline after the flight number:
+  <span title="Red-eye / overnight flight"
+    className="text-xs">🌙</span>
+
+─── PART 8: JOURNEY DISPLAY — CLIENT PREVIEW (trip-view.tsx) ────────────────
+
+Apply the same groupSegments() logic in trip-view.tsx.
+
+For journey groups, render a richer JourneyViewCard component.
+Use full airport names (meta.departureAirportName) instead of
+IATA codes where available for the client-facing view.
+Fall back to IATA if the name is missing.
+
+Layout — luxury card style, always fully expanded:
+
+  ┌──────────────────────────────────────────────┐
+  │  [Origin City] → [Destination City]          │
+  │  via [Stopover City]  ·  Total: Xh Ym        │
+  ├──────────────────────────────────────────────┤
+  │  ✈ [Airline full name]  [Flight#]  🌙        │
+  │     [Full Departure Airport Name]            │
+  │     Departs [local time]                     │
+  │     [Full Arrival Airport Name]              │
+  │     Arrives [local time]                     │
+  ├── Layover: Xh Ym at [Full Airport Name] ─────┤
+  │  [TIGHT CONNECTION badge if applicable]      │
+  │  [⚠ Airport change warning if applicable]   │
+  ├──────────────────────────────────────────────┤
+  │  (next leg same structure)                   │
+  └──────────────────────────────────────────────┘
+
+All flags (tight connection, airport change, red-eye)
+appear in the client preview too.
+Style attractively — amber for tight, red for airport change,
+neutral moon icon for red-eye. Not alarming, but clear.
+
+─── PART 9: JOURNEY IN PDF ───────────────────────────────────────────────────
+
+In the PDF export, apply the same groupSegments() logic.
+Render journey groups as a single block.
+
+Use text labels only (no emoji in PDF):
+  "TIGHT CONNECTION" instead of badge
+  "Red-eye / overnight" as plain text label
+  "Airport change required: LHR → LGW" as plain text
+
+Show layover time between legs with a simple divider line.
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+DAY AUTO-ASSIGNMENT:
+1. Create trip: start Feb 1, end Feb 7
+2. Open itinerary builder — Days 1 through 7 all appear
+   automatically without clicking "Add Day"
+3. Add a flight with departure date Feb 4
+4. Flight appears in Day 4 silently — no prompt
+
+CONNECTIONS:
+5. Add a commercial flight segment, search BA831, apply it
+6. "+ Add connecting flight" button appears below the result
+7. Click it — a second search panel appears, date pre-filled
+   with leg 1 arrival date
+8. Search and apply the connecting flight
+9. Both legs saved — displayed as single journey card in builder
+10. Layover time calculated and shown between legs
+
+FLAGS:
+11. Add two flights with < 60 min between arrival and departure
+    → "Tight connection" amber badge appears
+12. Add two flights routing through different airports in
+    same city → red airport change warning appears
+13. Add a flight departing at 22:30 local → 🌙 red-eye icon
+
+CLIENT PREVIEW:
+14. Open preview link — journey card shows with full airport
+    names, all flags visible, luxury styling
+
+PDF:
+15. Download PDF — journey renders as single block with
+    plain-text layover and flag labels

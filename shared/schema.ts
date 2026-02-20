@@ -137,6 +137,7 @@ export const tripSegments = pgTable("trip_segments", {
   notes: text("notes"),
   photos: text("photos").array(),
   metadata: jsonb("metadata"),
+  journeyId: varchar("journey_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
