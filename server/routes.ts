@@ -442,12 +442,21 @@ export async function registerRoutes(
   app.get("/api/trips", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const profile = req._profile;
+      const statusFilter = req.query.status as string | undefined;
+
       if (profile.role === "owner" || profile.canViewAllClients) {
-        const tripsWithClients = await storage.getTripsWithClientByOrg(req._orgId);
+        if (statusFilter === "archived") {
+          const tripsWithClients = await storage.getTripsWithClientByStatus(req._orgId, "archived");
+          return res.json(tripsWithClients);
+        }
+        const tripsWithClients = await storage.getTripsWithClientByOrg(req._orgId, "archived");
         return res.json(tripsWithClients);
       }
-      const tripsWithClients = await storage.getTripsByAdvisor(req._orgId, profile.id);
-      res.json(tripsWithClients);
+      const allTrips = await storage.getTripsByAdvisor(req._orgId, profile.id);
+      if (statusFilter === "archived") {
+        return res.json(allTrips.filter(t => t.status === "archived"));
+      }
+      res.json(allTrips.filter(t => t.status !== "archived"));
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch trips" });
     }

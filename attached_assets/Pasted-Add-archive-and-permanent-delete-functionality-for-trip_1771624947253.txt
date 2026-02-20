@@ -1,0 +1,108 @@
+Add archive and permanent delete functionality for trips.
+Currently the delete route exists server-side but is not
+exposed anywhere in the UI.
+
+─── SCHEMA CHANGE ───────────────────────────────────────────────────────────
+
+The trip_status enum already includes "cancelled". We will
+reuse the existing status field for archiving — no migration needed.
+An "archived" status will be added to the enum:
+
+  ALTER TYPE trip_status ADD VALUE IF NOT EXISTS 'archived';
+
+Add to shared/schema.ts tripStatusEnum:
+  "archived" as a valid value alongside the existing ones.
+
+─── SERVER: ENSURE DELETE ROUTE WORKS ───────────────────────────────────────
+
+The DELETE /api/trips/:id route already exists at line ~529
+in routes.ts. Confirm storage.deleteTrip cascades and removes
+all associated versions, segments, and documents.
+No change needed here unless cascade is missing.
+
+─── UI: ARCHIVE & DELETE IN TRIP EDITOR ─────────────────────────────────────
+
+In trip-edit.tsx, in the header action buttons area, add a
+danger zone dropdown using DropdownMenu. Place it after the
+Share button, styled as a ghost icon button with MoreVertical
+or a small chevron. Only show to advisors and owners.
+
+  <DropdownMenu>
+    <DropdownMenuTrigger asChild>
+      <Button variant="ghost" size="icon"
+        data-testid="button-trip-danger-menu">
+        <MoreVertical className="w-4 h-4" />
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuItem
+        onClick={() => archiveTripMutation.mutate()}
+        data-testid="button-archive-trip"
+      >
+        <Archive className="w-3.5 h-3.5 mr-2
+          text-muted-foreground" />
+        Archive trip
+      </DropdownMenuItem>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem
+        className="text-destructive focus:text-destructive"
+        onClick={() => setConfirmDeleteOpen(true)}
+        data-testid="button-delete-trip"
+      >
+        <Trash2 className="w-3.5 h-3.5 mr-2" />
+        Delete permanently
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
+
+ARCHIVE mutation:
+  PATCH /api/trips/:id with { status: "archived" }
+  On success: navigate to /trips
+
+DELETE: show a confirmation dialog first:
+  Title: "Delete trip permanently?"
+  Body: "This will permanently delete [trip title] and all its
+         versions, segments, and documents. This cannot be undone."
+  Buttons: Cancel | "Delete permanently" (destructive)
+  On confirm: DELETE /api/trips/:id
+  On success: navigate to /trips
+
+Add imports: Archive, Trash2, MoreVertical from lucide-react
+(check if already imported before adding)
+
+─── UI: ARCHIVED TRIPS ON TRIPS LIST PAGE ───────────────────────────────────
+
+In trips.tsx, archived trips should be hidden from the default
+view. Add a toggle below the page header:
+
+  [Active]  [Archived]
+
+Default: Active (shows all non-archived trips)
+Archived: shows only status = "archived" trips
+
+Pass a status filter query param to /api/trips:
+  GET /api/trips?status=archived
+  GET /api/trips (no param = all non-archived)
+
+Update GET /api/trips in routes.ts to accept an optional
+?status query param and filter accordingly:
+
+  const statusFilter = req.query.status as string | undefined;
+  // If no filter: exclude archived
+  // If filter = "archived": show only archived
+  const trips = statusFilter === "archived"
+    ? await storage.getTripsByStatus(req._orgId, "archived")
+    : await storage.getTripsExcludingStatus(req._orgId, "archived");
+
+Archived trips show with a muted style and an
+"Unarchive" button (sets status back to "draft").
+They also show a "Delete permanently" option.
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+1. Open a trip → click MoreVertical → "Archive trip"
+2. Redirected to /trips — trip no longer visible in Active view
+3. Switch to Archived tab — trip appears with muted style
+4. Click Unarchive — trip moves back to Active
+5. Open a trip → Delete permanently → confirm dialog appears
+6. Confirm — redirected to /trips, trip gone from all views

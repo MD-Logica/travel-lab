@@ -51,7 +51,8 @@ export interface IStorage {
 
   countCompletedTripsByOrg(orgId: string): Promise<number>;
   getRecentTripsWithClient(orgId: string, limit?: number): Promise<(Trip & { clientName: string | null })[]>;
-  getTripsWithClientByOrg(orgId: string): Promise<(Trip & { clientName: string | null })[]>;
+  getTripsWithClientByOrg(orgId: string, excludeStatus?: string): Promise<(Trip & { clientName: string | null })[]>;
+  getTripsWithClientByStatus(orgId: string, status: string): Promise<(Trip & { clientName: string | null })[]>;
   getStats(orgId: string): Promise<{ totalTrips: number; activeTrips: number; completedTrips: number; totalClients: number }>;
 
   createTripVersion(version: InsertTripVersion): Promise<TripVersion>;
@@ -303,7 +304,11 @@ export class DatabaseStorage implements IStorage {
     return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));
   }
 
-  async getTripsWithClientByOrg(orgId: string): Promise<(Trip & { clientName: string | null })[]> {
+  async getTripsWithClientByOrg(orgId: string, excludeStatus?: string): Promise<(Trip & { clientName: string | null })[]> {
+    const conditions = [eq(trips.orgId, orgId)];
+    if (excludeStatus) {
+      conditions.push(sql`${trips.status} != ${excludeStatus}`);
+    }
     const rows = await db
       .select({
         trip: trips,
@@ -311,7 +316,20 @@ export class DatabaseStorage implements IStorage {
       })
       .from(trips)
       .leftJoin(clients, eq(trips.clientId, clients.id))
-      .where(eq(trips.orgId, orgId))
+      .where(and(...conditions))
+      .orderBy(sql`${trips.createdAt} DESC`);
+    return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));
+  }
+
+  async getTripsWithClientByStatus(orgId: string, status: string): Promise<(Trip & { clientName: string | null })[]> {
+    const rows = await db
+      .select({
+        trip: trips,
+        clientName: clients.fullName,
+      })
+      .from(trips)
+      .leftJoin(clients, eq(trips.clientId, clients.id))
+      .where(and(eq(trips.orgId, orgId), eq(trips.status, status as any)))
       .orderBy(sql`${trips.createdAt} DESC`);
     return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));
   }

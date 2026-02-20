@@ -8,7 +8,7 @@ export * from "./models/auth";
 export const planEnum = pgEnum("plan", ["trial", "pro", "enterprise"]);
 export const planStatusEnum = pgEnum("plan_status", ["active", "past_due", "cancelled"]);
 export const roleEnum = pgEnum("role", ["owner", "advisor", "assistant", "client"]);
-export const tripStatusEnum = pgEnum("trip_status", ["draft", "planning", "confirmed", "in_progress", "completed", "cancelled"]);
+export const tripStatusEnum = pgEnum("trip_status", ["draft", "planning", "confirmed", "in_progress", "completed", "cancelled", "archived"]);
 
 export interface DestinationEntry {
   name: string;
