@@ -48,7 +48,7 @@ import { DestinationInput } from "@/components/destination-input";
 import { CurrencyInput } from "@/components/currency-input";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking, DestinationEntry } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
-import { format, addDays, differenceInDays } from "date-fns";
+import { format, addDays, differenceInDays, eachDayOfInterval, differenceInCalendarDays } from "date-fns";
 
 type TripWithClient = Trip & { clientName: string | null };
 type TripFull = { trip: TripWithClient; versions: TripVersion[] };
@@ -1335,14 +1335,37 @@ export default function TripEditPage() {
     return groups;
   }, [segments]);
 
-  const dayCount = useMemo(() => {
-    if (trip?.startDate && trip?.endDate) {
-      const days = differenceInDays(new Date(trip.endDate), new Date(trip.startDate)) + 1;
-      return Math.max(days, 1);
+  const tripStart = trip?.startDate ? new Date(trip.startDate) : null;
+  const tripEnd = trip?.endDate ? new Date(trip.endDate) : null;
+
+  const dayList = useMemo(() => {
+    if (tripStart && tripEnd) {
+      return eachDayOfInterval({ start: tripStart, end: tripEnd })
+        .map((date, i) => ({
+          dayNumber: i + 1,
+          date,
+          label: `Day ${i + 1} — ${format(date, "EEEE, MMMM d")}`,
+        }));
+    }
+    if (tripStart && !tripEnd) {
+      const maxDay = segments.length > 0 ? Math.max(...segments.map(s => s.dayNumber)) : 0;
+      const count = Math.max(maxDay, 1) + 1;
+      return Array.from({ length: count }, (_, i) => ({
+        dayNumber: i + 1,
+        date: addDays(tripStart, i),
+        label: `Day ${i + 1} — ${format(addDays(tripStart, i), "EEEE, MMMM d")}`,
+      }));
     }
     const maxDay = segments.length > 0 ? Math.max(...segments.map(s => s.dayNumber)) : 0;
-    return Math.max(maxDay, 1);
-  }, [trip, segments]);
+    const count = Math.max(maxDay, 1);
+    return Array.from({ length: count }, (_, i) => ({
+      dayNumber: i + 1,
+      date: null as Date | null,
+      label: null as string | null,
+    }));
+  }, [tripStart?.getTime(), tripEnd?.getTime(), segments]);
+
+  const dayCount = dayList.length;
 
   const totalCost = useMemo(() => {
     return segments.reduce((sum, s) => sum + (s.cost || 0), 0);
@@ -1804,11 +1827,10 @@ export default function TripEditPage() {
             </div>
           ) : (
             <div className="space-y-5">
-              {Array.from({ length: dayCount }, (_, i) => i + 1).map((dayNum) => {
+              {dayList.map((dayInfo) => {
+                const dayNum = dayInfo.dayNumber;
                 const daySegments = segmentsByDay.get(dayNum) || [];
-                const dayDate = trip.startDate
-                  ? addDays(new Date(trip.startDate), dayNum - 1)
-                  : null;
+                const dayDate = dayInfo.date;
                 const showPricing = !!currentVersion?.showPricing;
 
                 return (
@@ -1867,7 +1889,7 @@ export default function TripEditPage() {
                 );
               })}
 
-              {!trip.startDate && (
+              {!(tripStart && tripEnd) && (
                 <div className="flex items-center gap-3 pt-2">
                   <Separator className="flex-1" />
                   <Button
