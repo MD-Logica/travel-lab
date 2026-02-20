@@ -672,8 +672,25 @@ export default function TripViewPage() {
   const [showFloatingBar, setShowFloatingBar] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
 
+  const token = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("token") || "";
+  }, []);
+
   const { data, isLoading, error } = useQuery<TripViewData>({
-    queryKey: ["/api/trip-view", id],
+    queryKey: ["/api/trip-view", id, token],
+    queryFn: async () => {
+      const url = `/api/trip-view/${id}${token ? `?token=${token}` : ""}`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(body.message || "Failed to load trip") as any;
+        err.status = res.status;
+        err.requiresToken = body.requiresToken;
+        throw err;
+      }
+      return res.json();
+    },
   });
 
   useEffect(() => {
@@ -718,14 +735,30 @@ export default function TripViewPage() {
   }, [activeVersion]);
 
   if (error) {
+    const err = error as any;
+    const isAccessDenied = err.status === 403 || err.requiresToken;
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-center space-y-3 p-8">
-          <p className="text-lg font-serif">Unable to view this trip</p>
-          <p className="text-sm text-muted-foreground">You may not have access, or the trip may not exist.</p>
-          <Button variant="outline" onClick={() => navigate("/dashboard")} data-testid="button-back-dashboard">
-            Go to Dashboard
-          </Button>
+        <div className="text-center space-y-4 p-8 max-w-md" data-testid="trip-view-access-denied">
+          {isAccessDenied ? (
+            <>
+              <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center mx-auto">
+                <ShieldAlert className="w-6 h-6 text-amber-600" />
+              </div>
+              <p className="text-lg font-serif">This itinerary link is no longer active</p>
+              <p className="text-sm text-muted-foreground">
+                Please contact your travel advisor for a new link.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-lg font-serif">Unable to view this trip</p>
+              <p className="text-sm text-muted-foreground">You may not have access, or the trip may not exist.</p>
+              <Button variant="outline" onClick={() => navigate("/dashboard")} data-testid="button-back-dashboard">
+                Go to Dashboard
+              </Button>
+            </>
+          )}
         </div>
       </div>
     );

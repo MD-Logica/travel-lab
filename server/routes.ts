@@ -10,6 +10,7 @@ import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
 import { checkSingleFlight } from "./flight-tracker";
 import { differenceInCalendarDays } from "date-fns";
+import { sendTeamInviteEmail, sendClientPortalInviteEmail } from "./email";
 import webpush from "web-push";
 
 const objectStorageService = new ObjectStorageService();
@@ -472,33 +473,68 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/trip-view/:id", isAuthenticated, async (req: any, res) => {
+  app.get("/api/trip-view/:id", async (req: any, res) => {
     try {
-      const userId = req.user?.claims?.sub;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
+      const token = req.query.token as string | undefined;
       const data = await storage.getTripFullView(req.params.id);
       if (!data) return res.status(404).json({ message: "Trip not found" });
 
-      const profile = await storage.getProfile(userId);
-      const isOrgMember = profile && profile.orgId === data.trip.orgId;
-
-      let isInvitedClient = false;
-      if (data.trip.clientId && data.client?.email) {
-        const userEmail = req.user.claims.email;
-        if (userEmail && userEmail.toLowerCase() === data.client.email.toLowerCase()) {
-          isInvitedClient = true;
+      let isAuthenticatedUser = false;
+      const userId = req.user?.claims?.sub;
+      if (userId) {
+        const profile = await storage.getProfile(userId);
+        if (profile && profile.orgId === data.trip.orgId) {
+          isAuthenticatedUser = true;
+        }
+        if (!isAuthenticatedUser && data.trip.clientId && data.client?.email) {
+          const userEmail = req.user.claims.email;
+          if (userEmail && userEmail.toLowerCase() === data.client.email.toLowerCase()) {
+            isAuthenticatedUser = true;
+          }
         }
       }
 
-      if (!isOrgMember && !isInvitedClient) {
-        return res.status(403).json({ message: "Access denied" });
+      const isValidToken = !!(token && data.trip.shareEnabled && data.trip.shareToken === token);
+
+      if (!isAuthenticatedUser && !isValidToken) {
+        return res.status(403).json({ message: "Access denied", requiresToken: true });
       }
 
       res.json(data);
     } catch (error) {
       console.error("Trip view error:", error);
       res.status(500).json({ message: "Failed to fetch trip view" });
+    }
+  });
+
+  app.post("/api/trips/:id/share-token", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const trip = await storage.getTrip(req.params.id, req._orgId);
+      if (!trip) return res.status(404).json({ message: "Trip not found" });
+      const token = crypto.randomBytes(16).toString("hex");
+      const updated = await storage.updateTrip(req.params.id, req._orgId, {
+        shareToken: token,
+        shareEnabled: true,
+      } as any);
+      res.json({ token, shareEnabled: true });
+    } catch (error) {
+      console.error("Generate share token error:", error);
+      res.status(500).json({ message: "Failed to generate share token" });
+    }
+  });
+
+  app.patch("/api/trips/:id/share", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const trip = await storage.getTrip(req.params.id, req._orgId);
+      if (!trip) return res.status(404).json({ message: "Trip not found" });
+      const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body);
+      await storage.updateTrip(req.params.id, req._orgId, {
+        shareEnabled: enabled,
+      } as any);
+      res.json({ shareEnabled: enabled });
+    } catch (error) {
+      console.error("Toggle share error:", error);
+      res.status(500).json({ message: "Failed to update sharing" });
     }
   });
 
@@ -681,6 +717,22 @@ export async function registerRoutes(
         invited: "yes",
         invitedAt: new Date(),
       } as any);
+
+      const profile = await storage.getProfile(req._userId);
+      const org = await storage.getOrganization(req._orgId);
+      const appUrl = `${req.protocol}://${req.get("host")}`;
+
+      try {
+        await sendClientPortalInviteEmail({
+          toEmail: emailToSend,
+          clientName: client.fullName,
+          advisorName: profile?.fullName || "Your travel advisor",
+          orgName: org?.name || "Travel Lab",
+          appUrl,
+        });
+      } catch (emailErr) {
+        console.error("[Email] Failed to send client portal invite:", emailErr);
+      }
 
       res.json({ success: true, client: updated, sentTo: emailToSend });
     } catch (error) {
@@ -1200,6 +1252,20 @@ export async function registerRoutes(
         expiresAt,
       });
 
+      const appUrl = `${req.protocol}://${req.get("host")}`;
+      try {
+        await sendTeamInviteEmail({
+          toEmail: email,
+          inviterName: req._profile.fullName || "Your colleague",
+          orgName: org.name,
+          role,
+          token,
+          appUrl,
+        });
+      } catch (emailErr) {
+        console.error("[Email] Failed to send team invite:", emailErr);
+      }
+
       res.status(201).json(invitation);
     } catch (error: any) {
       if (error.name === "ZodError") return res.status(400).json({ message: error.errors[0].message });
@@ -1217,6 +1283,22 @@ export async function registerRoutes(
       expiresAt.setDate(expiresAt.getDate() + 7);
       const updated = await storage.updateInvitation(req.params.id, { expiresAt, status: "pending" });
       if (!updated) return res.status(404).json({ message: "Invitation not found" });
+
+      const org = await storage.getOrganization(req._orgId);
+      const appUrl = `${req.protocol}://${req.get("host")}`;
+      try {
+        await sendTeamInviteEmail({
+          toEmail: updated.email,
+          inviterName: req._profile.fullName || "Your colleague",
+          orgName: org?.name || "Travel Lab",
+          role: updated.role,
+          token: updated.token,
+          appUrl,
+        });
+      } catch (emailErr) {
+        console.error("[Email] Failed to resend team invite:", emailErr);
+      }
+
       res.json(updated);
     } catch (error) {
       res.status(500).json({ message: "Failed to resend invitation" });

@@ -39,6 +39,7 @@ import {
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
   ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
+  Link2, ExternalLink, RotateCcw,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1741,14 +1742,57 @@ export default function TripEditPage() {
     document.body.removeChild(a);
   };
 
-  const handleShare = async () => {
-    const portalUrl = `${window.location.origin}/trip/${id}`;
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+
+  const handleShare = () => setShareDialogOpen(true);
+
+  const generateTokenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/trips/${id}/share-token`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+    },
+  });
+
+  const toggleShareMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await apiRequest("PATCH", `/api/trips/${id}/share`, { enabled });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+    },
+  });
+
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+
+  const shareUrl = trip?.shareToken
+    ? `${window.location.origin}/trip/${id}?token=${trip.shareToken}`
+    : "";
+
+  const handleCopyShareLink = async () => {
     try {
-      await navigator.clipboard.writeText(portalUrl);
+      await navigator.clipboard.writeText(shareUrl);
       toast({ title: "Link copied to clipboard" });
     } catch {
       toast({ title: "Could not copy link", variant: "destructive" });
     }
+  };
+
+  const handleToggleShare = (checked: boolean) => {
+    if (checked && !trip?.shareToken) {
+      generateTokenMutation.mutate();
+    } else {
+      toggleShareMutation.mutate(checked);
+    }
+  };
+
+  const handleResetLink = () => {
+    generateTokenMutation.mutate();
+    setConfirmResetOpen(false);
+    toast({ title: "Share link has been reset" });
   };
 
   const [addSegmentType, setAddSegmentType] = useState<string | null>(null);
@@ -2275,6 +2319,104 @@ export default function TripEditPage() {
               data-testid="button-confirm-delete-trip"
             >
               {deleteTripMutation.isPending ? "Deleting..." : "Delete permanently"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+        <DialogContent className="sm:max-w-md" data-testid="dialog-share-trip">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl tracking-tight">Share itinerary</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-6 pt-2">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Link2 className="w-4 h-4 text-muted-foreground" />
+                  <Label className="text-sm font-medium">Public preview link</Label>
+                </div>
+                <Switch
+                  checked={trip.shareEnabled || false}
+                  onCheckedChange={handleToggleShare}
+                  disabled={generateTokenMutation.isPending || toggleShareMutation.isPending}
+                  data-testid="switch-share-enabled"
+                />
+              </div>
+
+              {!trip.shareEnabled ? (
+                <p className="text-xs text-muted-foreground" data-testid="text-share-disabled">
+                  Link sharing is disabled. Enable to generate a shareable link.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <Input
+                      readOnly
+                      value={shareUrl}
+                      className="text-xs font-mono"
+                      data-testid="input-share-url"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCopyShareLink}
+                      className="shrink-0"
+                      data-testid="button-copy-share-link"
+                    >
+                      <Copy className="w-3.5 h-3.5 mr-1" /> Copy
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs text-muted-foreground h-7"
+                      onClick={() => setConfirmResetOpen(true)}
+                      data-testid="button-reset-share-link"
+                    >
+                      <RotateCcw className="w-3 h-3 mr-1" /> Reset link
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <Separator />
+
+            <div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => window.open(trip.shareEnabled && shareUrl ? shareUrl : `/trip/${id}`, "_blank")}
+                data-testid="button-open-preview"
+              >
+                <ExternalLink className="w-3.5 h-3.5 mr-1" /> Open preview
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={confirmResetOpen} onOpenChange={setConfirmResetOpen}>
+        <DialogContent className="sm:max-w-sm" data-testid="dialog-confirm-reset-link">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-lg">Reset share link?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will invalidate the current link. Anyone with the old link will lose access.
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" size="sm" onClick={() => setConfirmResetOpen(false)} data-testid="button-cancel-reset">
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleResetLink}
+              disabled={generateTokenMutation.isPending}
+              data-testid="button-confirm-reset"
+            >
+              {generateTokenMutation.isPending ? "Resetting..." : "Reset link"}
             </Button>
           </div>
         </DialogContent>

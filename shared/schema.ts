@@ -101,6 +101,8 @@ export const trips = pgTable("trips", {
   clientId: varchar("client_id"),
   advisorId: varchar("advisor_id"),
   notes: text("notes"),
+  shareToken: varchar("share_token").unique(),
+  shareEnabled: boolean("share_enabled").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

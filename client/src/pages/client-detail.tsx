@@ -1826,14 +1826,23 @@ export default function ClientDetailPage() {
                       <Pencil className="w-4 h-4" />
                     </Button>
                     {client.invited === "yes" ? (
-                      <Badge
-                        variant="secondary"
-                        className="text-xs font-normal no-default-hover-elevate no-default-active-elevate"
-                        data-testid="badge-portal-active"
-                      >
-                        <Check className="w-3 h-3 text-emerald-500 mr-1" />
-                        Portal active
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="secondary"
+                          className="text-xs font-normal bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 no-default-hover-elevate no-default-active-elevate"
+                          data-testid="badge-invitation-sent"
+                        >
+                          <Send className="w-3 h-3 mr-1" />
+                          Invitation sent{client.invitedAt ? ` ${format(new Date(client.invitedAt), "MMM d")}` : ""}
+                        </Badge>
+                        <button
+                          onClick={() => { setInviteEmail(client.email || ""); setShowInviteModal(true); }}
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+                          data-testid="button-resend-invite"
+                        >
+                          Resend
+                        </button>
+                      </div>
                     ) : (
                       <Button
                         variant="outline"

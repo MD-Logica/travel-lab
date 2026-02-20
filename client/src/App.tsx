@@ -160,14 +160,6 @@ function AppRouter() {
     );
   }
 
-  if (!user) {
-    if (location === "/" || location === "") {
-      return <LandingPage />;
-    }
-    navigate("/login", { replace: true });
-    return null;
-  }
-
   if (location.startsWith("/trip/") && !location.startsWith("/trips")) {
     return (
       <Switch>
@@ -175,6 +167,14 @@ function AppRouter() {
         <Route component={NotFound} />
       </Switch>
     );
+  }
+
+  if (!user) {
+    if (location === "/" || location === "") {
+      return <LandingPage />;
+    }
+    navigate("/login", { replace: true });
+    return null;
   }
 
   if (profileLoading) {
