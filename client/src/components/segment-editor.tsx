@@ -171,12 +171,6 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
   const applyFlightData = () => {
     if (!searchResult) return;
     const f = searchResult;
-
-    const depTime = f.departureDateTime || f.departure?.scheduledTime || "";
-    const arrTime = f.arrivalDateTime || f.arrival?.scheduledTime || "";
-    const depDate = f.departureDate || searchDate || "";
-    const arrDate = f.departureDate || searchDate || "";
-
     onChange({
       ...metadata,
       flightNumber: f.flightNumber || metadata.flightNumber,
@@ -184,13 +178,13 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
       aircraft: f.aircraft || metadata.aircraft,
       status: f.status || "",
       departureAirport: f.departure?.iata || metadata.departureAirport,
-      departureAirportName: f.departure?.city || metadata.departureAirportName || "",
-      departureDate: depDate,
-      departureTime: depTime.includes("T") ? depTime.split("T")[1].slice(0, 5) : depTime,
+      departureAirportName: f.departure?.airport || "",
+      departureDate: f.departure?.scheduledDate || searchDate || "",
+      departureTime: f.departure?.scheduledTime || "",
       arrivalAirport: f.arrival?.iata || metadata.arrivalAirport,
-      arrivalAirportName: f.arrival?.city || metadata.arrivalAirportName || "",
-      arrivalDate: arrDate,
-      arrivalTime: arrTime.includes("T") ? arrTime.split("T")[1].slice(0, 5) : arrTime,
+      arrivalAirportName: f.arrival?.airport || "",
+      arrivalDate: f.arrival?.scheduledDate || searchDate || "",
+      arrivalTime: f.arrival?.scheduledTime || "",
       departure: f.departure,
       arrival: f.arrival,
     });
@@ -220,14 +214,15 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
         <div className="border border-border rounded-md p-3 space-y-2 bg-accent/20" data-testid="card-flight-result">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-sm">{searchResult.flightNumber}</span>
+            {searchResult.airline && <span className="text-sm text-muted-foreground">{searchResult.airline}</span>}
             {searchResult.status && <Badge variant="outline" className="text-xs">{searchResult.status}</Badge>}
           </div>
           <div className="text-sm text-muted-foreground">
-            {searchResult.departure?.iata || searchResult.departure?.city || ""} {"\u2192"} {searchResult.arrival?.iata || searchResult.arrival?.city || ""}
+            {searchResult.departure?.iata || ""} {"\u2192"} {searchResult.arrival?.iata || ""}
           </div>
-          {searchResult.departure?.city && searchResult.arrival?.city && (
+          {(searchResult.departure?.airport || searchResult.arrival?.airport) && (
             <div className="text-xs text-muted-foreground/60">
-              {searchResult.departure.city} {"\u2192"} {searchResult.arrival.city}
+              {searchResult.departure?.airport || ""} {"\u2192"} {searchResult.arrival?.airport || ""}
             </div>
           )}
           {(searchResult.departure?.scheduledTime || searchResult.arrival?.scheduledTime) && (
@@ -238,14 +233,10 @@ function FlightFields({ metadata, onChange }: { metadata: Record<string, any>; o
             </div>
           )}
           {searchResult.aircraft && <div className="text-xs text-muted-foreground/40">Aircraft: {searchResult.aircraft}</div>}
-          {searchResult.date && <div className="text-xs text-muted-foreground/40">Date: {searchResult.date}</div>}
           <Button size="sm" onClick={applyFlightData} data-testid="button-use-flight">
             <Check className="w-3.5 h-3.5 mr-1.5" />
             Use this flight
           </Button>
-          <p className="text-xs text-muted-foreground/60 mt-1">
-            Route and times auto-filled. Please enter airline name manually.
-          </p>
         </div>
       )}
 

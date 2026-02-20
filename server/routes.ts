@@ -1685,124 +1685,106 @@ export async function registerRoutes(
     }
   });
 
-  // ── FlightLabs proxies ──
+  // ── AeroDataBox flight proxies ──
 
-  function parseFlightLabsLocation(raw: string): { city: string; iata: string } {
-    const match = raw?.match(/^(.*?)\s*\(([A-Z]{3})\)$/);
-    return { city: match?.[1]?.trim() ?? raw ?? "", iata: match?.[2] ?? "" };
+  function parseAeroTime(dt: string): string {
+    if (!dt) return "";
+    return dt.split(" ")[1]?.slice(0, 5) || "";
+  }
+  function parseAeroDate(dt: string): string {
+    if (!dt) return "";
+    return dt.split(" ")[0] || "";
   }
 
-  // Endpoint A: Flight Info by Flight Number (segment editor search)
+  // Flight search (segment editor)
   app.get("/api/flights/search", isAuthenticated, async (req: any, res) => {
     try {
-      const apiKey = process.env.FLIGHTLABS_API_KEY;
+      const apiKey = process.env.AERODATABOX_API_KEY;
       if (!apiKey) return res.status(503).json({ error: "Flight search API not configured" });
 
       const flightNumber = (req.query.flightNumber as string || "").replace(/\s+/g, "").toUpperCase();
-      const date = req.query.date as string || "";
+      const date = req.query.date as string || new Date().toISOString().split("T")[0];
       if (!flightNumber) return res.status(400).json({ error: "flightNumber required" });
 
-      const params: Record<string, string> = {
-        access_key: apiKey,
-        flight_number: flightNumber,
-      };
-
-      const url = `https://www.goflightlabs.com/flight?${new URLSearchParams(params)}`;
-      const apiRes = await fetch(url);
+      const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightNumber}/${date}?withAircraftImage=false&withLocation=false`;
+      const apiRes = await fetch(url, {
+        headers: {
+          "X-RapidAPI-Key": apiKey,
+          "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+        },
+      });
       const data = await apiRes.json();
 
-      console.log("[FlightLabs] raw:", JSON.stringify(data).slice(0, 500));
+      console.log("[AeroDataBox] raw:", JSON.stringify(data).slice(0, 500));
 
-      if (!Array.isArray(data?.data) || data.data.length === 0) {
-        return res.json({ error: "No flight found." });
+      if (!Array.isArray(data) || data.length === 0) {
+        return res.json({ error: "No flight found for this number and date." });
       }
 
-      const raw = data.data[0];
-      const dep = parseFlightLabsLocation(raw.FROM || "");
-      const arr = parseFlightLabsLocation(raw.TO || "");
-
-      const depDateTime = date && raw.STD && raw.STD !== "\u2014"
-        ? `${date}T${raw.STD}` : "";
-      const arrDateTime = date && raw.STA && raw.STA !== "\u2014"
-        ? `${date}T${raw.STA}` : "";
+      const raw = data[0];
+      const depScheduled = raw.departure?.scheduledTime?.local || "";
+      const arrScheduled = raw.arrival?.scheduledTime?.local || "";
 
       res.json({
         flight: {
-          flightNumber,
-          airline: "",
-          aircraft: raw.AIRCRAFT || "",
+          flightNumber: raw.number || flightNumber,
+          airline: raw.airline?.name || "",
+          aircraft: raw.aircraft?.model || "",
+          status: raw.status || "",
           departure: {
-            city: dep.city,
-            iata: dep.iata,
-            scheduledTime: raw.STD && raw.STD !== "\u2014" ? raw.STD : "",
-            actualTime: raw.ATD && raw.ATD !== "\u2014" ? raw.ATD : null,
+            iata: raw.departure?.airport?.iata || "",
+            airport: raw.departure?.airport?.name || "",
+            scheduledTime: parseAeroTime(depScheduled),
+            scheduledDate: parseAeroDate(depScheduled) || date,
           },
           arrival: {
-            city: arr.city,
-            iata: arr.iata,
-            scheduledTime: raw.STA && raw.STA !== "\u2014" ? raw.STA : "",
+            iata: raw.arrival?.airport?.iata || "",
+            airport: raw.arrival?.airport?.name || "",
+            scheduledTime: parseAeroTime(arrScheduled),
+            scheduledDate: parseAeroDate(arrScheduled) || date,
           },
-          departureDateTime: depDateTime,
-          arrivalDateTime: arrDateTime,
-          departureDate: date || "",
-          date: raw.DATE || "",
-          status: raw.STATUS || "",
         },
       });
     } catch (error) {
-      console.error("[FlightLabs] search error:", error);
+      console.error("[AeroDataBox] search error:", error);
       res.json({ error: "No flight found." });
     }
   });
 
-  app.get("/api/flights/diagnose", isAuthenticated, async (req: any, res) => {
-    const apiKey = process.env.FLIGHTLABS_API_KEY;
-    const keyPresent = !!apiKey;
-    const keyLength = apiKey?.length || 0;
-
-    let apiResponse = null;
-    let apiError = null;
-    try {
-      const testUrl =
-        `https://www.goflightlabs.com/flight?access_key=${apiKey}&flight_number=BA001`;
-      const r = await fetch(testUrl);
-      const body = await r.text();
-      apiResponse = { status: r.status, body };
-    } catch (e: any) {
-      apiError = e.message;
-    }
-
-    res.json({ keyPresent, keyLength, apiResponse, apiError });
-  });
-
-  // Endpoint B: Real-Time Flights (background monitoring)
+  // Flight status (background monitoring proxy)
   app.get("/api/flights/status", isAuthenticated, async (req: any, res) => {
     try {
-      const apiKey = process.env.FLIGHTLABS_API_KEY;
+      const apiKey = process.env.AERODATABOX_API_KEY;
       if (!apiKey) return res.status(503).json({ error: "Flight status API not configured" });
 
       const flightIata = (req.query.flightIata as string || "").replace(/\s+/g, "").toUpperCase();
       if (!flightIata) return res.status(400).json({ error: "flightIata required" });
 
-      const params = new URLSearchParams({ access_key: apiKey, flightIata, limit: "1" });
-      const url = `https://www.goflightlabs.com/flights?${params}`;
-      const apiRes = await fetch(url);
+      const date = new Date().toISOString().split("T")[0];
+      const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
+      const apiRes = await fetch(url, {
+        headers: {
+          "X-RapidAPI-Key": apiKey,
+          "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+        },
+      });
       const data = await apiRes.json();
 
-      console.log("[FlightLabs] status raw:", JSON.stringify(data).slice(0, 500));
+      console.log("[AeroDataBox] status raw:", JSON.stringify(data).slice(0, 500));
 
-      const flights = data?.data || (Array.isArray(data) ? data : []);
-      if (flights.length === 0) return res.json({ error: "No flight status found." });
+      if (!Array.isArray(data) || data.length === 0) {
+        return res.json({ error: "No flight status found." });
+      }
 
-      const f = flights[0];
+      const raw = data[0];
       res.json({
-        status: f.status || f.flight_status || "",
-        depIata: f.dep_iata || "",
-        arrIata: f.arr_iata || "",
-        updatedAt: f.updated || null,
+        status: raw.status || "",
+        depIata: raw.departure?.airport?.iata || "",
+        arrIata: raw.arrival?.airport?.iata || "",
+        updatedAt: null,
       });
     } catch (error) {
-      console.error("[FlightLabs] status error:", error);
+      console.error("[AeroDataBox] status error:", error);
       res.json({ error: "No flight status found." });
     }
   });

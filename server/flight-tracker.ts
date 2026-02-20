@@ -1,42 +1,29 @@
 import { storage } from "./storage";
 import type { FlightTracking } from "@shared/schema";
 
-interface FlightLabsFlight {
-  flight_status?: string;
-  flight?: {
-    iata?: string;
-    icao?: string;
-    number?: string;
-  };
-  airline?: {
-    name?: string;
-    iata?: string;
-  };
+interface AeroDataBoxFlight {
+  number?: string;
+  status?: string;
+  airline?: { name?: string; iata?: string };
   departure?: {
-    airport?: string;
-    iata?: string;
-    scheduled?: string;
-    estimated?: string;
-    actual?: string;
-    terminal?: string;
+    airport?: { iata?: string; name?: string };
+    scheduledTime?: { utc?: string; local?: string };
+    actualTime?: { utc?: string; local?: string };
+    revisedTime?: { utc?: string; local?: string };
+    terminal?: { name?: string };
     gate?: string;
     delay?: number;
   };
   arrival?: {
-    airport?: string;
-    iata?: string;
-    scheduled?: string;
-    estimated?: string;
-    actual?: string;
-    terminal?: string;
+    airport?: { iata?: string; name?: string };
+    scheduledTime?: { utc?: string; local?: string };
+    actualTime?: { utc?: string; local?: string };
+    revisedTime?: { utc?: string; local?: string };
+    terminal?: { name?: string };
     gate?: string;
-    baggage?: string;
     delay?: number;
   };
-  aircraft?: {
-    registration?: string;
-    iata?: string;
-  };
+  aircraft?: { model?: string; reg?: string };
 }
 
 export interface FlightStatus {
@@ -67,43 +54,38 @@ export interface MeaningfulChange {
   newStatus: FlightStatus;
 }
 
-function normalizeFlightNumber(fn: string): { airlineCode: string; number: string } {
-  const cleaned = fn.replace(/\s+/g, "").toUpperCase();
-  const match = cleaned.match(/^([A-Z]{2,3})(\d+)$/);
-  if (match) return { airlineCode: match[1], number: match[2] };
-  return { airlineCode: "", number: cleaned };
+function normalizeFlightNumber(fn: string): string {
+  return fn.replace(/\s+/g, "").toUpperCase();
 }
 
 export async function fetchFlightStatus(flightNumber: string, _date: string): Promise<FlightStatus | null> {
-  const apiKey = process.env.FLIGHTLABS_API_KEY;
+  const apiKey = process.env.AERODATABOX_API_KEY;
   if (!apiKey) {
-    console.warn("[FlightTracker] FLIGHTLABS_API_KEY not configured");
+    console.warn("[FlightTracker] AERODATABOX_API_KEY not configured");
     return null;
   }
 
-  const { airlineCode, number } = normalizeFlightNumber(flightNumber);
-  const flightIata = `${airlineCode}${number}`;
+  const flightIata = normalizeFlightNumber(flightNumber);
+  const date = new Date().toISOString().split("T")[0];
 
   try {
-    const params = new URLSearchParams({
-      access_key: apiKey,
-      flightIata: flightIata,
-      limit: "1",
+    const url = `https://aerodatabox.p.rapidapi.com/flights/number/${flightIata}/${date}?withAircraftImage=false&withLocation=false`;
+    const res = await fetch(url, {
+      headers: {
+        "X-RapidAPI-Key": apiKey,
+        "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+      },
     });
-    const url = `https://www.goflightlabs.com/flights?${params}`;
-    const res = await fetch(url);
     const data = await res.json();
 
     console.log("[FlightTracker] raw:", JSON.stringify(data).slice(0, 500));
 
-    const flights = data?.data || (Array.isArray(data) ? data : []);
-
-    if (flights.length === 0) {
+    if (!Array.isArray(data) || data.length === 0) {
       console.warn(`[FlightTracker] No data for ${flightIata}`);
       return null;
     }
 
-    const flight = flights[0];
+    const flight = data[0] as AeroDataBoxFlight;
     return parseFlightData(flight);
   } catch (err) {
     console.error(`[FlightTracker] Error fetching ${flightIata}:`, err);
@@ -111,45 +93,47 @@ export async function fetchFlightStatus(flightNumber: string, _date: string): Pr
   }
 }
 
-function parseFlightData(flight: FlightLabsFlight): FlightStatus {
-  const rawStatus = (flight.flight_status || "").toLowerCase();
-  let status: FlightStatus["status"] = "unknown";
-
-  if (rawStatus.includes("cancel")) status = "cancelled";
-  else if (rawStatus.includes("landed") || rawStatus.includes("arrived")) status = "landed";
-  else if (rawStatus.includes("active") || rawStatus.includes("en-route") || rawStatus.includes("en route")) status = "departed";
-  else if (rawStatus.includes("delay")) status = "delayed";
-  else if (rawStatus.includes("scheduled")) {
-    const depDelay = flight.departure?.delay || 0;
-    status = depDelay >= 20 ? "delayed" : depDelay > 0 ? "on_time" : "scheduled";
-  } else if (rawStatus.includes("on time")) {
-    status = "on_time";
+function mapAeroStatus(rawStatus: string, depDelay?: number): FlightStatus["status"] {
+  const s = (rawStatus || "").toLowerCase().replace(/[\s_-]/g, "");
+  if (s.includes("cancel") || s.includes("divert")) return "cancelled";
+  if (s.includes("landed") || s.includes("arrived")) return "landed";
+  if (s.includes("departed") || s.includes("enroute") || s.includes("active") || s.includes("airborne") || s.includes("taxiing")) {
+    return "departed";
   }
-
-  const depDelay = flight.departure?.delay || 0;
-  if (status === "scheduled" && depDelay >= 20) status = "delayed";
-  if (status === "scheduled" && depDelay >= 0 && depDelay < 20 && flight.departure?.scheduled) {
-    status = "on_time";
+  if (s.includes("delay")) return "delayed";
+  if (s.includes("boarding")) return "on_time";
+  if (s.includes("ontime")) return "on_time";
+  if (s.includes("scheduled") || s === "unknown" || s === "") {
+    if (depDelay && depDelay >= 20) return "delayed";
+    if (depDelay !== undefined && depDelay >= 0) return "on_time";
+    return "scheduled";
   }
+  if (depDelay && depDelay >= 20) return "delayed";
+  return "unknown";
+}
+
+function parseFlightData(flight: AeroDataBoxFlight): FlightStatus {
+  const rawStatus = flight.status || "";
+  const depDelay = flight.departure?.delay;
+  const status = mapAeroStatus(rawStatus, depDelay);
 
   return {
     status,
     departureDelay: flight.departure?.delay,
     arrivalDelay: flight.arrival?.delay,
     departureGate: flight.departure?.gate,
-    departureTerminal: flight.departure?.terminal,
+    departureTerminal: flight.departure?.terminal?.name,
     arrivalGate: flight.arrival?.gate,
-    arrivalTerminal: flight.arrival?.terminal,
-    scheduledDeparture: flight.departure?.scheduled,
-    actualDeparture: flight.departure?.actual,
-    estimatedDeparture: flight.departure?.estimated,
-    scheduledArrival: flight.arrival?.scheduled,
-    actualArrival: flight.arrival?.actual,
-    estimatedArrival: flight.arrival?.estimated,
-    departureAirport: flight.departure?.iata,
-    arrivalAirport: flight.arrival?.iata,
-    baggageBelt: flight.arrival?.baggage,
-    rawStatus: flight.flight_status,
+    arrivalTerminal: flight.arrival?.terminal?.name,
+    scheduledDeparture: flight.departure?.scheduledTime?.utc,
+    actualDeparture: flight.departure?.actualTime?.utc,
+    estimatedDeparture: flight.departure?.revisedTime?.utc,
+    scheduledArrival: flight.arrival?.scheduledTime?.utc,
+    actualArrival: flight.arrival?.actualTime?.utc,
+    estimatedArrival: flight.arrival?.revisedTime?.utc,
+    departureAirport: flight.departure?.airport?.iata,
+    arrivalAirport: flight.arrival?.airport?.iata,
+    rawStatus,
   };
 }
 
