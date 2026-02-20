@@ -978,17 +978,44 @@ export default function TripViewPage() {
 
         {activeVersion?.showPricing && (() => {
           const allSegments = activeVersion.segments || [];
-          const totalCost = allSegments.reduce((sum, s) => sum + (s.cost || 0), 0);
-          if (totalCost <= 0) return null;
+          const subtotal = allSegments.reduce((sum, s) => sum + (s.cost || 0), 0);
+          if (subtotal <= 0) return null;
           const currency = allSegments.find(s => s.currency)?.currency || trip.currency || "USD";
+          const vDiscount = (activeVersion as any).discount || 0;
+          const vDiscountType = (activeVersion as any).discountType || "fixed";
+          const vDiscountLabel = (activeVersion as any).discountLabel || "";
+          const discountVal = vDiscount > 0
+            ? (vDiscountType === "percent" ? Math.round(subtotal * (vDiscount / 100)) : vDiscount)
+            : 0;
+          const finalTotal = Math.max(0, subtotal - discountVal);
           return (
             <>
               <Separator className="opacity-50" />
-              <div className="flex items-center justify-between py-6" data-testid="view-total-cost">
-                <span className="text-base font-serif font-semibold">Total</span>
-                <span className="text-base font-serif font-semibold">
-                  {formatViewCurrency(totalCost, currency)}
-                </span>
+              <div className="py-6" data-testid="view-total-cost">
+                {discountVal > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-muted-foreground">Subtotal</span>
+                      <span className="text-sm text-muted-foreground">{formatViewCurrency(subtotal, currency)}</span>
+                    </div>
+                    <div className="flex items-center justify-between" data-testid="view-discount-line">
+                      <span className="text-sm text-emerald-600">
+                        {vDiscountLabel || "Discount"}{vDiscountType === "percent" ? ` (${vDiscount}%)` : ""}
+                      </span>
+                      <span className="text-sm text-emerald-600">-{formatViewCurrency(discountVal, currency)}</span>
+                    </div>
+                    <Separator className="opacity-30" />
+                    <div className="flex items-center justify-between">
+                      <span className="text-base font-serif font-semibold">Total</span>
+                      <span className="text-base font-serif font-semibold">{formatViewCurrency(finalTotal, currency)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <span className="text-base font-serif font-semibold">Total</span>
+                    <span className="text-base font-serif font-semibold">{formatViewCurrency(subtotal, currency)}</span>
+                  </div>
+                )}
               </div>
             </>
           );

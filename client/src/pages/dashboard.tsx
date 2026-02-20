@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Users, Plane, CircleCheck, Plus, Calendar, MapPin } from "lucide-react";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import type { Trip, Profile } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
 import { format } from "date-fns";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type RecentTrip = Trip & { clientName: string | null };
 type DashboardStats = {
@@ -56,6 +58,8 @@ function getGradientForDestination(dest: string): string {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
 
   const { data: profile } = useQuery<Profile>({ queryKey: ["/api/profile"] });
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
@@ -160,7 +164,22 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {recentTrips.map((trip, i) => (
                 <motion.div key={trip.id} custom={i + 5} initial="hidden" animate="visible" variants={fadeUp}>
-                  <Link href={`/trips/${trip.id}/edit`}>
+                  <div
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/trips/${trip.id}/full`, { credentials: "include" });
+                        if (res.status === 404) {
+                          queryClient.invalidateQueries({ queryKey: ["/api/recent-trips"] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+                          toast({ title: "That trip no longer exists", variant: "destructive" });
+                          return;
+                        }
+                        navigate(`/trips/${trip.id}/edit`);
+                      } catch {
+                        navigate(`/trips/${trip.id}/edit`);
+                      }
+                    }}
+                  >
                     <Card
                       className="hover-elevate cursor-pointer border-border/40 overflow-visible group"
                       data-testid={`card-trip-${trip.id}`}
@@ -216,7 +235,7 @@ export default function DashboardPage() {
                         </div>
                       </CardContent>
                     </Card>
-                  </Link>
+                  </div>
                 </motion.div>
               ))}
             </div>

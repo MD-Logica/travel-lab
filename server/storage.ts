@@ -302,7 +302,12 @@ export class DatabaseStorage implements IStorage {
       })
       .from(trips)
       .leftJoin(clients, eq(trips.clientId, clients.id))
-      .where(eq(trips.orgId, orgId))
+      .where(
+        and(
+          eq(trips.orgId, orgId),
+          sql`${trips.status} != 'archived'`
+        )
+      )
       .orderBy(sql`${trips.createdAt} DESC`)
       .limit(limit);
     return rows.map((r) => ({ ...r.trip, clientName: r.clientName }));

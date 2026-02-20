@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { CurrencyInput } from "@/components/currency-input";
 import { DestinationInput } from "@/components/destination-input";
 import type { DestinationEntry } from "@shared/schema";
@@ -83,6 +85,7 @@ export default function TripNewPage() {
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
   const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
   const [destinationError, setDestinationError] = useState("");
+  const [selectedCompanions, setSelectedCompanions] = useState<string[]>([]);
 
   const { data: clients, isLoading: clientsLoading } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -111,6 +114,20 @@ export default function TripNewPage() {
     return clients.find((c) => c.id === selectedClientId) || null;
   }, [selectedClientId, clients]);
 
+  const { data: companions } = useQuery({
+    queryKey: ["/api/clients", selectedClientId, "companions"],
+    queryFn: async () => {
+      if (!selectedClientId) return [];
+      const res = await fetch(`/api/clients/${selectedClientId}/companions`, { credentials: "include" });
+      return res.json();
+    },
+    enabled: !!selectedClientId,
+  });
+
+  useEffect(() => {
+    setSelectedCompanions([]);
+  }, [selectedClientId]);
+
   const filteredClients = useMemo(() => {
     if (!clients) return [];
     if (!clientSearch.trim()) return clients;
@@ -136,6 +153,7 @@ export default function TripNewPage() {
         endDate: data.endDate ? new Date(data.endDate).toISOString() : null,
         coverImageUrl: data.coverImageUrl || null,
         clientId: data.clientId || null,
+        additionalClientIds: selectedCompanions.length > 0 ? selectedCompanions : undefined,
       };
       const res = await apiRequest("POST", "/api/trips", payload);
       return res.json();
@@ -379,6 +397,34 @@ export default function TripNewPage() {
                           </FormItem>
                         )}
                       />
+                      {companions && companions.length > 0 && (
+                        <div className="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2" data-testid="companion-suggestions">
+                          <p className="text-xs text-muted-foreground">
+                            {selectedClient?.fullName} often travels with:
+                          </p>
+                          {companions.map((rel: any) => (
+                            <label key={rel.id} className="flex items-center gap-2.5 cursor-pointer py-0.5">
+                              <Checkbox
+                                checked={selectedCompanions.includes(rel.companion.id)}
+                                onCheckedChange={(checked) => {
+                                  setSelectedCompanions(prev =>
+                                    checked
+                                      ? [...prev, rel.companion.id]
+                                      : prev.filter(id => id !== rel.companion.id)
+                                  );
+                                }}
+                                data-testid={`checkbox-companion-${rel.companion.id}`}
+                              />
+                              <span className="text-sm">{rel.companion.fullName}</span>
+                              {rel.relationshipLabel && (
+                                <Badge variant="secondary" className="text-[10px]">
+                                  {rel.relationshipLabel}
+                                </Badge>
+                              )}
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div>

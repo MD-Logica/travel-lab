@@ -101,6 +101,7 @@ export const trips = pgTable("trips", {
   clientId: varchar("client_id"),
   advisorId: varchar("advisor_id"),
   notes: text("notes"),
+  additionalClientIds: text("additional_client_ids").array().default(sql`'{}'`),
   shareToken: varchar("share_token").unique(),
   shareEnabled: boolean("share_enabled").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
@@ -115,6 +116,9 @@ export const tripVersions = pgTable("trip_versions", {
   name: text("name").notNull().default("Version 1"),
   isPrimary: boolean("is_primary").notNull().default(true),
   showPricing: boolean("show_pricing").notNull().default(false),
+  discount: integer("discount").default(0),
+  discountType: varchar("discount_type").default("fixed"),
+  discountLabel: text("discount_label"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

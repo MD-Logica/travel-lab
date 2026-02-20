@@ -1053,6 +1053,9 @@ export async function registerRoutes(
         name: z.string().min(1).optional(),
         isPrimary: z.boolean().optional(),
         showPricing: z.boolean().optional(),
+        discount: z.number().int().min(0).max(1000000).optional(),
+        discountType: z.enum(["fixed", "percent"]).optional(),
+        discountLabel: z.string().nullable().optional(),
       });
       const parsed = updateSchema.parse(req.body);
 
@@ -1103,6 +1106,8 @@ export async function registerRoutes(
       if (!selectedVersion) return res.status(404).json({ message: "No version found" });
 
       const segments = (selectedVersion as any).segments || [];
+
+      console.log("[PDF] showPricing:", selectedVersion.showPricing);
 
       const pdfStream = await generateTripPdf({
         trip: fullData.trip,

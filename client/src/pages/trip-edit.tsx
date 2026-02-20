@@ -39,7 +39,7 @@ import {
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
   ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
-  Link2, ExternalLink, RotateCcw,
+  Link2, ExternalLink, RotateCcw, Users,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1558,6 +1558,18 @@ export default function TripEditPage() {
     enabled: !!currentVersionId,
   });
 
+  const additionalIds = trip?.additionalClientIds as string[] | undefined;
+  const { data: allClients } = useQuery<Client[]>({
+    queryKey: ["/api/clients"],
+    enabled: !!additionalIds && additionalIds.length > 0,
+  });
+  const companionNames = useMemo(() => {
+    if (!additionalIds || additionalIds.length === 0 || !allClients) return [];
+    return additionalIds
+      .map(id => allClients.find(c => c.id === id)?.fullName)
+      .filter(Boolean) as string[];
+  }, [additionalIds, allClients]);
+
   const { data: flightTrackings = [] } = useQuery<FlightTracking[]>({
     queryKey: ["/api/trips", id, "flight-tracking"],
     refetchInterval: 60000,
@@ -1610,9 +1622,67 @@ export default function TripEditPage() {
 
   const dayCount = dayList.length;
 
-  const totalCost = useMemo(() => {
+  const subtotalCost = useMemo(() => {
     return segments.reduce((sum, s) => sum + (s.cost || 0), 0);
   }, [segments]);
+
+  const versionDiscount = currentVersion?.discount || 0;
+  const versionDiscountType = (currentVersion as any)?.discountType || "fixed";
+  const versionDiscountLabel = (currentVersion as any)?.discountLabel || "";
+
+  const discountValue = useMemo(() => {
+    if (versionDiscount <= 0) return 0;
+    return versionDiscountType === "percent"
+      ? Math.round(subtotalCost * (versionDiscount / 100))
+      : versionDiscount;
+  }, [subtotalCost, versionDiscount, versionDiscountType]);
+
+  const totalCost = Math.max(0, subtotalCost - discountValue);
+
+  const [showDiscountEditor, setShowDiscountEditor] = useState(false);
+  const [discountAmountInput, setDiscountAmountInput] = useState("");
+  const [discountTypeInput, setDiscountTypeInput] = useState("fixed");
+  const [discountLabelInput, setDiscountLabelInput] = useState("");
+
+  useEffect(() => {
+    if (currentVersion) {
+      setDiscountAmountInput(String(currentVersion.discount || 0));
+      setDiscountTypeInput((currentVersion as any).discountType || "fixed");
+      setDiscountLabelInput((currentVersion as any).discountLabel || "");
+      setShowDiscountEditor(!!currentVersion.discount && currentVersion.discount > 0);
+    }
+  }, [currentVersionId, currentVersion?.discount, (currentVersion as any)?.discountType, (currentVersion as any)?.discountLabel]);
+
+  const saveDiscountMutation = useMutation({
+    mutationFn: async (data: { discount: number; discountType: string; discountLabel: string | null }) => {
+      const res = await apiRequest("PATCH", `/api/trips/${id}/versions/${currentVersionId}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+      toast({ title: "Discount saved" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const handleSaveDiscount = () => {
+    const amt = parseInt(discountAmountInput) || 0;
+    saveDiscountMutation.mutate({
+      discount: amt,
+      discountType: discountTypeInput,
+      discountLabel: discountLabelInput || null,
+    });
+  };
+
+  const handleClearDiscount = () => {
+    setDiscountAmountInput("0");
+    setDiscountTypeInput("fixed");
+    setDiscountLabelInput("");
+    setShowDiscountEditor(false);
+    saveDiscountMutation.mutate({ discount: 0, discountType: "fixed", discountLabel: null });
+  };
 
   const addBlankVersionMutation = useMutation({
     mutationFn: async () => {
@@ -1905,6 +1975,12 @@ export default function TripEditPage() {
                 {(trip.destination || (trip as any).destinations) && (
                   <span>{formatDestinationsShort((trip as any).destinations, trip.destination)}</span>
                 )}
+                {companionNames.length > 0 && (
+                  <span className="flex items-center gap-1" data-testid="text-traveling-with">
+                    <Users className="w-3 h-3" strokeWidth={1.5} />
+                    Traveling with: {companionNames.join(", ")}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -2131,9 +2207,6 @@ export default function TripEditPage() {
       {(() => {
         const budgetAmount = Number(trip.budget || 0);
         const budgetCurrency = trip.currency || "USD";
-        const percentage = budgetAmount > 0 ? (totalCost / budgetAmount) * 100 : 0;
-        const isOverBudget = totalCost > budgetAmount;
-        const isWarning = percentage >= 80 && !isOverBudget;
         const fmtBudget = (amount: number) =>
           new Intl.NumberFormat("en-US", {
             style: "currency",
@@ -2142,33 +2215,103 @@ export default function TripEditPage() {
             maximumFractionDigits: 0,
           }).format(amount);
 
-        if (budgetAmount <= 0) return null;
         return (
-          <div className="mx-4 mb-3 p-3 rounded-lg border bg-card/50" data-testid="budget-progress-bar">
-            <div className="flex justify-between items-center mb-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Budget
-              </span>
-              <span className="text-xs font-semibold">
-                {fmtBudget(budgetAmount)}
-              </span>
-            </div>
-            <div className="relative h-1.5 bg-muted rounded-full overflow-hidden">
-              <div
-                className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${isOverBudget ? "bg-red-500 w-full" : isWarning ? "bg-amber-500" : "bg-emerald-500"}`}
-                style={{ width: `${Math.min(percentage, 100)}%` }}
-              />
-            </div>
-            <div className="flex justify-between items-center mt-1.5">
-              <span className="text-[11px] text-muted-foreground">
-                {fmtBudget(totalCost)} used
-              </span>
-              <span className={`text-[11px] font-medium ${isOverBudget ? "text-red-500" : isWarning ? "text-amber-500" : "text-muted-foreground"}`}>
-                {isOverBudget
-                  ? `${fmtBudget(totalCost - budgetAmount)} over budget`
-                  : `${fmtBudget(budgetAmount - totalCost)} remaining`}
-              </span>
-            </div>
+          <div className="mx-4 mb-3 space-y-2">
+            {budgetAmount > 0 && (() => {
+              const percentage = budgetAmount > 0 ? (totalCost / budgetAmount) * 100 : 0;
+              const isOverBudget = totalCost > budgetAmount;
+              const isWarning = percentage >= 80 && !isOverBudget;
+              return (
+                <div className="p-3 rounded-lg border bg-card/50" data-testid="budget-progress-bar">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Budget</span>
+                    <span className="text-xs font-semibold">{fmtBudget(budgetAmount)}</span>
+                  </div>
+                  <div className="relative h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${isOverBudget ? "bg-red-500 w-full" : isWarning ? "bg-amber-500" : "bg-emerald-500"}`}
+                      style={{ width: `${Math.min(percentage, 100)}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between items-center mt-1.5">
+                    <span className="text-[11px] text-muted-foreground">{fmtBudget(totalCost)} used</span>
+                    <span className={`text-[11px] font-medium ${isOverBudget ? "text-red-500" : isWarning ? "text-amber-500" : "text-muted-foreground"}`}>
+                      {isOverBudget ? `${fmtBudget(totalCost - budgetAmount)} over budget` : `${fmtBudget(budgetAmount - totalCost)} remaining`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {subtotalCost > 0 && (
+              <div className="p-3 rounded-lg border bg-card/50" data-testid="cost-summary">
+                <div className="flex justify-between items-center">
+                  <span className="text-[11px] text-muted-foreground">Subtotal</span>
+                  <span className="text-xs">{fmtBudget(subtotalCost)}</span>
+                </div>
+                {discountValue > 0 && (
+                  <div className="flex justify-between items-center mt-1" data-testid="discount-line">
+                    <span className="text-[11px] text-emerald-600">
+                      {versionDiscountLabel || "Discount"}{versionDiscountType === "percent" ? ` (${versionDiscount}%)` : ""}
+                    </span>
+                    <span className="text-xs text-emerald-600">-{fmtBudget(discountValue)}</span>
+                  </div>
+                )}
+                {discountValue > 0 && (
+                  <>
+                    <Separator className="my-1.5" />
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-semibold">Total</span>
+                      <span className="text-xs font-semibold">{fmtBudget(totalCost)}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {!showDiscountEditor ? (
+              <button
+                onClick={() => setShowDiscountEditor(true)}
+                className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
+                data-testid="button-add-discount"
+              >
+                + Add discount or credit
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 flex-wrap p-3 rounded-lg border bg-card/50" data-testid="discount-editor">
+                <Select value={discountTypeInput} onValueChange={setDiscountTypeInput}>
+                  <SelectTrigger className="h-7 w-24 text-xs" data-testid="select-discount-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fixed">$ Fixed</SelectItem>
+                    <SelectItem value="percent">% Percent</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number"
+                  value={discountAmountInput}
+                  onChange={e => setDiscountAmountInput(e.target.value)}
+                  className="h-7 w-24 text-xs"
+                  placeholder={discountTypeInput === "percent" ? "10" : "500"}
+                  min={0}
+                  data-testid="input-discount-amount"
+                />
+                <Input
+                  value={discountLabelInput}
+                  onChange={e => setDiscountLabelInput(e.target.value)}
+                  className="h-7 flex-1 text-xs"
+                  placeholder='Label e.g. "Loyalty credit"'
+                  data-testid="input-discount-label"
+                />
+                <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={handleSaveDiscount} data-testid="button-save-discount">
+                  Save
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={handleClearDiscount} data-testid="button-remove-discount">
+                  Remove
+                </Button>
+              </div>
+            )}
           </div>
         );
       })()}

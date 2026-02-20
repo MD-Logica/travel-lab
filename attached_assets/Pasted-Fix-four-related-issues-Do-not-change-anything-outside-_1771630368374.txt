@@ -1,0 +1,265 @@
+Fix four related issues. Do not change anything outside of
+what is described.
+
+─── FIX 1: RECENT TRIPS EXCLUDES DELETED/ARCHIVED ───────────────────────────
+
+In server/storage.ts, find getRecentTripsWithClient (line ~297).
+Currently it fetches all trips with no status filter.
+
+Add a filter to exclude archived trips and any trips that no
+longer exist:
+
+  .where(
+    and(
+      eq(trips.orgId, orgId),
+      sql`${trips.status} != 'archived'`
+    )
+  )
+
+Also update the GET /api/recent-trips route in routes.ts to
+handle 404 gracefully on the client side.
+
+In dashboard.tsx, when a trip card is clicked and returns 404,
+invalidate the /api/recent-trips query so the stale card
+disappears:
+
+  onClick={() => {
+    navigate(`/trips/${trip.id}`);
+  }}
+
+And add an error boundary in the trip card click handler —
+if the trip fetch returns 404, call:
+  queryClient.invalidateQueries({
+    queryKey: ["/api/recent-trips"] });
+  toast({ title: "That trip no longer exists",
+    variant: "destructive" });
+
+─── FIX 2: COMPANION QUICK-ADD IN TRIP CREATION ─────────────────────────────
+
+In trip-new.tsx, after a client is selected from the dropdown,
+fetch their companions and show a quick-add UI if any exist.
+
+Add a query that runs when selectedClientId changes:
+
+  const { data: companions } = useQuery({
+    queryKey: ["/api/clients", selectedClientId, "companions"],
+    queryFn: async () => {
+      if (!selectedClientId) return [];
+      const res = await fetch(
+        `/api/clients/${selectedClientId}/companions`,
+        { credentials: "include" }
+      );
+      return res.json();
+    },
+    enabled: !!selectedClientId,
+  });
+
+Add state: const [selectedCompanions, setSelectedCompanions] =
+  useState<string[]>([]);
+
+Reset selectedCompanions when selectedClientId changes:
+  useEffect(() => {
+    setSelectedCompanions([]);
+  }, [selectedClientId]);
+
+Only show the companions section if companions?.length > 0.
+Place it directly below the client selector field:
+
+  {companions && companions.length > 0 && (
+    <div className="rounded-md border border-border/50
+      bg-muted/30 p-3 space-y-2">
+      <p className="text-xs text-muted-foreground">
+        {selectedClient?.fullName} often travels with:
+      </p>
+      {companions.map((rel: any) => (
+        <label key={rel.id}
+          className="flex items-center gap-2.5 cursor-pointer
+            py-0.5">
+          <Checkbox
+            checked={selectedCompanions.includes(
+              rel.companion.id)}
+            onCheckedChange={(checked) => {
+              setSelectedCompanions(prev =>
+                checked
+                  ? [...prev, rel.companion.id]
+                  : prev.filter(id => id !== rel.companion.id)
+              );
+            }}
+          />
+          <span className="text-sm">{rel.companion.fullName}</span>
+          {rel.relationshipLabel && (
+            <Badge variant="secondary" className="text-[10px]">
+              {rel.relationshipLabel}
+            </Badge>
+          )}
+        </label>
+      ))}
+    </div>
+  )}
+
+When the trip is saved, include selectedCompanions in payload:
+  additionalClientIds: selectedCompanions.length > 0
+    ? selectedCompanions : undefined,
+
+Store this in the trip's existing metadata or as a dedicated
+column. For now store as JSON in a new trips column:
+
+  ALTER TABLE trips
+    ADD COLUMN IF NOT EXISTS additional_client_ids
+    text[] DEFAULT '{}';
+
+Add to shared/schema.ts:
+  additionalClientIds: text("additional_client_ids")
+    .array().default(sql`'{}'`),
+
+In the trip editor header (trip-edit.tsx), if
+trip.additionalClientIds has entries, show them as small
+avatar chips next to the primary client name in the header:
+  "Traveling with: [companion names]"
+
+─── FIX 3: PDF PRICING — FIX showPricing BEING IGNORED ──────────────────────
+
+The PDF generator correctly reads version.showPricing (line ~347
+of pdf-generator.tsx). The issue is that selectedVersion in the
+PDF export route (routes.ts line ~1098) comes from
+storage.getTripFullView() which fetches versions via
+db.select().from(tripVersions). The showPricing field IS in the
+tripVersions table schema, but confirm it is being selected.
+
+In storage.ts, find getTripFullView and the line:
+  const versionRows = await db.select().from(tripVersions)...
+
+Confirm this is db.select() with no field restriction (selects
+all columns including showPricing). If it uses a restricted
+select({ ... }) that omits showPricing, add it.
+
+Then in the PDF export route, add a console.log to verify:
+  console.log("[PDF] showPricing:", selectedVersion.showPricing);
+
+This will confirm whether the field is reaching the generator.
+If it logs undefined, the storage query is the issue.
+If it logs the correct boolean, the generator is the issue.
+
+Fix whichever layer is the problem based on the log output.
+
+─── FIX 4: DISCOUNT / CREDIT FIELD ON ITINERARY ────────────────────────────
+
+Add an optional discount/credit field per itinerary version
+that adjusts the displayed total cost.
+
+DATABASE:
+  ALTER TABLE trip_versions
+    ADD COLUMN IF NOT EXISTS discount integer DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS discount_type varchar DEFAULT 'fixed',
+    ADD COLUMN IF NOT EXISTS discount_label text;
+
+  discount: integer amount (in same currency as trip)
+  discount_type: "fixed" ($ off) or "percent" (% off)
+  discount_label: optional text e.g. "Loyalty credit",
+    "Group discount", "Promotional offer"
+
+Add to shared/schema.ts tripVersions table definition.
+
+UI IN trip-edit.tsx — DISCOUNT IN BUDGET BAR AREA:
+
+Below the budget progress bar (or in the version toolbar area),
+add a small "Add discount" link that expands inline fields:
+
+  const [showDiscount, setShowDiscount] = useState(false);
+
+  {!showDiscount ? (
+    <button
+      onClick={() => setShowDiscount(true)}
+      className="text-xs text-muted-foreground hover:text-foreground
+        underline-offset-2 hover:underline transition-colors"
+    >
+      + Add discount or credit
+    </button>
+  ) : (
+    <div className="flex items-center gap-2 flex-wrap">
+      <Select
+        value={discountType}
+        onValueChange={setDiscountType}
+      >
+        <SelectTrigger className="h-7 w-24 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="fixed">$ Fixed</SelectItem>
+          <SelectItem value="percent">% Percent</SelectItem>
+        </SelectContent>
+      </Select>
+      <Input
+        type="number"
+        value={discountAmount}
+        onChange={e => setDiscountAmount(e.target.value)}
+        className="h-7 w-24 text-xs"
+        placeholder={discountType === "percent" ? "10" : "500"}
+        min={0}
+      />
+      <Input
+        value={discountLabel}
+        onChange={e => setDiscountLabel(e.target.value)}
+        className="h-7 flex-1 text-xs"
+        placeholder='Label e.g. "Loyalty credit"'
+      />
+      <Button variant="ghost" size="sm" className="h-7 text-xs"
+        onClick={saveDiscount}>
+        Save
+      </Button>
+      <Button variant="ghost" size="sm" className="h-7 text-xs
+        text-muted-foreground" onClick={clearDiscount}>
+        Remove
+      </Button>
+    </div>
+  )}
+
+Save via PATCH /api/trips/:id/versions/:versionId:
+  { discount: amount, discount_type: type,
+    discount_label: label }
+
+TOTAL CALCULATION WITH DISCOUNT:
+
+  const subtotal = segments.reduce(
+    (sum, s) => sum + (s.cost || 0), 0);
+
+  const discountAmount = currentVersion?.discount || 0;
+  const discountType = currentVersion?.discountType || "fixed";
+
+  const discountValue = discountType === "percent"
+    ? Math.round(subtotal * (discountAmount / 100))
+    : discountAmount;
+
+  const totalAfterDiscount = Math.max(0, subtotal - discountValue);
+
+DISPLAY IN BUDGET BAR:
+  Show subtotal, then discount line, then total:
+    Subtotal: $X,XXX
+    [label] discount: -$XXX
+    ─────────────────
+    Total: $X,XXX
+
+DISPLAY IN CLIENT PREVIEW (when showPricing is true):
+  Show the same breakdown at the bottom of the itinerary.
+
+DISPLAY IN PDF (when showPricing is true):
+  Add discount line to the cost summary block in the PDF.
+  Pass discount fields through generateTripPdf() → version param
+  already carries them since it's the full version object.
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+1. Dashboard recent trips: delete a trip → refresh dashboard
+   → deleted trip no longer shows in recent cards
+2. Archive a trip → it disappears from recent trips on dashboard
+3. New trip form: select a client who has a companion linked
+   → companion suggestion appears with checkbox
+4. Select the companion → trip saves with both clients
+5. Trip editor header shows "Traveling with: [companion name]"
+6. No companions linked → companion section does not appear
+7. Toggle "Show pricing to client" ON → download PDF
+   → costs appear in PDF (check console log first)
+8. Add a 10% discount labeled "Group rate" to a version
+   → budget bar shows subtotal, discount line, and net total
+9. Preview link with showPricing ON → discount breakdown visible
+10. PDF with showPricing ON → discount line in PDF
