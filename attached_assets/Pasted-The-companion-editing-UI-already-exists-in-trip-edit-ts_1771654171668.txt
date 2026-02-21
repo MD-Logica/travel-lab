@@ -1,0 +1,44 @@
+The companion editing UI already exists in trip-edit.tsx but is nearly impossible to find — it's hidden in a small info line at the top of the builder that only reveals a pencil icon on hover. Make it a clearly visible, always-present control.
+
+**File to change: `client/src/pages/trip-edit.tsx` only**
+
+### Problem
+The companion popover trigger is a small inline button buried in the trip metadata row (destination · dates · "Traveling with: Name"). The pencil icon only appears on hover and is only 2.5px wide. Most users will never discover it.
+
+### Fix — Two changes to make companions clearly editable
+
+**Change 1: Make the trigger always visible, not hover-only**
+
+Find the companion `<Popover>` trigger button (around line 2227). Currently the `<Pencil>` icon has `opacity-0 group-hover:opacity-60`. Change it to always be visible at a low opacity:
+
+```tsx
+<Pencil className="w-2.5 h-2.5 opacity-40 ml-0.5" />
+```
+
+Also change the button text so it's always clearly actionable. When no companions are set:
+```tsx
+<span className="text-muted-foreground underline underline-offset-2 decoration-dotted">
+  Add travel companions
+</span>
+```
+
+When companions are set:
+```tsx
+<>
+  <span>Traveling with: {companionNames.join(", ")}</span>
+  <Pencil className="w-2.5 h-2.5 opacity-40 ml-0.5" />
+</>
+```
+
+**Change 2: Also expose companions in the EditTripSheet (the trip settings drawer)**
+
+The trip settings drawer (`EditTripSheet` component, around line 1180) lets the advisor edit destination, dates, budget, and primary client — but has no companion section. Add one at the bottom of the form, above the Save button.
+
+In `EditTripSheet`, add:
+- A `"Travel Companions"` section label
+- A `<Popover>` with the same companion search + checkbox list UI that already exists in `TripEditPage`
+- The popover should fetch `/api/clients` for the candidate list and use the same `additionalClientIds` PATCH call on save
+
+Since `EditTripSheet` already has access to `trip.additionalClientIds` via its `trip` prop, you can manage local state for `selectedCompanionIds` initialized from `trip.additionalClientIds`, then include it in the existing save mutation payload that already sends the PATCH to `/api/trips/:id`.
+
+Do not add any new API routes. Do not change any server files.
