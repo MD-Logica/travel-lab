@@ -329,11 +329,15 @@ export async function registerRoutes(
       const updateSchema = z.object({
         fullName: z.string().min(1, "Name is required").optional(),
         phone: z.string().optional().nullable(),
+        website: z.string().optional().nullable(),
+        timeFormat: z.enum(["12h", "24h"]).optional(),
       });
       const parsed = updateSchema.parse(req.body);
       const updateData: any = {};
       if (parsed.fullName !== undefined) updateData.fullName = parsed.fullName;
       if (parsed.phone !== undefined) updateData.phone = parsed.phone || null;
+      if (parsed.website !== undefined) updateData.website = parsed.website || null;
+      if (parsed.timeFormat !== undefined) updateData.timeFormat = parsed.timeFormat;
       const profile = await storage.updateProfile(userId, updateData);
       if (!profile) return res.status(404).json({ message: "Profile not found" });
       res.json(profile);

@@ -54,16 +54,20 @@ function ProfileSection({ profile }: { profile: Profile }) {
   const { toast } = useToast();
   const [fullName, setFullName] = useState(profile.fullName);
   const [phone, setPhone] = useState(profile.phone || "");
+  const [website, setWebsite] = useState((profile as any).website || "");
+  const [timeFormat, setTimeFormat] = useState<"12h" | "24h">((profile as any).timeFormat || "24h");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     setFullName(profile.fullName);
     setPhone(profile.phone || "");
+    setWebsite((profile as any).website || "");
+    setTimeFormat((profile as any).timeFormat || "24h");
     setDirty(false);
   }, [profile]);
 
   const updateMutation = useMutation({
-    mutationFn: async (data: { fullName: string; phone: string | null }) => {
+    mutationFn: async (data: { fullName: string; phone: string | null; website: string | null; timeFormat: string }) => {
       const res = await apiRequest("PATCH", "/api/profile", data);
       return res.json();
     },
@@ -133,6 +137,39 @@ function ProfileSection({ profile }: { profile: Profile }) {
           </div>
 
           <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wider text-muted-foreground">Website</Label>
+            <Input
+              value={website}
+              onChange={(e) => { setWebsite(e.target.value); setDirty(true); }}
+              placeholder="https://yourtravelagency.com"
+              data-testid="input-website"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs uppercase tracking-wider text-muted-foreground">Time Format</Label>
+            <div className="flex items-center rounded-md border border-border overflow-hidden w-fit">
+              <button
+                type="button"
+                onClick={() => { setTimeFormat("24h"); setDirty(true); }}
+                className={`px-4 py-1.5 text-sm transition-colors ${timeFormat === "24h" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                data-testid="button-time-format-24h"
+              >
+                24h
+              </button>
+              <button
+                type="button"
+                onClick={() => { setTimeFormat("12h"); setDirty(true); }}
+                className={`px-4 py-1.5 text-sm transition-colors ${timeFormat === "12h" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+                data-testid="button-time-format-12h"
+              >
+                12h AM/PM
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">Applies to the client preview and PDF</p>
+          </div>
+
+          <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wider text-muted-foreground">Role</Label>
             <div>
               <Badge variant="outline" className="capitalize text-xs" data-testid="badge-role">
@@ -154,7 +191,7 @@ function ProfileSection({ profile }: { profile: Profile }) {
               <Button
                 size="sm"
                 disabled={updateMutation.isPending}
-                onClick={() => updateMutation.mutate({ fullName, phone: phone || null })}
+                onClick={() => updateMutation.mutate({ fullName, phone: phone || null, website: website || null, timeFormat })}
                 data-testid="button-save-profile"
               >
                 {updateMutation.isPending ? "Saving..." : "Save changes"}

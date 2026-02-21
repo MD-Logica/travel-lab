@@ -19,6 +19,8 @@ import {
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
 import { calculateLayover, isRedEye, journeyTotalTime } from "@/lib/journey-utils";
+import { formatTime, timeFormatString } from "@/lib/time-utils";
+import { AdvisorContactCard } from "@/components/advisor-contact-card";
 
 const segmentIcons: Record<string, typeof Plane> = {
   flight: Plane, charter: Diamond, charter_flight: Diamond, hotel: Hotel, transport: Car,
@@ -53,7 +55,7 @@ const noteTypeIcons: Record<string, { icon: typeof Info; color: string }> = {
 interface TripViewData {
   trip: Trip;
   organization: { id: string; name: string; logoUrl: string | null };
-  advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null;
+  advisor: { fullName: string; email: string | null; avatarUrl: string | null; phone: string | null; website: string | null; timeFormat: string } | null;
   client: { fullName: string; email: string | null } | null;
   versions: (TripVersion & { segments: TripSegment[] })[];
 }
@@ -94,7 +96,7 @@ function getDayDate(startDate: string | Date | null, dayNumber: number) {
   return d;
 }
 
-function FlightCard({ segment }: { segment: TripSegment }) {
+function FlightCard({ segment, timeFormat = "24h" }: { segment: TripSegment; timeFormat?: "12h" | "24h" }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const depAirport = meta.departureAirport || "";
   const arrAirport = meta.arrivalAirport || "";
@@ -115,7 +117,7 @@ function FlightCard({ segment }: { segment: TripSegment }) {
             <div className="flex items-center gap-3 mb-2">
               <div className="text-center">
                 <p className="text-2xl font-serif font-semibold tracking-tight">{depAirport}</p>
-                {meta.departureTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.departureTime}</p>}
+                {meta.departureTime && <p className="text-xs text-muted-foreground mt-0.5">{formatTime(meta.departureTime, timeFormat)}<span className="text-xs text-muted-foreground/50 ml-1">local</span></p>}
               </div>
               <div className="flex-1 flex items-center gap-1">
                 <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
@@ -124,7 +126,7 @@ function FlightCard({ segment }: { segment: TripSegment }) {
               </div>
               <div className="text-center">
                 <p className="text-2xl font-serif font-semibold tracking-tight">{arrAirport}</p>
-                {meta.arrivalTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.arrivalTime}</p>}
+                {meta.arrivalTime && <p className="text-xs text-muted-foreground mt-0.5">{formatTime(meta.arrivalTime, timeFormat)}<span className="text-xs text-muted-foreground/50 ml-1">local</span></p>}
               </div>
             </div>
           ) : (
@@ -143,7 +145,7 @@ function FlightCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function CharterFlightCard({ segment }: { segment: TripSegment }) {
+function CharterFlightCard({ segment, timeFormat = "24h" }: { segment: TripSegment; timeFormat?: "12h" | "24h" }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const depLoc = meta.departureLocation || "";
   const arrLoc = meta.arrivalLocation || "";
@@ -169,7 +171,7 @@ function CharterFlightCard({ segment }: { segment: TripSegment }) {
             <div className="flex items-center gap-3 mt-3 mb-1">
               <div className="text-center">
                 <p className="text-base font-medium">{depLoc}</p>
-                {meta.departureTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.departureTime}</p>}
+                {meta.departureTime && <p className="text-xs text-muted-foreground mt-0.5">{formatTime(meta.departureTime, timeFormat)}<span className="text-xs text-muted-foreground/50 ml-1">local</span></p>}
               </div>
               <div className="flex-1 flex items-center gap-1">
                 <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
@@ -178,7 +180,7 @@ function CharterFlightCard({ segment }: { segment: TripSegment }) {
               </div>
               <div className="text-center">
                 <p className="text-base font-medium">{arrLoc}</p>
-                {meta.arrivalTime && <p className="text-xs text-muted-foreground mt-0.5">{meta.arrivalTime}</p>}
+                {meta.arrivalTime && <p className="text-xs text-muted-foreground mt-0.5">{formatTime(meta.arrivalTime, timeFormat)}<span className="text-xs text-muted-foreground/50 ml-1">local</span></p>}
               </div>
             </div>
           )}
@@ -195,7 +197,7 @@ function CharterFlightCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function HotelCard({ segment }: { segment: TripSegment }) {
+function HotelCard({ segment, timeFormat = "24h" }: { segment: TripSegment; timeFormat?: "12h" | "24h" }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   return (
     <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-segment-${segment.id}`}>
@@ -221,10 +223,10 @@ function HotelCard({ segment }: { segment: TripSegment }) {
           )}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-3">
             {meta.checkInDateTime && (
-              <span>Check-in: {format(new Date(meta.checkInDateTime), "d MMM, HH:mm")}</span>
+              <span>Check-in: {format(new Date(meta.checkInDateTime), `d MMM, ${timeFormatString(timeFormat)}`)}</span>
             )}
             {meta.checkOutDateTime && (
-              <span>Check-out: {format(new Date(meta.checkOutDateTime), "d MMM, HH:mm")}</span>
+              <span>Check-out: {format(new Date(meta.checkOutDateTime), `d MMM, ${timeFormatString(timeFormat)}`)}</span>
             )}
             {meta.address && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{meta.address}</span>}
             {(segment.confirmationNumber || meta.confirmationNumber) && (
@@ -259,7 +261,7 @@ function HotelCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function RestaurantCard({ segment }: { segment: TripSegment }) {
+function RestaurantCard({ segment, timeFormat = "24h" }: { segment: TripSegment; timeFormat?: "12h" | "24h" }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   return (
     <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-segment-${segment.id}`}>
@@ -276,7 +278,7 @@ function RestaurantCard({ segment }: { segment: TripSegment }) {
           <p className="text-lg font-serif font-semibold">{meta.restaurantName || segment.title}</p>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-2">
             {meta.reservationDateTime && (
-              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{format(new Date(meta.reservationDateTime), "HH:mm")}</span>
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{format(new Date(meta.reservationDateTime), timeFormatString(timeFormat))}</span>
             )}
             {meta.partySize && <span className="flex items-center gap-1"><Users className="w-3 h-3" />{meta.partySize} guests</span>}
             {meta.guestName && <span>{meta.guestName}</span>}
@@ -313,7 +315,7 @@ function RestaurantCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function ActivityCard({ segment }: { segment: TripSegment }) {
+function ActivityCard({ segment, timeFormat = "24h" }: { segment: TripSegment; timeFormat?: "12h" | "24h" }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   return (
     <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-segment-${segment.id}`}>
@@ -330,7 +332,7 @@ function ActivityCard({ segment }: { segment: TripSegment }) {
           <p className="text-lg font-serif font-semibold">{meta.activityName || segment.title}</p>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-2">
             {meta.startDateTime && (
-              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{format(new Date(meta.startDateTime), "HH:mm")}</span>
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{format(new Date(meta.startDateTime), timeFormatString(timeFormat))}</span>
             )}
             {meta.duration && <span>{meta.duration}</span>}
             {meta.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{meta.location}</span>}
@@ -422,7 +424,7 @@ function GenericCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function JourneyViewCard({ legs, showPricing }: { legs: TripSegment[]; showPricing?: boolean }) {
+function JourneyViewCard({ legs, showPricing, timeFormat = "24h" }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h" }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
   const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
@@ -470,7 +472,7 @@ function JourneyViewCard({ legs, showPricing }: { legs: TripSegment[]; showPrici
           <div className="flex items-center gap-3 mb-3">
             <div className="text-center">
               <p className="text-2xl font-serif font-semibold tracking-tight">{originIata}</p>
-              {firstDepTime && <p className="text-xs text-muted-foreground mt-0.5">{firstDepTime}</p>}
+              {firstDepTime && <p className="text-xs text-muted-foreground mt-0.5">{formatTime(firstDepTime, timeFormat)}<span className="text-xs text-muted-foreground/50 ml-1">local</span></p>}
             </div>
             <div className="flex-1 flex flex-col items-center gap-1">
               <div className="flex items-center w-full gap-1">
@@ -493,7 +495,7 @@ function JourneyViewCard({ legs, showPricing }: { legs: TripSegment[]; showPrici
             </div>
             <div className="text-center">
               <p className="text-2xl font-serif font-semibold tracking-tight">{destIata}</p>
-              {lastArrTime && <p className="text-xs text-muted-foreground mt-0.5">{lastArrTime}</p>}
+              {lastArrTime && <p className="text-xs text-muted-foreground mt-0.5">{formatTime(lastArrTime, timeFormat)}<span className="text-xs text-muted-foreground/50 ml-1">local</span></p>}
             </div>
           </div>
 
@@ -547,7 +549,7 @@ function JourneyViewCard({ legs, showPricing }: { legs: TripSegment[]; showPrici
                       {depTime && arrTime && (
                         <>
                           <span className="text-muted-foreground/40">&middot;</span>
-                          <span>{depTime} &rarr; {arrTime}</span>
+                          <span>{formatTime(depTime, timeFormat)} &rarr; {formatTime(arrTime, timeFormat)}</span>
                         </>
                       )}
                     </div>
@@ -617,15 +619,15 @@ function formatViewCurrency(amount: number, currency: string = "USD"): string {
   }).format(amount);
 }
 
-function SegmentView({ segment, showPricing }: { segment: TripSegment; showPricing?: boolean }) {
+function SegmentView({ segment, showPricing, timeFormat = "24h" }: { segment: TripSegment; showPricing?: boolean; timeFormat?: "12h" | "24h" }) {
   const card = (() => {
     switch (segment.type) {
-      case "flight": return <FlightCard segment={segment} />;
+      case "flight": return <FlightCard segment={segment} timeFormat={timeFormat} />;
       case "charter":
-      case "charter_flight": return <CharterFlightCard segment={segment} />;
-      case "hotel": return <HotelCard segment={segment} />;
-      case "restaurant": return <RestaurantCard segment={segment} />;
-      case "activity": return <ActivityCard segment={segment} />;
+      case "charter_flight": return <CharterFlightCard segment={segment} timeFormat={timeFormat} />;
+      case "hotel": return <HotelCard segment={segment} timeFormat={timeFormat} />;
+      case "restaurant": return <RestaurantCard segment={segment} timeFormat={timeFormat} />;
+      case "activity": return <ActivityCard segment={segment} timeFormat={timeFormat} />;
       case "note": return <NoteCard segment={segment} />;
       default: return <GenericCard segment={segment} />;
     }
@@ -653,12 +655,14 @@ function DayAccordion({
   dayDate,
   defaultOpen,
   showPricing,
+  timeFormat = "24h",
 }: {
   dayNumber: number;
   segments: TripSegment[];
   dayDate: Date | null;
   defaultOpen: boolean;
   showPricing?: boolean;
+  timeFormat?: "12h" | "24h";
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -690,9 +694,9 @@ function DayAccordion({
             <div className="pb-6 space-y-3">
               {buildViewDayRenderItems(segments).map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} />;
+                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
                 }
-                return <SegmentView key={item.segment.id} segment={item.segment} showPricing={showPricing} />;
+                return <SegmentView key={item.segment.id} segment={item.segment} showPricing={showPricing} timeFormat={timeFormat} />;
               })}
             </div>
           </motion.div>
@@ -815,6 +819,7 @@ export default function TripViewPage() {
   }
 
   const { trip, organization, advisor, client } = data;
+  const timeFormat = (advisor?.timeFormat === "12h" ? "12h" : "24h") as "12h" | "24h";
   const dateRange = formatDateRange(trip.startDate, trip.endDate);
   const activeDayInfo = getActiveDayInfo(trip.startDate, trip.endDate);
   const heroImage = trip.coverImageUrl || "/images/default-trip-hero.jpg";
@@ -971,6 +976,7 @@ export default function TripViewPage() {
                 dayDate={getDayDate(trip.startDate, dayNumber)}
                 defaultOpen={dayNumber <= 2}
                 showPricing={!!activeVersion?.showPricing}
+                timeFormat={timeFormat}
               />
             ))
           )}
@@ -1032,20 +1038,19 @@ export default function TripViewPage() {
         )}
 
         <Separator className="opacity-50" />
-        <footer className="py-12 text-center space-y-3" data-testid="trip-view-footer">
-          {advisor && (
-            <p className="text-sm text-muted-foreground">
-              Curated by <span className="font-medium text-foreground">{advisor.fullName}</span>
-              <span className="text-muted-foreground/60"> at </span>
+        <footer className="py-12" data-testid="trip-view-footer">
+          {advisor ? (
+            <AdvisorContactCard
+              advisor={advisor}
+              organization={organization}
+            />
+          ) : (
+            <p className="text-center text-sm text-muted-foreground">
+              Prepared by{" "}
               <span className="font-medium text-foreground">{organization.name}</span>
             </p>
           )}
-          {!advisor && (
-            <p className="text-sm text-muted-foreground">
-              Prepared by <span className="font-medium text-foreground">{organization.name}</span>
-            </p>
-          )}
-          <p className="text-xs text-muted-foreground/50 tracking-wider uppercase">Travel Lab</p>
+          <p className="text-center text-xs text-muted-foreground/40 tracking-wider uppercase mt-6">Travel Lab</p>
         </footer>
       </div>
     </div>

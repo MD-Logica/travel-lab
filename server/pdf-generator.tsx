@@ -136,7 +136,7 @@ async function resolveSegmentPhotos(segments: TripSegment[]): Promise<Map<string
 
 const bookingClassLabels: Record<string, string> = { first: "First", business: "Business", premium_economy: "Premium Economy", economy: "Economy" };
 
-function SegmentView({ segment, photos, showPricing = true }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean }) {
+function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h" }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean; timeFormat?: string }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const typeColor = getSegmentColor(segment.type);
   const details: string[] = [];
@@ -152,9 +152,9 @@ function SegmentView({ segment, photos, showPricing = true }: { segment: TripSeg
       const arrCity = meta.arrival?.city || meta.arrivalAirportName || "";
       if (depCity && arrCity) details.push(`${depCity} > ${arrCity}`);
       const depTime = meta.departure?.scheduledTime || meta.departureTime || "";
-      if (depTime) details.push(`Departs: ${depTime}`);
+      if (depTime) details.push(`Departs: ${fmtTime(depTime, timeFormat)} local`);
       const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
-      if (arrTime) details.push(`Arrives: ${arrTime}`);
+      if (arrTime) details.push(`Arrives: ${fmtTime(arrTime, timeFormat)} local`);
       if (meta.bookingClass) details.push(`Class: ${bookingClassLabels[meta.bookingClass] || meta.bookingClass}`);
       if (meta.status && meta.status !== "Scheduled") details.push(`Status: ${meta.status}`);
       if (meta.aircraft) details.push(`Aircraft: ${meta.aircraft}`);
@@ -163,8 +163,8 @@ function SegmentView({ segment, photos, showPricing = true }: { segment: TripSeg
       const dep = meta.departureLocation || "";
       const arr = meta.arrivalLocation || "";
       if (dep && arr) details.push(`${dep} > ${arr}`);
-      if (meta.departureTime) details.push(`Departs: ${meta.departureTime}`);
-      if (meta.arrivalTime) details.push(`Arrives: ${meta.arrivalTime}`);
+      if (meta.departureTime) details.push(`Departs: ${fmtTime(meta.departureTime, timeFormat)} local`);
+      if (meta.arrivalTime) details.push(`Arrives: ${fmtTime(meta.arrivalTime, timeFormat)} local`);
       if (meta.aircraftType) details.push(`Aircraft: ${meta.aircraftType}`);
       if (meta.fboHandler) details.push(`FBO: ${meta.fboHandler}`);
       details.push("Charter");
@@ -176,13 +176,13 @@ function SegmentView({ segment, photos, showPricing = true }: { segment: TripSeg
       if (meta.starRating && Number(meta.starRating) > 0) details.push(`${"*".repeat(Number(meta.starRating))} star`);
     } else if (segment.type === "restaurant") {
       title = meta.restaurantName || segment.title || "Restaurant";
-      if (segment.startTime) details.push(`Time: ${segment.startTime}`);
+      if (segment.startTime) details.push(`Time: ${fmtTime(segment.startTime, timeFormat)}`);
       if (meta.partySize) details.push(`Party: ${meta.partySize} guests`);
       if (meta.address) details.push(meta.address);
       if (meta.cuisine) details.push(`Cuisine: ${meta.cuisine}`);
     } else if (segment.type === "activity") {
       title = meta.activityName || segment.title || "Activity";
-      if (segment.startTime) details.push(`Time: ${segment.startTime}`);
+      if (segment.startTime) details.push(`Time: ${fmtTime(segment.startTime, timeFormat)}`);
       if (meta.location) details.push(meta.location);
       if (meta.duration) details.push(`Duration: ${meta.duration}`);
     } else if (segment.type === "transport") {
@@ -190,7 +190,7 @@ function SegmentView({ segment, photos, showPricing = true }: { segment: TripSeg
       const pickup = meta.pickupLocation || "";
       const dropoff = meta.dropoffLocation || "";
       if (pickup && dropoff) details.push(`${pickup} > ${dropoff}`);
-      if (segment.startTime) details.push(`Time: ${segment.startTime}`);
+      if (segment.startTime) details.push(`Time: ${fmtTime(segment.startTime, timeFormat)}`);
       if (meta.driverName) details.push(`Driver: ${meta.driverName}`);
     } else if (segment.type === "note") {
       title = meta.noteTitle || segment.title || "Note";
@@ -246,7 +246,7 @@ function pdfLayoverDisplay(leg1Meta: Record<string, any>, leg2Meta: Record<strin
   } catch { return null; }
 }
 
-function JourneyPdfView({ legs, showPricing = true }: { legs: TripSegment[]; showPricing?: boolean }) {
+function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h" }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: string }) {
   const firstMeta = (legs[0].metadata || {}) as Record<string, any>;
   const lastMeta = (legs[legs.length - 1].metadata || {}) as Record<string, any>;
   const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
@@ -287,7 +287,7 @@ function JourneyPdfView({ legs, showPricing = true }: { legs: TripSegment[]; sho
                 {flightNum}{airline ? ` (${airline})` : ""}{bClass ? ` - ${bClass}` : ""}
               </Text>
               {depIata && arrIata && (
-                <Text style={s.segmentDetail}>{depIata} {">"} {arrIata}{depTime ? ` | ${depTime}` : ""}{arrTime ? ` - ${arrTime}` : ""}</Text>
+                <Text style={s.segmentDetail}>{depIata} {">"} {arrIata}{depTime ? ` | ${fmtTime(depTime, timeFormat)}` : ""}{arrTime ? ` - ${fmtTime(arrTime, timeFormat)}` : ""}</Text>
               )}
               {confNum ? <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text> : null}
             </View>
@@ -336,15 +336,27 @@ function buildPdfDayItems(daySegments: TripSegment[]): PdfDayRenderItem[] {
 interface PdfData {
   trip: Trip;
   organization: { name: string; logoUrl: string | null };
-  advisor: { fullName: string } | null;
+  advisor: { fullName: string; email?: string | null; phone?: string | null; website?: string | null; timeFormat?: string } | null;
   client: { fullName: string } | null;
   version: TripVersion;
   segments: TripSegment[];
 }
 
+function fmtTime(t: string | null | undefined, tf: string): string {
+  if (!t) return "";
+  const [hStr, mStr] = t.split(":");
+  const h = parseInt(hStr), m = parseInt(mStr);
+  if (isNaN(h) || isNaN(m)) return t || "";
+  if (tf !== "12h") return t;
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
 function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<string, ResolvedPhoto[]> }) {
   const { trip, organization, advisor, client, version, segments } = data;
   const showPricing = version.showPricing ?? true;
+  const timeFormat = advisor?.timeFormat || "24h";
 
   const dayNumbers = Array.from(new Set(segments.map(s => s.dayNumber))).sort((a, b) => a - b);
 
@@ -388,9 +400,9 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
               <Text style={s.dayHeader}>{dayLabel}</Text>
               {renderItems.map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} />;
+                  return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
                 }
-                return <SegmentView key={item.segment.id} segment={item.segment} photos={photoMap.get(item.segment.id)} showPricing={showPricing} />;
+                return <SegmentView key={item.segment.id} segment={item.segment} photos={photoMap.get(item.segment.id)} showPricing={showPricing} timeFormat={timeFormat} />;
               })}
             </View>
           );
@@ -443,6 +455,40 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
           {organization.name} - Generated by Travel Lab
         </Text>
       </Page>
+
+      {advisor && (
+        <Page size="A4" style={s.page}>
+          <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+            <Text style={{ fontFamily: "Serif", fontSize: 22, color: colors.text, marginBottom: 30, textAlign: "center" }}>
+              Your Travel Advisor
+            </Text>
+            <Text style={{ fontFamily: "Serif", fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 4 }}>
+              {advisor.fullName}
+            </Text>
+            <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.muted, marginBottom: 20 }}>
+              {organization.name}
+            </Text>
+            {advisor.email && (
+              <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.muted, marginBottom: 4 }}>
+                {advisor.email}
+              </Text>
+            )}
+            {advisor.phone && (
+              <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.muted, marginBottom: 4 }}>
+                {advisor.phone}
+              </Text>
+            )}
+            {advisor.website && (
+              <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.primary, marginBottom: 4 }}>
+                {advisor.website}
+              </Text>
+            )}
+          </View>
+          <Text style={s.footer} fixed>
+            {organization.name} - Generated by Travel Lab
+          </Text>
+        </Page>
+      )}
     </Document>
   );
 }

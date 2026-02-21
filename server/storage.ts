@@ -121,7 +121,7 @@ export interface IStorage {
   getTripFullView(tripId: string): Promise<{
     trip: Trip;
     organization: { id: string; name: string; logoUrl: string | null };
-    advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null;
+    advisor: { fullName: string; email: string | null; avatarUrl: string | null; phone: string | null; website: string | null; timeFormat: string } | null;
     client: { fullName: string; email: string | null } | null;
     versions: (TripVersion & { segments: TripSegment[] })[];
   } | undefined>;
@@ -545,7 +545,7 @@ export class DatabaseStorage implements IStorage {
   async getTripFullView(tripId: string): Promise<{
     trip: Trip;
     organization: { id: string; name: string; logoUrl: string | null };
-    advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null;
+    advisor: { fullName: string; email: string | null; avatarUrl: string | null; phone: string | null; website: string | null; timeFormat: string } | null;
     client: { fullName: string; email: string | null } | null;
     versions: (TripVersion & { segments: TripSegment[] })[];
   } | undefined> {
@@ -559,12 +559,15 @@ export class DatabaseStorage implements IStorage {
     }).from(organizations).where(eq(organizations.id, trip.orgId));
     if (!org) return undefined;
 
-    let advisor: { fullName: string; email: string | null; avatarUrl: string | null } | null = null;
+    let advisor: { fullName: string; email: string | null; avatarUrl: string | null; phone: string | null; website: string | null; timeFormat: string } | null = null;
     if (trip.advisorId) {
       const [adv] = await db.select({
         fullName: profiles.fullName,
         email: profiles.email,
         avatarUrl: profiles.avatarUrl,
+        phone: profiles.phone,
+        website: profiles.website,
+        timeFormat: profiles.timeFormat,
       }).from(profiles).where(eq(profiles.id, trip.advisorId));
       if (adv) advisor = adv;
     }
