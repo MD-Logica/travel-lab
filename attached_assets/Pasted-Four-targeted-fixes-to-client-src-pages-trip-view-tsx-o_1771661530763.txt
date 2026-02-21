@@ -1,0 +1,246 @@
+Four targeted fixes to `client/src/pages/trip-view.tsx` only. No schema or server changes.
+
+---
+
+## Fix 1 — Variant card title: flights inherit full journey route + cabin + pax
+
+**Root cause:** In the `variants.map(...)` block inside `VariantCards`, upgrade variant labels call `buildPrimaryLabel(segment)` — without passing `journeyLegs`. So a connecting flight variant gets the first-leg route (EWR→DFW) instead of the full journey route (EWR→LAX).
+
+**Fix:** In the variant label builder (the `isUpgrade` branch inside `variants.map`), replace the current label construction with the same full-format logic used for the primary card — including journey awareness, cabin, and passenger count:
+
+Find this block (inside `variants.map`, inside the `<p className="text-sm font-medium pr-6">` IIFE):
+
+```tsx
+const isUpgrade = !v.variantType || v.variantType === "upgrade";
+if (isUpgrade) {
+  const upgradeContext = segment.type === "hotel"
+    ? ((segment.metadata as any)?.hotelName || segment.title)
+    : buildPrimaryLabel(segment);
+  return upgradeContext ? <>{upgradeContext} — {v.label}</> : v.label;
+}
+return v.label;
+```
+
+Replace with:
+
+```tsx
+const isUpgrade = !v.variantType || v.variantType === "upgrade";
+if (isUpgrade) {
+  if (segment.type === "flight" || segment.type === "charter_flight") {
+    // Build same full-format label as the primary card
+    const meta = (segment.metadata || {}) as Record<string, any>;
+    const cabin = bookingClassLabels[meta.bookingClass] || "";
+    // Use variant's own cabin label if it has one (e.g. "Premium Economy")
+    const variantCabin = v.cabin || v.label || "";
+
+    if (journeyLegs && journeyLegs.length > 1) {
+      const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+      const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+      const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+      const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+      const stops = journeyLegs.length - 1;
+      const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabel(segment, journeyLegs);
+      const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+      const extras: string[] = [stopsPart];
+      if (variantCabin) extras.push(variantCabin);
+      const vQtyLocal = v.quantity || 1;
+      if (vQtyLocal > 1) extras.push(`${vQtyLocal} passengers`);
+      return `${routePart} (${extras.join(", ")})`;
+    }
+
+    // Single-leg flight
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabel(segment);
+    const extras: string[] = [];
+    if (variantCabin) extras.push(variantCabin);
+    const vQtyLocal = v.quantity || 1;
+    if (vQtyLocal > 1) extras.push(`${vQtyLocal} passengers`);
+    return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+  }
+
+  if (segment.type === "hotel") {
+    const hotelName = (segment.metadata as any)?.hotelName || segment.title || "";
+    const vQtyLocal = v.quantity || 1;
+    // v.label is the room type (e.g. "Grand Suite")
+    const parts = [hotelName, v.label].filter(Boolean);
+    if (vQtyLocal > 1) parts.push(`${vQtyLocal} rooms`);
+    // Return as plain string — hotel labels don't need JSX
+    return parts.join(" — ");
+  }
+
+  // Other upgrade types: fall back to simple prepend
+  const ctx = buildPrimaryLabel(segment, journeyLegs);
+  return ctx ? <>{ctx} — {v.label}</> : v.label;
+}
+return v.label;
+```
+
+Note: for hotels, since we're building the full label including the room name directly, the `v.label` should NOT be appended again afterward. The label IS the room type. The pattern is `Hotel Name — Room Type — N rooms` built all in one place above.
+
+---
+
+## Fix 2 — Variant card subtitle: always show quantity and cost breakdown
+
+**Root cause:** `vQty > 1` only triggers when `v.quantity` is stored on the variant. If it's null/undefined, it defaults to 1 and the row is hidden even though the primary card shows 2 passengers. The variant should inherit quantity context from the parent segment when its own quantity is unset.
+
+**Fix:** In `variants.map`, before the `return (...)` for each variant button, compute an effective quantity:
+
+```typescript
+const vQty = v.quantity || segMeta.quantity || 1;
+const vPpu = v.pricePerUnit;
+const vCost = v.cost || 0;
+const vCurrency = v.currency || segment.currency || "USD";
+const unitLabel = segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms";
+```
+
+Then in the subtitle row (the `{vQty > 1 && ...}` block), keep the same logic but now `vQty` will correctly fall back to the segment's quantity when the variant doesn't override it.
+
+Also ensure the cost breakdown renders even when `vPpu` is null but we can compute it: if `vQty > 1` and `vCost > 0` and `vPpu` is null, derive it as `vCost / vQty`:
+
+```tsx
+{vQty > 1 && (
+  <span className="text-[11px] text-muted-foreground">
+    {(() => {
+      const effectivePpu = vPpu && vPpu > 0 ? vPpu : (vCost > 0 ? vCost / vQty : null);
+      return effectivePpu
+        ? `${formatViewCurrency(effectivePpu, vCurrency)} × ${vQty} ${unitLabel}`
+        : `${vQty} ${unitLabel}`;
+    })()}
+  </span>
+)}
+```
+
+Apply the same derived-ppu logic to the **primary card** too. Replace the existing primary subtitle span with:
+
+```tsx
+{primaryQty > 1 && (
+  <span className="text-[11px] text-muted-foreground">
+    {(() => {
+      const effectivePpu = primaryPpu && primaryPpu > 0 ? primaryPpu : (primaryCost > 0 ? primaryCost / primaryQty : null);
+      const unitLabel = segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms";
+      return effectivePpu
+        ? `${formatViewCurrency(effectivePpu, segment.currency || "USD")} × ${primaryQty} ${unitLabel}`
+        : `${primaryQty} ${unitLabel}`;
+    })()}
+  </span>
+)}
+```
+
+---
+
+## Fix 3 — No pre-selected option on the client token view
+
+**Root cause:** When variants are fetched, any variant with `isSelected: true` on the server gets seeded into `localSelections`. This means when the client opens the link, one option is already ringed/selected — which is confusing because we're asking them to make a choice.
+
+**Fix:** In the `fetchVariants` useEffect, only seed `localSelections` from server state when NOT on the token (client) view. On the token view, start with a blank slate so the client actively chooses:
+
+Find:
+```typescript
+const selected = variants.find((v: any) => v.isSelected);
+if (selected) newSelections[seg.id] = selected.id;
+```
+
+Replace with:
+```typescript
+// Only pre-select on advisor view, not on client share link
+if (!token) {
+  const selected = variants.find((v: any) => v.isSelected);
+  if (selected) newSelections[seg.id] = selected.id;
+}
+```
+
+Also update `isPrimarySelected` in `VariantCards` — currently it's true when `selectedVariantId` is empty string or undefined, which means the primary option always appears selected on first load for the client. Change the logic so nothing appears selected until the client explicitly clicks:
+
+The `VariantCards` component already receives `selectedVariantId`. The issue is the visual styling — `isPrimarySelected` being true by default. Keep the variable as-is (it correctly tracks state), but add a prop `hasActiveSelection` that tells the component whether ANY explicit choice has been made for this segment:
+
+Add prop:
+```tsx
+function VariantCards({
+  segment,
+  variants,
+  selectedVariantId,
+  onSelect,
+  locked,
+  journeyLegs,
+  hasActiveSelection,  // ADD: true once user has clicked something
+}: {
+  // ...existing...
+  hasActiveSelection?: boolean;
+}) {
+```
+
+Then in the primary card button styling, only show the selected ring when `hasActiveSelection` is true:
+
+```tsx
+className={`w-full text-left rounded-md border p-3 transition-all relative ${
+  isPrimarySelected && hasActiveSelection
+    ? "bg-primary/5 ring-1 ring-primary border-primary/30"
+    : "bg-card border-border/60 hover:border-primary/40"
+} ${locked ? "cursor-default" : ""}`}
+```
+
+And the checkmark icon:
+```tsx
+{isPrimarySelected && hasActiveSelection && (
+  <div className="absolute top-2 right-2">
+    {locked ? <Lock className="w-4 h-4 text-muted-foreground" /> : <CheckCircle className="w-4 h-4 text-primary" />}
+  </div>
+)}
+```
+
+Pass `hasActiveSelection` from all `VariantCards` call sites:
+```tsx
+// In DayAccordion and JourneyViewCard:
+hasActiveSelection={token ? !!localSelections[segment.id] : true}
+```
+When `token` is set (client view), only mark as having an active selection if the client has clicked. When no token (advisor preview), always show the selected state so the advisor can see what was previously chosen.
+
+---
+
+## Fix 4 — Top action banner for client view: visible guidance without scrolling
+
+**Current problem:** The submit and approve buttons are at the bottom of the page. On a long itinerary, clients may not know they need to scroll. The floating top bar shows "Approve" but nothing about submitting options.
+
+**Fix:** When `token` is set AND the trip has variant segments AND `allLocked` is false (options not yet submitted), add a gentle top-of-page banner directly below the cover image / hero section (before the stats row), visible immediately on page load without scrolling:
+
+```tsx
+{token && (() => {
+  if (!activeVersion) return null;
+  const variantSegs = activeVersion.segments.filter(s => s.hasVariants);
+  if (variantSegs.length === 0) return null;
+  const allLocked = variantSegs.every(s => lockedSegments.has(s.id));
+  const isApproved = !!(trip.approvedVersionId || approvalSuccess);
+  if (allLocked && isApproved) return null; // everything done, no banner needed
+
+  return (
+    <div className="mx-auto max-w-3xl px-6 mb-2">
+      <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+          <p className="text-xs text-foreground/80">
+            {!allLocked && !isApproved
+              ? `Review your options and approve this itinerary — scroll to the bottom to complete`
+              : !allLocked
+              ? `You have options to review — scroll down to select your preferences`
+              : `Review and approve this itinerary — scroll to the bottom`
+            }
+          </p>
+        </div>
+        <button
+          className="text-xs text-primary font-medium shrink-0 hover:underline"
+          onClick={() => {
+            document.querySelector("[data-testid='bottom-action-section']")?.scrollIntoView({ behavior: "smooth" });
+          }}
+        >
+          Go to bottom ↓
+        </button>
+      </div>
+    </div>
+  );
+})()}
+```
+
+Place this banner just before the `<div className="py-8 flex flex-wrap items-center justify-center gap-8 sm:gap-12"` stats row, inside the main content column.
+
+The "Go to bottom" link smoothly scrolls to `data-testid="bottom-action-section"` — which already exists on the bottom CTA section from the previous prompt.

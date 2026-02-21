@@ -591,7 +591,7 @@ function GenericCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, localSelections, onSelectVariant, lockedSegments }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h"; variantMap?: Record<string, any[]>; localSelections?: Record<string, string>; onSelectVariant?: (segmentId: string, variantId: string) => void; lockedSegments?: Set<string> }) {
+function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, localSelections, onSelectVariant, lockedSegments, token }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h"; variantMap?: Record<string, any[]>; localSelections?: Record<string, string>; onSelectVariant?: (segmentId: string, variantId: string) => void; lockedSegments?: Set<string>; token?: string | null }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
   const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
@@ -761,6 +761,7 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, lo
                 onSelect={onSelectVariant}
                 locked={lockedSegments?.has(primaryLeg.id)}
                 journeyLegs={legs}
+                hasActiveSelection={token ? (!!localSelections?.[primaryLeg.id] || !!lockedSegments?.has(primaryLeg.id)) : true}
               />
             </div>
           );
@@ -996,6 +997,7 @@ function VariantCards({
   onSelect,
   locked,
   journeyLegs,
+  hasActiveSelection,
 }: {
   segment: TripSegment;
   variants: any[];
@@ -1003,6 +1005,7 @@ function VariantCards({
   onSelect: (segmentId: string, variantId: string) => void;
   locked?: boolean;
   journeyLegs?: TripSegment[];
+  hasActiveSelection?: boolean;
 }) {
   const isPrimarySelected = !selectedVariantId || selectedVariantId === "" || selectedVariantId === "primary";
   const segMeta = (segment.metadata || {}) as Record<string, any>;
@@ -1010,6 +1013,7 @@ function VariantCards({
   const primaryPpu = segMeta.pricePerUnit;
   const primaryCost = segment.cost || 0;
   const primaryLabel = buildPrimaryLabel(segment, journeyLegs);
+  const unitLabel = segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms";
 
   return (
     <div className="mt-3 space-y-2" data-testid={`variant-list-${segment.id}`}>
@@ -1022,13 +1026,13 @@ function VariantCards({
           type="button"
           onClick={locked ? undefined : () => onSelect(segment.id, "")}
           className={`w-full text-left rounded-md border p-3 transition-all relative ${
-            isPrimarySelected
+            isPrimarySelected && hasActiveSelection
               ? "bg-primary/5 ring-1 ring-primary border-primary/30"
               : "bg-card border-border/60 hover:border-primary/40"
           } ${locked ? "cursor-default" : ""}`}
           data-testid={`variant-card-primary-${segment.id}`}
         >
-          {isPrimarySelected && (
+          {isPrimarySelected && hasActiveSelection && (
             <div className="absolute top-2 right-2">
               {locked ? <Lock className="w-4 h-4 text-muted-foreground" /> : <CheckCircle className="w-4 h-4 text-primary" />}
             </div>
@@ -1087,10 +1091,12 @@ function VariantCards({
             )}
             {primaryQty > 1 && (
               <span className="text-[11px] text-muted-foreground">
-                {primaryPpu != null && primaryPpu > 0
-                  ? `${formatViewCurrency(primaryPpu, segment.currency || "USD")} × ${primaryQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
-                  : `${primaryQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
-                }
+                {(() => {
+                  const effectivePpu = primaryPpu && primaryPpu > 0 ? primaryPpu : (primaryCost > 0 ? primaryCost / primaryQty : null);
+                  return effectivePpu
+                    ? `${formatViewCurrency(effectivePpu, segment.currency || "USD")} × ${primaryQty} ${unitLabel}`
+                    : `${primaryQty} ${unitLabel}`;
+                })()}
               </span>
             )}
             {segMeta.refundability === "non_refundable" && (
@@ -1109,8 +1115,10 @@ function VariantCards({
       {variants.map((v: any) => {
         const isSelected = selectedVariantId === v.id;
         if (locked && !isSelected) return null;
-        const vQty = v.quantity || 1;
+        const vQty = v.quantity || segMeta.quantity || 1;
         const vPpu = v.pricePerUnit;
+        const vCost = v.cost || 0;
+        const vCurrency = v.currency || segment.currency || "USD";
         return (
           <button
             key={v.id}
@@ -1132,10 +1140,45 @@ function VariantCards({
               {(() => {
                 const isUpgrade = !v.variantType || v.variantType === "upgrade";
                 if (isUpgrade) {
-                  const upgradeContext = segment.type === "hotel"
-                    ? ((segment.metadata as any)?.hotelName || segment.title)
-                    : buildPrimaryLabel(segment);
-                  return upgradeContext ? <>{upgradeContext} — {v.label}</> : v.label;
+                  if (segment.type === "flight" || segment.type === "charter_flight") {
+                    const meta = (segment.metadata || {}) as Record<string, any>;
+                    const variantCabin = v.cabin || bookingClassLabels[v.bookingClass] || v.label || "";
+
+                    if (journeyLegs && journeyLegs.length > 1) {
+                      const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+                      const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+                      const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+                      const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+                      const stops = journeyLegs.length - 1;
+                      const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabel(segment, journeyLegs);
+                      const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+                      const extras: string[] = [stopsPart];
+                      if (variantCabin) extras.push(variantCabin);
+                      const vQtyLocal = v.quantity || segMeta.quantity || 1;
+                      if (vQtyLocal > 1) extras.push(`${vQtyLocal} passengers`);
+                      return `${routePart} (${extras.join(", ")})`;
+                    }
+
+                    const dep = meta.departure?.iata || meta.departureAirport || "";
+                    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+                    const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabel(segment);
+                    const extras: string[] = [];
+                    if (variantCabin) extras.push(variantCabin);
+                    const vQtyLocal = v.quantity || segMeta.quantity || 1;
+                    if (vQtyLocal > 1) extras.push(`${vQtyLocal} passengers`);
+                    return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+                  }
+
+                  if (segment.type === "hotel") {
+                    const hotelName = (segment.metadata as any)?.hotelName || segment.title || "";
+                    const vQtyLocal = v.quantity || segMeta.quantity || 1;
+                    const parts = [hotelName, v.label].filter(Boolean);
+                    if (vQtyLocal > 1) parts.push(`${vQtyLocal} rooms`);
+                    return parts.join(" — ");
+                  }
+
+                  const ctx = buildPrimaryLabel(segment, journeyLegs);
+                  return ctx ? <>{ctx} — {v.label}</> : v.label;
                 }
                 return v.label;
               })()}
@@ -1144,17 +1187,19 @@ function VariantCards({
               <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
-              {v.cost != null && v.cost > 0 && (
+              {vCost > 0 && (
                 <span className="text-xs font-medium">
-                  {formatViewCurrency(v.cost, v.currency || "USD")}
+                  {formatViewCurrency(vCost, vCurrency)}
                 </span>
               )}
               {vQty > 1 && (
                 <span className="text-[11px] text-muted-foreground">
-                  {vPpu != null && vPpu > 0
-                    ? `${formatViewCurrency(vPpu, v.currency || "USD")} × ${vQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
-                    : `${vQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
-                  }
+                  {(() => {
+                    const effectivePpu = vPpu && vPpu > 0 ? vPpu : (vCost > 0 ? vCost / vQty : null);
+                    return effectivePpu
+                      ? `${formatViewCurrency(effectivePpu, vCurrency)} × ${vQty} ${unitLabel}`
+                      : `${vQty} ${unitLabel}`;
+                  })()}
                 </span>
               )}
               {v.refundability === "non_refundable" && (
@@ -1233,7 +1278,7 @@ function DayAccordion({
             <div className="pb-6 space-y-3">
               {buildViewDayRenderItems(segments).map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} localSelections={localSelections} onSelectVariant={onSelectVariant} lockedSegments={lockedSegments} />;
+                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} localSelections={localSelections} onSelectVariant={onSelectVariant} lockedSegments={lockedSegments} token={token} />;
                 }
                 if (item.kind === "propertyGroup") {
                   return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
@@ -1251,6 +1296,7 @@ function DayAccordion({
                           selectedVariantId={localSelections?.[seg.id]}
                           onSelect={onSelectVariant}
                           locked={lockedSegments?.has(seg.id)}
+                          hasActiveSelection={token ? (!!localSelections?.[seg.id] || !!lockedSegments?.has(seg.id)) : true}
                         />
                       </div>
                     )}
@@ -1320,8 +1366,13 @@ export default function TripViewPage() {
             if (res.ok) {
               const variants = await res.json();
               newMap[seg.id] = variants;
-              const selected = variants.find((v: any) => v.isSelected);
-              if (selected) newSelections[seg.id] = selected.id;
+              if (!token) {
+                const selected = variants.find((v: any) => v.isSelected);
+                if (selected) newSelections[seg.id] = selected.id;
+              } else if (variants.some((v: any) => v.isSubmitted)) {
+                const selected = variants.find((v: any) => v.isSelected);
+                if (selected) newSelections[seg.id] = selected.id;
+              }
             }
           } catch {}
         })
@@ -1581,6 +1632,42 @@ export default function TripViewPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {token && (() => {
+        if (!activeVersion) return null;
+        const variantSegs = activeVersion.segments.filter(s => s.hasVariants);
+        if (variantSegs.length === 0 && !!(trip.approvedVersionId || approvalSuccess)) return null;
+        const allLocked = variantSegs.length > 0 && variantSegs.every(s => lockedSegments.has(s.id));
+        const isApproved = !!(trip.approvedVersionId || approvalSuccess);
+        if (allLocked && isApproved) return null;
+
+        return (
+          <div className="mx-auto max-w-3xl px-6 mb-2">
+            <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-center justify-between gap-4" data-testid="client-action-banner">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shrink-0" />
+                <p className="text-xs text-foreground/80">
+                  {!allLocked && !isApproved
+                    ? "Review your options and approve this itinerary — scroll to the bottom to complete"
+                    : !allLocked
+                    ? "You have options to review — scroll down to select your preferences"
+                    : "Review and approve this itinerary — scroll to the bottom"
+                  }
+                </p>
+              </div>
+              <button
+                className="text-xs text-primary font-medium shrink-0 hover:underline"
+                onClick={() => {
+                  document.querySelector("[data-testid='bottom-action-section']")?.scrollIntoView({ behavior: "smooth" });
+                }}
+                data-testid="button-scroll-to-bottom"
+              >
+                Go to bottom ↓
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="max-w-3xl mx-auto px-6">
         <div className="py-8 flex flex-wrap items-center justify-center gap-8 sm:gap-12" data-testid="trip-stats-row">
