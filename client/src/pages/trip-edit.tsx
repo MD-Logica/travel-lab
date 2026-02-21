@@ -50,7 +50,9 @@ import { DestinationInput } from "@/components/destination-input";
 import { CurrencyInput } from "@/components/currency-input";
 import type { Trip, TripVersion, TripSegment, Client, TripDocument, FlightTracking, DestinationEntry } from "@shared/schema";
 import { formatDestinationsShort } from "@shared/schema";
-import { format, addDays, differenceInDays, eachDayOfInterval, differenceInCalendarDays } from "date-fns";
+import { format, addDays, differenceInDays, eachDayOfInterval, differenceInCalendarDays, parse } from "date-fns";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import type { DateRange } from "react-day-picker";
 import { calculateLayover, isRedEye, journeyTotalTime } from "@/lib/journey-utils";
 
 type TripWithClient = Trip & { clientName: string | null };
@@ -1373,6 +1375,12 @@ function EditTripSheet({ trip, open, onOpenChange }: {
   const [companionIds, setCompanionIds] = useState<string[]>((trip.additionalClientIds as string[]) || []);
   const [companionPopover, setCompanionPopover] = useState(false);
   const [companionSearch, setCompanionSearch] = useState("");
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
+    const from = startDate ? parse(startDate, "yyyy-MM-dd", new Date()) : undefined;
+    const to = endDate ? parse(endDate, "yyyy-MM-dd", new Date()) : undefined;
+    return from ? { from, to } : undefined;
+  });
+  const [datePopoverOpen, setDatePopoverOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -1380,8 +1388,13 @@ function EditTripSheet({ trip, open, onOpenChange }: {
       setDescription(trip.description || "");
       setDestinations((trip as any).destinations || []);
       setClientId(trip.clientId || "");
-      setStartDate(trip.startDate ? format(new Date(trip.startDate), "yyyy-MM-dd") : "");
-      setEndDate(trip.endDate ? format(new Date(trip.endDate), "yyyy-MM-dd") : "");
+      const sd = trip.startDate ? format(new Date(trip.startDate), "yyyy-MM-dd") : "";
+      const ed = trip.endDate ? format(new Date(trip.endDate), "yyyy-MM-dd") : "";
+      setStartDate(sd);
+      setEndDate(ed);
+      const from = sd ? parse(sd, "yyyy-MM-dd", new Date()) : undefined;
+      const to = ed ? parse(ed, "yyyy-MM-dd", new Date()) : undefined;
+      setDateRange(from ? { from, to } : undefined);
       setBudget(trip.budget != null ? String(trip.budget) : "");
       setCurrency(trip.currency || "USD");
       setCoverImageUrl(trip.coverImageUrl || "");
@@ -1420,8 +1433,8 @@ function EditTripSheet({ trip, open, onOpenChange }: {
         destinations,
         description: description || null,
         clientId: clientId || null,
-        startDate: startDate ? new Date(startDate).toISOString() : null,
-        endDate: endDate ? new Date(endDate).toISOString() : null,
+        startDate: startDate ? (() => { const [y,m,d] = startDate.split("-").map(Number); return new Date(y, m-1, d, 12).toISOString(); })() : null,
+        endDate: endDate ? (() => { const [y,m,d] = endDate.split("-").map(Number); return new Date(y, m-1, d, 12).toISOString(); })() : null,
         budget: budget ? parseInt(budget) : null,
         currency,
         coverImageUrl: coverImageUrl || null,
@@ -1576,26 +1589,55 @@ function EditTripSheet({ trip, open, onOpenChange }: {
               <Calendar className="w-3 h-3" strokeWidth={1.5} />
               Dates
             </Label>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-[11px] text-muted-foreground mb-1 block">Start</Label>
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  data-testid="input-edit-trip-start-date"
+            <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start gap-2 h-9 px-3 font-normal"
+                  data-testid="button-edit-trip-dates"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" strokeWidth={1.5} />
+                  {dateRange?.from ? (
+                    <span className="text-foreground">
+                      {format(dateRange.from, "MMM d, yyyy")}
+                      {dateRange.to ? (
+                        <> — {format(dateRange.to, "MMM d, yyyy")}</>
+                      ) : null}
+                      {dateRange.from && dateRange.to && (
+                        <span className="text-muted-foreground ml-1.5 text-xs">
+                          · {differenceInCalendarDays(dateRange.to, dateRange.from)} nights
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Select dates</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <CalendarComponent
+                  mode="range"
+                  selected={dateRange}
+                  onSelect={(range) => {
+                    setDateRange(range);
+                    if (range?.from) {
+                      setStartDate(format(range.from, "yyyy-MM-dd"));
+                    } else {
+                      setStartDate("");
+                    }
+                    if (range?.to) {
+                      setEndDate(format(range.to, "yyyy-MM-dd"));
+                      setTimeout(() => setDatePopoverOpen(false), 300);
+                    } else {
+                      setEndDate("");
+                    }
+                  }}
+                  numberOfMonths={2}
+                  showOutsideDays
+                  data-testid="calendar-edit-trip-dates"
                 />
-              </div>
-              <div>
-                <Label className="text-[11px] text-muted-foreground mb-1 block">End</Label>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  data-testid="input-edit-trip-end-date"
-                />
-              </div>
-            </div>
+              </PopoverContent>
+            </Popover>
           </div>
 
           <div>

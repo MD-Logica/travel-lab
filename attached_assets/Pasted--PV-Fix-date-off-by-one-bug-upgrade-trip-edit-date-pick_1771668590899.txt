@@ -1,0 +1,210 @@
+# PV — Fix date off-by-one bug + upgrade trip-edit date picker
+
+Two changes: one bug fix (both files), one UI upgrade (trip-edit only).
+
+---
+
+## The bug: why dates shift back by one day
+
+When a user picks "March 1" from the calendar, it gets stored as the string `"2025-03-01"` (yyyy-MM-dd format). When that string is submitted to the server, the code does:
+
+```typescript
+new Date("2025-03-01").toISOString()
+// → "2025-03-01T00:00:00.000Z"  (UTC midnight)
+```
+
+JavaScript parses a bare `yyyy-MM-dd` string as **UTC midnight**. When the server stores this and the client reads it back in a timezone ahead of UTC (Italy is UTC+1 in winter, UTC+2 in summer), UTC midnight is already the previous evening locally — so the date displays as February 28.
+
+**The fix:** when converting a `yyyy-MM-dd` string to a Date for ISO serialization, treat it as local noon, not UTC midnight. Local noon is never ambiguous — it can never be "yesterday" or "tomorrow" regardless of timezone offset.
+
+The correct conversion pattern is:
+```typescript
+// WRONG — parses as UTC midnight, shifts back in UTC+ timezones
+new Date("2025-03-01").toISOString()
+
+// CORRECT — parse as local date, use noon to avoid any DST edge cases
+const toLocalIso = (dateStr: string): string => {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const d = new Date(year, month - 1, day, 12, 0, 0); // local noon
+  return d.toISOString();
+};
+```
+
+---
+
+## Fix A — `client/src/pages/trip-new.tsx`
+
+Find the submission handler (inside the `mutationFn`). It currently has:
+
+```typescript
+startDate: data.startDate ? new Date(data.startDate).toISOString() : null,
+endDate: data.endDate ? new Date(data.endDate).toISOString() : null,
+```
+
+Replace with:
+
+```typescript
+startDate: data.startDate ? (() => { const [y,m,d] = data.startDate!.split("-").map(Number); return new Date(y, m-1, d, 12).toISOString(); })() : null,
+endDate: data.endDate ? (() => { const [y,m,d] = data.endDate!.split("-").map(Number); return new Date(y, m-1, d, 12).toISOString(); })() : null,
+```
+
+Or equivalently, define a helper above the component:
+
+```typescript
+function localDateToIso(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d, 12, 0, 0).toISOString();
+}
+```
+
+And use it:
+```typescript
+startDate: data.startDate ? localDateToIso(data.startDate) : null,
+endDate: data.endDate ? localDateToIso(data.endDate) : null,
+```
+
+---
+
+## Fix B — `client/src/pages/trip-edit.tsx`
+
+**Part 1: Fix the same date bug in the save mutation.**
+
+The save mutation (inside the `updateTripMutation` mutationFn) currently has:
+
+```typescript
+startDate: startDate ? new Date(startDate).toISOString() : null,
+endDate: endDate ? new Date(endDate).toISOString() : null,
+```
+
+Add the same `localDateToIso` helper function near the top of the file (outside any component, alongside the other utility functions that already exist there), then replace those two lines with:
+
+```typescript
+startDate: startDate ? localDateToIso(startDate) : null,
+endDate: endDate ? localDateToIso(endDate) : null,
+```
+
+**Part 2: Replace the native date inputs with a shadcn Calendar range picker.**
+
+The edit panel currently shows two `<Input type="date">` fields for start and end. Replace them with the same calendar popover pattern used in `trip-new.tsx`.
+
+**Imports to add** at the top of `trip-edit.tsx` (check if already present before adding):
+```typescript
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import type { DateRange } from "react-day-picker";
+import { parse, differenceInCalendarDays } from "date-fns";
+```
+
+Note: `format`, `addDays` etc. are already imported from `"date-fns"` — just add `parse` and `differenceInCalendarDays` to that existing import if not already there. `Popover`, `PopoverContent`, `PopoverTrigger` are already imported.
+
+**State to add** inside the `EditTripPanel` component (or whichever component owns `startDate`/`endDate` state), alongside the existing `startDate`/`endDate` state declarations:
+
+```typescript
+const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
+  const from = startDate ? parse(startDate, "yyyy-MM-dd", new Date()) : undefined;
+  const to = endDate ? parse(endDate, "yyyy-MM-dd", new Date()) : undefined;
+  return from ? { from, to } : undefined;
+});
+const [datePopoverOpen, setDatePopoverOpen] = useState(false);
+```
+
+**Replace the Dates section** in the edit panel. Find:
+
+```tsx
+<div>
+  <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+    <Calendar className="w-3 h-3" strokeWidth={1.5} />
+    Dates
+  </Label>
+  <div className="grid grid-cols-2 gap-3">
+    <div>
+      <Label className="text-[11px] text-muted-foreground mb-1 block">Start</Label>
+      <Input
+        type="date"
+        value={startDate}
+        onChange={(e) => setStartDate(e.target.value)}
+        data-testid="input-edit-trip-start-date"
+      />
+    </div>
+    <div>
+      <Label className="text-[11px] text-muted-foreground mb-1 block">End</Label>
+      <Input
+        type="date"
+        value={endDate}
+        onChange={(e) => setEndDate(e.target.value)}
+        data-testid="input-edit-trip-end-date"
+      />
+    </div>
+  </div>
+</div>
+```
+
+Replace with:
+
+```tsx
+<div>
+  <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+    <Calendar className="w-3 h-3" strokeWidth={1.5} />
+    Dates
+  </Label>
+  <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
+    <PopoverTrigger asChild>
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 h-9 rounded-md border border-input bg-background px-3 py-1 text-sm text-left hover:bg-accent/50 transition-colors"
+        data-testid="button-edit-trip-dates"
+      >
+        <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" strokeWidth={1.5} />
+        {dateRange?.from ? (
+          <span className="text-foreground">
+            {format(dateRange.from, "MMM d")}
+            {dateRange.to ? (
+              <> — {format(dateRange.to, "MMM d, yyyy")}</>
+            ) : null}
+            {dateRange.from && dateRange.to && (
+              <span className="text-muted-foreground ml-1.5 text-xs">
+                · {differenceInCalendarDays(dateRange.to, dateRange.from)} nights
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">Select dates</span>
+        )}
+      </button>
+    </PopoverTrigger>
+    <PopoverContent className="w-auto p-0" align="start">
+      <CalendarComponent
+        mode="range"
+        selected={dateRange}
+        onSelect={(range) => {
+          setDateRange(range);
+          if (range?.from) {
+            setStartDate(format(range.from, "yyyy-MM-dd"));
+          }
+          if (range?.to) {
+            setEndDate(format(range.to, "yyyy-MM-dd"));
+            setTimeout(() => setDatePopoverOpen(false), 300);
+          }
+        }}
+        numberOfMonths={2}
+        showOutsideDays
+        data-testid="calendar-edit-trip-dates"
+      />
+    </PopoverContent>
+  </Popover>
+</div>
+```
+
+**Also sync the dateRange state when `trip` data changes** — the `useEffect` that currently resets `startDate`/`endDate` from `trip` should also reset `dateRange`. Find the existing useEffect that contains `setStartDate(...)` and `setEndDate(...)` and add to it:
+
+```typescript
+const from = trip.startDate ? parse(format(new Date(trip.startDate), "yyyy-MM-dd"), "yyyy-MM-dd", new Date()) : undefined;
+const to = trip.endDate ? parse(format(new Date(trip.endDate), "yyyy-MM-dd"), "yyyy-MM-dd", new Date()) : undefined;
+setDateRange(from ? { from, to } : undefined);
+```
+
+---
+
+## Summary
+
+- **Bug fixed in both files**: `new Date("yyyy-MM-dd").toISOString()` → `localDateToIso("yyyy-MM-dd")` which uses local noon instead of UTC midnight. This is the only change needed to fix the off-by-one issue.
+- **UI upgraded in trip-edit**: native `<Input type="date">` replaced with the same shadcn Calendar range picker used on the trip creation screen. The picker writes back to the same `startDate`/`endDate` string state, so the rest of the save flow is unchanged.
