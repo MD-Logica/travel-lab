@@ -1,0 +1,43 @@
+Replace the two separate date inputs in trip-new with a visual calendar range picker. The react-day-picker library is already installed and the Calendar component already has all the range CSS classes built in.
+
+**File to change: `client/src/pages/trip-new.tsx` only**
+
+### What to build
+
+Replace the current two `<Input type="date">` fields for Start and End dates with a single interactive calendar that lets the advisor click a start date, then click an end date to highlight the range — exactly like hotel booking sites.
+
+**Layout**: Show a popover/inline calendar triggered by a date display field. The trigger shows the selected range like `"Jun 12 – Jun 19, 2025"` or `"Select dates"` if nothing is picked. When clicked, open a popover containing the calendar.
+
+**Calendar configuration**: Use `react-day-picker` in range mode:
+
+```tsx
+import { DayPicker } from "react-day-picker";
+import type { DateRange } from "react-day-picker";
+import "react-day-picker/dist/style.css";
+
+const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
+
+<DayPicker
+  mode="range"
+  selected={dateRange}
+  onSelect={setDateRange}
+  numberOfMonths={2}
+  disabled={{ before: new Date() }}
+  showOutsideDays
+/>
+```
+
+Use `numberOfMonths={2}` so both months show side by side — the left month is the departure, right is arrival, same as Booking.com / Airbnb.
+
+**Sync with form**: When `dateRange.from` is set, call `form.setValue("startDate", format(dateRange.from, "yyyy-MM-dd"))`. When `dateRange.to` is set, call `form.setValue("endDate", format(dateRange.to, "yyyy-MM-dd"))`.
+
+**Keep the manual inputs as fallback**: Below the calendar trigger, keep small text inputs for start and end date (`type="date"`) in a collapsed `"Edit manually"` disclosure or just as secondary smaller fields beneath the calendar display. This gives a fallback for keyboard entry and for editing individual dates without reopening the full calendar.
+
+**Trigger display**: Style the date trigger as a clean button showing:
+- No selection: `"Select travel dates"` with a `Calendar` icon, muted text
+- Start only: `"Jun 12 → ..."`  
+- Full range: `"Jun 12 – Jun 19"` with the number of nights in muted text: `"7 nights"`
+
+Close the popover automatically when both a start and end date are selected (`dateRange.from && dateRange.to`).
+
+The `form` field names `startDate` and `endDate` and their validation don't change — only the UI for inputting them changes. The form still submits the same string values.

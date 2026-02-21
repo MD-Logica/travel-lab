@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PhoneInput } from "@/components/phone-input";
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
 import {
   Select,
   SelectContent,
@@ -1570,14 +1571,17 @@ export default function ClientDetailPage() {
     onError: () => toast({ title: "Failed to remove companion", variant: "destructive" }),
   });
 
-  const [editHomeCities, setEditHomeCities] = useState<{ city: string; countryCode: string }[]>([]);
+  const [editHomeCities, setEditHomeCities] = useState<{ city: string; country: string; placeId?: string }[]>([]);
+  const [cityInputValues, setCityInputValues] = useState<string[]>([]);
 
   useEffect(() => {
     if (client && !isEditing) {
       setEditName(client.fullName);
       setEditEmail(client.email || "");
       setEditPhone(client.phone || "");
-      setEditHomeCities((client.homeCities as any[] || []).map((c: any) => ({ city: c.city || "", countryCode: c.countryCode || "" })));
+      const cities = (client.homeCities as any[] || []).map((c: any) => ({ city: c.city || "", country: c.country || c.countryCode || "", placeId: c.placeId }));
+      setEditHomeCities(cities);
+      setCityInputValues(cities.map(c => c.city));
     }
   }, [client, isEditing]);
 
@@ -1617,7 +1621,9 @@ export default function ClientDetailPage() {
     setEditName(client.fullName);
     setEditEmail(client.email || "");
     setEditPhone(client.phone || "");
-    setEditHomeCities((client.homeCities as any[] || []).map((c: any) => ({ city: c.city || "", countryCode: c.countryCode || "" })));
+    const cities = (client.homeCities as any[] || []).map((c: any) => ({ city: c.city || "", country: c.country || c.countryCode || "", placeId: c.placeId }));
+    setEditHomeCities(cities);
+    setCityInputValues(cities.map(c => c.city));
     setIsEditing(true);
   }
 
@@ -1632,7 +1638,7 @@ export default function ClientDetailPage() {
       fullName: editName.trim(),
       email: editEmail.trim() || null,
       phone: editPhone.trim() || null,
-      homeCities: validCities.map(c => ({ city: c.city.trim(), countryCode: c.countryCode.trim().toUpperCase() })),
+      homeCities: validCities.map(c => ({ city: c.city.trim(), country: c.country.trim() })),
     });
   }
 
@@ -1795,32 +1801,35 @@ export default function ClientDetailPage() {
                         <span className="text-xs text-muted-foreground font-medium">Home Cities</span>
                         {editHomeCities.map((hc, idx) => (
                           <div key={idx} className="flex items-center gap-2">
-                            <Input
-                              value={hc.city}
-                              onChange={(e) => {
-                                const updated = [...editHomeCities];
-                                updated[idx] = { ...updated[idx], city: e.target.value };
-                                setEditHomeCities(updated);
-                              }}
-                              placeholder="City"
-                              className="flex-1 h-8 text-sm"
-                              data-testid={`input-home-city-${idx}`}
-                            />
-                            <Input
-                              value={hc.countryCode}
-                              onChange={(e) => {
-                                const updated = [...editHomeCities];
-                                updated[idx] = { ...updated[idx], countryCode: e.target.value.toUpperCase().slice(0, 2) };
-                                setEditHomeCities(updated);
-                              }}
-                              placeholder="CC"
-                              className="w-16 h-8 text-sm text-center"
-                              maxLength={2}
-                              data-testid={`input-home-country-${idx}`}
-                            />
+                            <div className="flex-1">
+                              <PlacesAutocomplete
+                                value={cityInputValues[idx] || ""}
+                                onValueChange={(val) => {
+                                  const updated = [...cityInputValues];
+                                  updated[idx] = val;
+                                  setCityInputValues(updated);
+                                }}
+                                onPlaceSelect={(details) => {
+                                  const parts = details.address.split(", ");
+                                  const country = parts[parts.length - 1] || "";
+                                  const updated = [...editHomeCities];
+                                  updated[idx] = { city: details.name, country };
+                                  setEditHomeCities(updated);
+                                  const vals = [...cityInputValues];
+                                  vals[idx] = details.name;
+                                  setCityInputValues(vals);
+                                }}
+                                placeholder="Search for a city..."
+                                types="(cities)"
+                                testId={`input-home-city-${idx}`}
+                              />
+                            </div>
                             <button
                               type="button"
-                              onClick={() => setEditHomeCities(editHomeCities.filter((_, i) => i !== idx))}
+                              onClick={() => {
+                                setEditHomeCities(editHomeCities.filter((_, i) => i !== idx));
+                                setCityInputValues(cityInputValues.filter((_, i) => i !== idx));
+                              }}
                               className="text-muted-foreground hover:text-foreground"
                               data-testid={`button-remove-home-city-${idx}`}
                             >
@@ -1831,7 +1840,10 @@ export default function ClientDetailPage() {
                         {editHomeCities.length < 2 && (
                           <button
                             type="button"
-                            onClick={() => setEditHomeCities([...editHomeCities, { city: "", countryCode: "" }])}
+                            onClick={() => {
+                              setEditHomeCities([...editHomeCities, { city: "", country: "" }]);
+                              setCityInputValues([...cityInputValues, ""]);
+                            }}
                             className="text-xs text-primary hover:underline"
                             data-testid="button-add-home-city"
                           >
@@ -1857,18 +1869,13 @@ export default function ClientDetailPage() {
                       {(() => {
                         const cities = (client.homeCities as any[] || []).filter((c: any) => c.city);
                         if (cities.length === 0) return null;
-                        const flagEmoji = (code: string) => {
-                          if (!code || code.length !== 2) return "";
-                          return String.fromCodePoint(...code.toUpperCase().split("").map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
-                        };
                         return (
                           <span className="flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="text-client-home-cities">
-                            <Home className="w-3.5 h-3.5" strokeWidth={1.5} />
+                            <Home className="w-3.5 h-3.5 shrink-0" strokeWidth={1.5} />
                             {cities.map((c: any, i: number) => (
                               <span key={i}>
                                 {i > 0 && <span className="mx-1">·</span>}
-                                {c.countryCode && <span className="mr-0.5">{flagEmoji(c.countryCode)}</span>}
-                                {c.city}
+                                {c.city}{c.country ? `, ${c.country}` : ""}
                               </span>
                             ))}
                           </span>

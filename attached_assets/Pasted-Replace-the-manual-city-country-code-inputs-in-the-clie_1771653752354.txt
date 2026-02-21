@@ -1,0 +1,54 @@
+Replace the manual city + country code inputs in the client home cities feature with a Google Places autocomplete field. The PlacesAutocomplete component already exists and works — just use it with city-type filtering.
+
+**File to change: `client/src/pages/client-detail.tsx` only**
+
+In the home cities edit section, replace the manual text input + country code input with a `<PlacesAutocomplete>` component configured for cities:
+
+```tsx
+import { PlacesAutocomplete } from "@/components/places-autocomplete";
+```
+
+For each city slot, render:
+```tsx
+<PlacesAutocomplete
+  value={cityInputValue}
+  onValueChange={setCityInputValue}
+  onPlaceSelect={(details) => {
+    // Extract city name and country from the place details
+    // details.address contains the full address string
+    // Parse the country from structured_formatting.secondary_text or address
+    const parts = details.address.split(", ");
+    const country = parts[parts.length - 1] || "";
+    
+    // For the flag emoji, we need the 2-letter ISO code
+    // Store what we can from the place details
+    updateHomeCity(index, {
+      city: details.name,         // city name
+      country: country,            // country name (not code)
+      placeId: details.placeId,   // store for reference
+    });
+    setCityInputValue(details.name);
+  }}
+  placeholder="Search for a city..."
+  types="(cities)"
+  testId={`input-home-city-${index}`}
+/>
+```
+
+**Schema adjustment**: Since Google Places doesn't return ISO 2-letter country codes directly (it returns the full country name), change the `homeCities` jsonb structure to:
+```typescript
+{ city: string, country: string, placeId?: string }
+```
+Drop the `countryCode` field. For the flag emoji display, use a lookup approach instead — store the full country name and map it to an emoji flag using a small utility. Since deriving ISO codes from country names requires a lookup table, simplify the display to just show a 🏠 home icon + city name + country name in muted text. This is cleaner than fighting the country code derivation problem.
+
+So the display becomes:
+```tsx
+<span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+  <Home className="w-3.5 h-3.5 shrink-0" />
+  <span>{city.city}{city.country ? `, ${city.country}` : ""}</span>
+</span>
+```
+
+Keep the "Add another" link for a second city slot (max 2). Each slot is its own independent `PlacesAutocomplete` with its own value state.
+
+Do not change any server files — the `homeCities` field is already being saved via `PATCH /api/clients/:id`.
