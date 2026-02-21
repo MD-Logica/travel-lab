@@ -1,0 +1,407 @@
+# PX — PDF: fix option pricing display + improve layout density
+
+One file changes: `server/pdf-generator.tsx`.
+
+---
+
+## Problem 1 — Flight option pricing not showing
+
+The variants box for a multi-leg journey currently passes `primarySegment={legs[0]}` to `VariantDisplay`, but the cost check `primarySegment.cost != null && primarySegment.cost > 0` looks at the first leg's cost. In a journey, the cost is sometimes stored on the first leg, sometimes summed across legs. Rather than guess, we need to also accept an explicit `primaryCost` prop so `JourneyPdfView` can pass the correct total.
+
+**Add a `primaryCost` prop to `VariantDisplay`:**
+
+Find the current signature:
+```typescript
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[] }) {
+```
+
+Replace with:
+```typescript
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs, primaryCost }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[]; primaryCost?: number }) {
+```
+
+Then inside `VariantDisplay`, wherever `primarySegment.cost` is used for the primary option row, use `primaryCost ?? primarySegment?.cost`:
+
+Find (inside the primary segment row of the options list):
+```typescript
+{showPricing && primarySegment.cost != null && primarySegment.cost > 0 && (
+  <Text style={s.variantDetail}>
+    {formatCurrency(primarySegment.cost, primarySegment.currency || "USD")}
+  </Text>
+)}
+```
+
+Replace with:
+```typescript
+{showPricing && (() => {
+  const cost = primaryCost ?? primarySegment.cost;
+  const currency = primarySegment.currency || "USD";
+  if (cost == null || cost <= 0) return null;
+  const qty = (primarySegment.metadata as any)?.quantity || 1;
+  const ppu = (primarySegment.metadata as any)?.pricePerUnit;
+  const effectivePpu = ppu && ppu > 0 ? ppu : (qty > 1 && cost > 0 ? cost / qty : null);
+  return (
+    <Text style={s.variantDetail}>
+      {formatCurrency(cost, currency)}
+      {qty > 1 && effectivePpu ? ` (${formatCurrency(effectivePpu, currency)} × ${qty})` : ""}
+    </Text>
+  );
+})()}
+```
+
+**Pass journey total cost from `JourneyPdfView`:**
+
+In `JourneyPdfView`, calculate the total cost of all legs and pass it to `VariantDisplay`:
+
+Find:
+```typescript
+{legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (
+  <VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} journeyLegs={legs} />
+)}
+```
+
+Replace with:
+```typescript
+{legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (() => {
+  const journeyTotalCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0);
+  return (
+    <VariantDisplay
+      variants={firstLegVariants}
+      showPricing={showPricing}
+      primarySegment={legs[0]}
+      journeyLegs={legs}
+      primaryCost={journeyTotalCost > 0 ? journeyTotalCost : undefined}
+    />
+  );
+})()}
+```
+
+---
+
+## Problem 2 — Hotel options: primary price context is unclear
+
+In the current PDF, `$3,500 per room / night` appears in the segment card body (good), but then the OPTIONS box shows the primary option label (`The Beverly Hills Hotel — Grand Suite — 2 rooms`) with no price on that row, making it feel disconnected and the Presidential Suite variant has no price at all.
+
+**Fix A: Add per-night rate context to the primary option row in the options box**
+
+In `VariantDisplay`, the primary segment pricing row (the one we just updated above) should also show the per-room/per-night rate for hotels alongside the total, in a more readable format.
+
+The fix is already partially covered by the `primaryCost` fix above. Additionally, ensure the `variantDetail` text for hotels reads naturally. The cost on the primary hotel segment is the total cost (e.g. $7,000 for 2 rooms × 2 nights), and `pricePerUnit` is the per-room/per-night rate. The detail line should show:
+- Total: `$7,000`
+- Secondary if qty > 1: `($3,500 per room / night × 2 rooms)` — this is what the existing `effectivePpu` logic above will produce
+
+That's correct. The variant options for hotels with `v.cost` should also show the per-unit breakdown. 
+
+Find the variant cost display inside `variants.map((v) => {...})`:
+```typescript
+{showPricing && v.cost != null && v.cost > 0 && (
+  <Text style={s.variantDetail}>
+    {formatCurrency(v.cost, v.currency || "USD")}
+    {v.quantity && v.quantity > 1 && v.pricePerUnit && v.pricePerUnit > 0
+      ? ` (${formatCurrency(v.pricePerUnit, v.currency || "USD")} × ${v.quantity})`
+      : ""}
+  </Text>
+)}
+```
+
+Replace with:
+```typescript
+{showPricing && v.cost != null && v.cost > 0 && (() => {
+  const currency = v.currency || primarySegment?.currency || "USD";
+  const qty = v.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+  const ppu = v.pricePerUnit && v.pricePerUnit > 0
+    ? v.pricePerUnit
+    : (qty > 1 && v.cost > 0 ? v.cost / qty : null);
+  const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
+  return (
+    <Text style={s.variantDetail}>
+      {formatCurrency(v.cost, currency)}
+      {qty > 1 && ppu ? ` (${formatCurrency(ppu, currency)} per ${unitWord} × ${qty})` : ""}
+    </Text>
+  );
+})()}
+```
+
+---
+
+## Problem 3 — Layout density: options rows are too tall
+
+Currently each option takes 3+ lines (label line, price line, refund line, each on their own `<Text>`). With 2-3 options per segment and multiple segments per day, this creates a lot of vertical space.
+
+**Change the options row layout to a single horizontal line per option**, with the label on the left and price + refundability on the right. This is a menu/receipt format and is much more space-efficient.
+
+Replace the `variantBox`, `variantLabel`, `variantDetail`, and `variantHeader` styles:
+
+Find in `StyleSheet.create({...})`:
+```typescript
+variantBox: { marginTop: 6, padding: 6, backgroundColor: colors.white, borderRadius: 2, borderWidth: 0.5, borderColor: colors.border },
+variantLabel: { fontSize: 8, fontWeight: 600, marginBottom: 2 },
+variantDetail: { fontSize: 8, color: colors.muted, marginBottom: 1 },
+variantHeader: { fontSize: 8, fontWeight: 600, color: colors.primary, marginBottom: 3, textTransform: "uppercase" as const, letterSpacing: 1 },
+```
+
+Replace with:
+```typescript
+variantBox: { marginTop: 6, padding: 6, backgroundColor: colors.white, borderRadius: 2, borderWidth: 0.5, borderColor: colors.border },
+variantLabel: { fontSize: 8, fontWeight: 600, flex: 1 },
+variantDetail: { fontSize: 8, color: colors.muted, textAlign: "right" as const, flexShrink: 0 },
+variantHeader: { fontSize: 8, fontWeight: 600, color: colors.primary, marginBottom: 4, textTransform: "uppercase" as const, letterSpacing: 1 },
+variantRow: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "flex-start" as const, paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: colors.border },
+variantRowLast: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "flex-start" as const, paddingVertical: 3 },
+```
+
+Note: you'll need to add `variantRow` and `variantRowLast` to the `StyleSheet.create` type — either use `as any` or type them inline. The cleanest approach is to add them to the existing `s` object in the `StyleSheet.create` call.
+
+**Restructure the option rows inside `VariantDisplay`** to use the horizontal layout.
+
+Replace the entire primary segment row (inside the `{primarySegment && (...)}` block):
+
+```tsx
+{primarySegment && (
+  <View style={s.variantRow}>
+    <Text style={[s.variantLabel, { color: colors.primary }]}>
+      {buildPrimaryLabelForPdf(primarySegment, journeyLegs)}
+    </Text>
+    <View style={{ alignItems: "flex-end", flexShrink: 0, maxWidth: "40%" }}>
+      {showPricing && (() => {
+        const cost = primaryCost ?? primarySegment.cost;
+        const currency = primarySegment.currency || "USD";
+        if (cost == null || cost <= 0) return null;
+        const qty = (primarySegment.metadata as any)?.quantity || 1;
+        const ppu = (primarySegment.metadata as any)?.pricePerUnit;
+        const effectivePpu = ppu && ppu > 0 ? ppu : (qty > 1 && cost > 0 ? cost / qty : null);
+        const unitWord = primarySegment.type === "hotel" ? "room" : "passenger";
+        return (
+          <>
+            <Text style={s.variantDetail}>{formatCurrency(cost, currency)}</Text>
+            {qty > 1 && effectivePpu && (
+              <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                {formatCurrency(effectivePpu, currency)} per {unitWord}
+              </Text>
+            )}
+          </>
+        );
+      })()}
+      {(() => {
+        const meta = (primarySegment.metadata || {}) as Record<string, any>;
+        const refText = formatRefundability(meta.refundability || primarySegment.refundability, meta.refundDeadline);
+        return refText ? <Text style={[s.variantDetail, { fontSize: 7, color: refText.includes("Non") ? "#dc2626" : colors.muted }]}>{refText}</Text> : null;
+      })()}
+    </View>
+  </View>
+)}
+```
+
+Replace the variant rows inside `variants.map((v) => {...})`. Find the current entire `<View key={v.id} style={{ marginBottom: 4 }}>...</View>` block and replace with:
+
+```tsx
+{variants.map((v, vi) => {
+  const refundText = formatRefundability(v.refundability, v.refundDeadline);
+  const isLast = vi === variants.length - 1;
+  return (
+    <View key={v.id} style={isLast ? s.variantRowLast : s.variantRow}>
+      <Text style={s.variantLabel}>
+        {(() => {
+          const isUpgrade = !v.variantType || v.variantType === "upgrade";
+          if (isUpgrade && primarySegment) {
+            if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+              const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+              const variantCabin = bookingClassLabelsPdf[(v as any).bookingClass] || bookingClassLabelsPdf[(v as any).cabin] || v.label || "";
+              const vQty = v.quantity || segMeta.quantity || 1;
+              if (journeyLegs && journeyLegs.length > 1) {
+                const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+                const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+                const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+                const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+                const stops = journeyLegs.length - 1;
+                const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+                const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+                const extras: string[] = [stopsPart];
+                if (variantCabin) extras.push(variantCabin);
+                if (vQty > 1) extras.push(`${vQty} pax`);
+                return `${routePart} (${extras.join(", ")})`;
+              }
+              const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+              const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+              const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+              const extras: string[] = [];
+              if (variantCabin) extras.push(variantCabin);
+              if (vQty > 1) extras.push(`${vQty} pax`);
+              return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+            }
+            if (primarySegment.type === "hotel") {
+              const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+              const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
+              const parts = [hotelName, v.label].filter(Boolean);
+              if (vQty > 1) parts.push(`${vQty} rooms`);
+              return parts.join(" — ");
+            }
+            const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+            return ctx ? `${ctx} — ${v.label}` : v.label;
+          }
+          return v.label;
+        })()}
+      </Text>
+      <View style={{ alignItems: "flex-end", flexShrink: 0, maxWidth: "40%" }}>
+        {showPricing && v.cost != null && v.cost > 0 && (() => {
+          const currency = v.currency || primarySegment?.currency || "USD";
+          const qty = v.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+          const ppu = v.pricePerUnit && v.pricePerUnit > 0
+            ? v.pricePerUnit
+            : (qty > 1 && v.cost > 0 ? v.cost / qty : null);
+          const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
+          return (
+            <>
+              <Text style={s.variantDetail}>{formatCurrency(v.cost, currency)}</Text>
+              {qty > 1 && ppu && (
+                <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                  {formatCurrency(ppu, currency)} per {unitWord}
+                </Text>
+              )}
+            </>
+          );
+        })()}
+        {refundText && (
+          <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
+            {refundText}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+})}
+```
+
+Note: the label building logic inside the map is the same as before — just moved inside the new row layout. Keep all the existing `isUpgrade` / flight / hotel label logic intact, only the wrapping View structure changes.
+
+**Also update the "Selected:" variant display (the `submittedVariant` branch)** to use the same horizontal row layout:
+
+Replace the current `submittedVariant` return block with:
+```tsx
+if (submittedVariant) {
+  const refundText = formatRefundability(submittedVariant.refundability, submittedVariant.refundDeadline);
+  const labelText = (() => {
+    const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
+    if (isUpgrade && primarySegment) {
+      if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+        const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+        const variantCabin = bookingClassLabelsPdf[(submittedVariant as any).bookingClass] || bookingClassLabelsPdf[(submittedVariant as any).cabin] || submittedVariant.label || "";
+        const vQty = submittedVariant.quantity || segMeta.quantity || 1;
+        if (journeyLegs && journeyLegs.length > 1) {
+          const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+          const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+          const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+          const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+          const stops = journeyLegs.length - 1;
+          const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+          const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+          const extras: string[] = [stopsPart];
+          if (variantCabin) extras.push(variantCabin);
+          if (vQty > 1) extras.push(`${vQty} pax`);
+          return `${routePart} (${extras.join(", ")})`;
+        }
+        const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+        const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+        const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+        const extras: string[] = [];
+        if (variantCabin) extras.push(variantCabin);
+        if (vQty > 1) extras.push(`${vQty} pax`);
+        return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+      }
+      if (primarySegment.type === "hotel") {
+        const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+        const vQty = submittedVariant.quantity || (primarySegment.metadata as any)?.quantity || 1;
+        const parts = [hotelName, submittedVariant.label].filter(Boolean);
+        if (vQty > 1) parts.push(`${vQty} rooms`);
+        return parts.join(" — ");
+      }
+      const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+      return ctx ? `${ctx} — ${submittedVariant.label}` : submittedVariant.label;
+    }
+    return submittedVariant.label;
+  })();
+
+  return (
+    <View style={s.variantBox}>
+      <Text style={s.variantHeader}>Selected:</Text>
+      <View style={s.variantRowLast}>
+        <Text style={s.variantLabel}>{labelText}</Text>
+        <View style={{ alignItems: "flex-end", flexShrink: 0, maxWidth: "40%" }}>
+          {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (() => {
+            const currency = submittedVariant.currency || primarySegment?.currency || "USD";
+            const qty = submittedVariant.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+            const ppu = submittedVariant.pricePerUnit && submittedVariant.pricePerUnit > 0
+              ? submittedVariant.pricePerUnit
+              : (qty > 1 && submittedVariant.cost > 0 ? submittedVariant.cost / qty : null);
+            const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
+            return (
+              <>
+                <Text style={s.variantDetail}>{formatCurrency(submittedVariant.cost, currency)}</Text>
+                {qty > 1 && ppu && (
+                  <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                    {formatCurrency(ppu, currency)} per {unitWord}
+                  </Text>
+                )}
+              </>
+            );
+          })()}
+          {refundText && (
+            <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
+              {refundText}
+            </Text>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+}
+```
+
+---
+
+## Problem 4 — Segment card: confirmation and cost waste a full line each
+
+Currently the segment card renders each `details[]` item on its own line, then confirmation number on its own line, then cost on its own line, then notes, then refundability — all stacked. A simple change: put **cost and confirmation on the same line, right-aligned**.
+
+Replace the cost and confirmation rendering inside the `SegmentView` return:
+
+Find (near the bottom of the `SegmentView` return JSX):
+```tsx
+{confNum ? (
+  <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+) : null}
+{showPricing && segment.cost != null && segment.cost > 0 ? (
+  <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text, marginTop: 2 }}>
+    {formatCurrency(segment.cost, segment.currency || "USD")}
+  </Text>
+) : null}
+```
+
+Replace with:
+```tsx
+{(confNum || (showPricing && segment.cost != null && segment.cost > 0)) && (
+  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+    {confNum ? (
+      <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+    ) : <Text />}
+    {showPricing && segment.cost != null && segment.cost > 0 ? (
+      <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+        {formatCurrency(segment.cost, segment.currency || "USD")}
+      </Text>
+    ) : null}
+  </View>
+)}
+```
+
+This puts the confirmation code on the left and the price on the right of the same line — using the full width efficiently and reducing line count.
+
+---
+
+## Summary of what changes
+
+- **Flight option prices now show**: journey total cost is calculated and passed explicitly to `VariantDisplay` so the primary flight option row displays its price
+- **Hotel option pricing is clear**: per-room breakdown shows on both the primary and variant rows, e.g. `$7,000 ($3,500 per room × 2)` 
+- **Options box is now a compact table**: each option is one horizontal line — label left, price+refundability right — cutting the options section height roughly in half
+- **Refundability uses color coding**: red for non-refundable, muted for others — instantly readable without reading the text
+- **Confirmation + cost share one line** in segment cards, making better use of the full page width
+- No two-column page layout is introduced — the content density improvements alone will meaningfully reduce page count without risking readability

@@ -70,9 +70,11 @@ const s = StyleSheet.create({
   segmentConfirmation: { fontSize: 9, fontWeight: 600, color: colors.primary, marginTop: 3 },
   segmentNotes: { fontSize: 9, color: colors.muted, fontStyle: "italic", marginTop: 3 },
   variantBox: { marginTop: 6, padding: 6, backgroundColor: colors.white, borderRadius: 2, borderWidth: 0.5, borderColor: colors.border },
-  variantLabel: { fontSize: 8, fontWeight: 600, marginBottom: 2 },
-  variantDetail: { fontSize: 8, color: colors.muted, marginBottom: 1 },
-  variantHeader: { fontSize: 8, fontWeight: 600, color: colors.primary, marginBottom: 3, textTransform: "uppercase" as const, letterSpacing: 1 },
+  variantLabel: { fontSize: 8, fontWeight: 600, flex: 1 },
+  variantDetail: { fontSize: 8, color: colors.muted, textAlign: "right" as const, flexShrink: 0 },
+  variantHeader: { fontSize: 8, fontWeight: 600, color: colors.primary, marginBottom: 4, textTransform: "uppercase" as const, letterSpacing: 1 },
+  variantRow: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "flex-start" as const, paddingVertical: 3, borderBottomWidth: 0.5, borderBottomColor: colors.border },
+  variantRowLast: { flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "flex-start" as const, paddingVertical: 3 },
   refundLine: { fontSize: 8, color: colors.muted, marginTop: 2 },
   propertyGroupHeader: { fontFamily: "Serif", fontSize: 13, fontWeight: 700, color: colors.hotel, marginBottom: 4, marginTop: 8 },
   propertyGroupTotal: { fontSize: 10, fontWeight: 600, color: colors.text, marginTop: 4, textAlign: "right" as const },
@@ -222,65 +224,84 @@ function buildPrimaryLabelForPdf(segment: TripSegment, journeyLegs?: TripSegment
   return segment.title || "Primary option";
 }
 
-function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[] }) {
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs, primaryCost }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[]; primaryCost?: number }) {
   if (!variants || variants.length === 0) return null;
   const submittedVariant = variants.find(v => v.isSubmitted);
 
   if (submittedVariant) {
     const refundText = formatRefundability(submittedVariant.refundability, submittedVariant.refundDeadline);
+    const labelText = (() => {
+      const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
+      if (isUpgrade && primarySegment) {
+        if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+          const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+          const variantCabin = bookingClassLabelsPdf[(submittedVariant as any).bookingClass] || bookingClassLabelsPdf[(submittedVariant as any).cabin] || submittedVariant.label || "";
+          const vQty = submittedVariant.quantity || segMeta.quantity || 1;
+          if (journeyLegs && journeyLegs.length > 1) {
+            const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+            const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+            const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+            const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+            const stops = journeyLegs.length - 1;
+            const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+            const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+            const extras: string[] = [stopsPart];
+            if (variantCabin) extras.push(variantCabin);
+            if (vQty > 1) extras.push(`${vQty} pax`);
+            return `${routePart} (${extras.join(", ")})`;
+          }
+          const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+          const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+          const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+          const extras: string[] = [];
+          if (variantCabin) extras.push(variantCabin);
+          if (vQty > 1) extras.push(`${vQty} pax`);
+          return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+        }
+        if (primarySegment.type === "hotel") {
+          const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+          const vQty = submittedVariant.quantity || (primarySegment.metadata as any)?.quantity || 1;
+          const parts = [hotelName, submittedVariant.label].filter(Boolean);
+          if (vQty > 1) parts.push(`${vQty} rooms`);
+          return parts.join(" — ");
+        }
+        const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+        return ctx ? `${ctx} — ${submittedVariant.label}` : submittedVariant.label;
+      }
+      return submittedVariant.label;
+    })();
+
     return (
       <View style={s.variantBox}>
         <Text style={s.variantHeader}>Selected:</Text>
-        <Text style={s.variantLabel}>
-          {(() => {
-            const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
-            if (isUpgrade && primarySegment) {
-              if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
-                const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
-                const variantCabin = bookingClassLabelsPdf[(submittedVariant as any).bookingClass] || bookingClassLabelsPdf[(submittedVariant as any).cabin] || submittedVariant.label || "";
-                const vQty = submittedVariant.quantity || segMeta.quantity || 1;
-
-                if (journeyLegs && journeyLegs.length > 1) {
-                  const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
-                  const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
-                  const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
-                  const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
-                  const stops = journeyLegs.length - 1;
-                  const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
-                  const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
-                  const extras: string[] = [stopsPart];
-                  if (variantCabin) extras.push(variantCabin);
-                  if (vQty > 1) extras.push(`${vQty} passengers`);
-                  return `${routePart} (${extras.join(", ")})`;
-                }
-
-                const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
-                const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
-                const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
-                const extras: string[] = [];
-                if (variantCabin) extras.push(variantCabin);
-                if (vQty > 1) extras.push(`${vQty} passengers`);
-                return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
-              }
-
-              if (primarySegment.type === "hotel") {
-                const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
-                const vQty = submittedVariant.quantity || (primarySegment.metadata as any)?.quantity || 1;
-                const parts = [hotelName, submittedVariant.label].filter(Boolean);
-                if (vQty > 1) parts.push(`${vQty} rooms`);
-                return parts.join(" — ");
-              }
-
-              const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
-              return ctx ? `${ctx} — ${submittedVariant.label}` : submittedVariant.label;
-            }
-            return submittedVariant.label;
-          })()}
-        </Text>
-        {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (
-          <Text style={s.variantDetail}>{formatCurrency(submittedVariant.cost, submittedVariant.currency || "USD")}</Text>
-        )}
-        {refundText && <Text style={s.variantDetail}>{refundText}</Text>}
+        <View style={s.variantRowLast}>
+          <Text style={s.variantLabel}>{labelText}</Text>
+          <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "40%" }}>
+            {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (() => {
+              const currency = submittedVariant.currency || primarySegment?.currency || "USD";
+              const qty = submittedVariant.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+              const ppu = submittedVariant.pricePerUnit && submittedVariant.pricePerUnit > 0
+                ? submittedVariant.pricePerUnit
+                : (qty > 1 && submittedVariant.cost > 0 ? submittedVariant.cost / qty : null);
+              const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
+              return (
+                <>
+                  <Text style={s.variantDetail}>{formatCurrency(submittedVariant.cost, currency)}</Text>
+                  {qty > 1 && ppu && (
+                    <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                      {formatCurrency(ppu, currency)} per {unitWord}
+                    </Text>
+                  )}
+                </>
+              );
+            })()}
+            {refundText && (
+              <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
+                {refundText}
+              </Text>
+            )}
+          </View>
+        </View>
       </View>
     );
   }
@@ -290,27 +311,44 @@ function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: 
       <Text style={s.variantHeader}>Options:</Text>
 
       {primarySegment && (
-        <View style={{ marginBottom: 4, paddingBottom: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
+        <View style={s.variantRow}>
           <Text style={[s.variantLabel, { color: colors.primary }]}>
             {buildPrimaryLabelForPdf(primarySegment, journeyLegs)}
           </Text>
-          {showPricing && primarySegment.cost != null && primarySegment.cost > 0 && (
-            <Text style={s.variantDetail}>
-              {formatCurrency(primarySegment.cost, primarySegment.currency || "USD")}
-            </Text>
-          )}
-          {(() => {
-            const meta = (primarySegment.metadata || {}) as Record<string, any>;
-            const refText = formatRefundability(meta.refundability || primarySegment.refundability, meta.refundDeadline);
-            return refText ? <Text style={s.variantDetail}>{refText}</Text> : null;
-          })()}
+          <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "40%" }}>
+            {showPricing && (() => {
+              const cost = primaryCost ?? primarySegment.cost;
+              const currency = primarySegment.currency || "USD";
+              if (cost == null || cost <= 0) return null;
+              const qty = (primarySegment.metadata as any)?.quantity || 1;
+              const ppu = (primarySegment.metadata as any)?.pricePerUnit;
+              const effectivePpu = ppu && ppu > 0 ? ppu : (qty > 1 && cost > 0 ? cost / qty : null);
+              const unitWord = primarySegment.type === "hotel" ? "room" : "passenger";
+              return (
+                <>
+                  <Text style={s.variantDetail}>{formatCurrency(cost, currency)}</Text>
+                  {qty > 1 && effectivePpu && (
+                    <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                      {formatCurrency(effectivePpu, currency)} per {unitWord}
+                    </Text>
+                  )}
+                </>
+              );
+            })()}
+            {(() => {
+              const meta = (primarySegment.metadata || {}) as Record<string, any>;
+              const refText = formatRefundability(meta.refundability || primarySegment.refundability, meta.refundDeadline);
+              return refText ? <Text style={[s.variantDetail, { fontSize: 7, color: refText.includes("Non") ? "#dc2626" : colors.muted }]}>{refText}</Text> : null;
+            })()}
+          </View>
         </View>
       )}
 
-      {variants.map((v) => {
+      {variants.map((v, vi) => {
         const refundText = formatRefundability(v.refundability, v.refundDeadline);
+        const isLast = vi === variants.length - 1;
         return (
-          <View key={v.id} style={{ marginBottom: 4 }}>
+          <View key={v.id} style={isLast ? s.variantRowLast : s.variantRow}>
             <Text style={s.variantLabel}>
               {(() => {
                 const isUpgrade = !v.variantType || v.variantType === "upgrade";
@@ -319,7 +357,6 @@ function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: 
                     const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
                     const variantCabin = bookingClassLabelsPdf[(v as any).bookingClass] || bookingClassLabelsPdf[(v as any).cabin] || v.label || "";
                     const vQty = v.quantity || segMeta.quantity || 1;
-
                     if (journeyLegs && journeyLegs.length > 1) {
                       const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
                       const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
@@ -330,19 +367,17 @@ function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: 
                       const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
                       const extras: string[] = [stopsPart];
                       if (variantCabin) extras.push(variantCabin);
-                      if (vQty > 1) extras.push(`${vQty} passengers`);
+                      if (vQty > 1) extras.push(`${vQty} pax`);
                       return `${routePart} (${extras.join(", ")})`;
                     }
-
                     const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
                     const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
                     const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
                     const extras: string[] = [];
                     if (variantCabin) extras.push(variantCabin);
-                    if (vQty > 1) extras.push(`${vQty} passengers`);
+                    if (vQty > 1) extras.push(`${vQty} pax`);
                     return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
                   }
-
                   if (primarySegment.type === "hotel") {
                     const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
                     const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
@@ -350,22 +385,37 @@ function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: 
                     if (vQty > 1) parts.push(`${vQty} rooms`);
                     return parts.join(" — ");
                   }
-
                   const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
                   return ctx ? `${ctx} — ${v.label}` : v.label;
                 }
                 return v.label;
               })()}
             </Text>
-            {showPricing && v.cost != null && v.cost > 0 && (
-              <Text style={s.variantDetail}>
-                {formatCurrency(v.cost, v.currency || "USD")}
-                {v.quantity && v.quantity > 1 && v.pricePerUnit && v.pricePerUnit > 0
-                  ? ` (${formatCurrency(v.pricePerUnit, v.currency || "USD")} × ${v.quantity})`
-                  : ""}
-              </Text>
-            )}
-            {refundText && <Text style={s.variantDetail}>{refundText}</Text>}
+            <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "40%" }}>
+              {showPricing && v.cost != null && v.cost > 0 && (() => {
+                const currency = v.currency || primarySegment?.currency || "USD";
+                const qty = v.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+                const ppu = v.pricePerUnit && v.pricePerUnit > 0
+                  ? v.pricePerUnit
+                  : (qty > 1 && v.cost > 0 ? v.cost / qty : null);
+                const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
+                return (
+                  <>
+                    <Text style={s.variantDetail}>{formatCurrency(v.cost, currency)}</Text>
+                    {qty > 1 && ppu && (
+                      <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                        {formatCurrency(ppu, currency)} per {unitWord}
+                      </Text>
+                    )}
+                  </>
+                );
+              })()}
+              {refundText && (
+                <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
+                  {refundText}
+                </Text>
+              )}
+            </View>
           </View>
         );
       })}
@@ -464,14 +514,18 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
       {details.map((d, i) => (
         <Text key={i} style={s.segmentDetail}>{d}</Text>
       ))}
-      {confNum ? (
-        <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
-      ) : null}
-      {showPricing && segment.cost != null && segment.cost > 0 ? (
-        <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text, marginTop: 2 }}>
-          {formatCurrency(segment.cost, segment.currency || "USD")}
-        </Text>
-      ) : null}
+      {(confNum || (showPricing && segment.cost != null && segment.cost > 0)) && (
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+          {confNum ? (
+            <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+          ) : <Text />}
+          {showPricing && segment.cost != null && segment.cost > 0 ? (
+            <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+              {formatCurrency(segment.cost, segment.currency || "USD")}
+            </Text>
+          ) : null}
+        </View>
+      )}
       {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
       {(() => {
         const refundText = formatRefundability(
@@ -556,9 +610,18 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantM
           </View>
         );
       })}
-      {legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (
-        <VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} journeyLegs={legs} />
-      )}
+      {legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (() => {
+        const journeyTotalCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0);
+        return (
+          <VariantDisplay
+            variants={firstLegVariants}
+            showPricing={showPricing}
+            primarySegment={legs[0]}
+            journeyLegs={legs}
+            primaryCost={journeyTotalCost > 0 ? journeyTotalCost : undefined}
+          />
+        );
+      })()}
     </View>
   );
 }
