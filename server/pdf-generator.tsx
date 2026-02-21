@@ -5,21 +5,24 @@ import { formatDestinations, segmentVariants } from "@shared/schema";
 import { differenceInMinutes, parseISO } from "date-fns";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
+import path from "path";
+
+const FONTS_DIR = path.join(__dirname, "fonts");
 
 Font.register({
   family: "Serif",
   fonts: [
-    { src: "https://fonts.gstatic.com/s/cormorantgaramond/v22/co3YmX5slCNuHLi8bLeY9MK7whWMhyjYqXtK.ttf", fontWeight: 400 },
-    { src: "https://fonts.gstatic.com/s/cormorantgaramond/v22/co3YmX5slCNuHLi8bLeY9MK7whWMhyjYqXtK.ttf", fontWeight: 400, fontStyle: "italic" },
-    { src: "https://fonts.gstatic.com/s/cormorantgaramond/v22/co3VmX5slCNuHLi8bLeY9MK7whWMhyjornFLsS6V7w.ttf", fontWeight: 700 },
+    { src: path.join(FONTS_DIR, "CormorantGaramond-Regular.ttf"), fontWeight: 400 },
+    { src: path.join(FONTS_DIR, "CormorantGaramond-Italic.ttf"), fontWeight: 400, fontStyle: "italic" },
+    { src: path.join(FONTS_DIR, "CormorantGaramond-Bold.ttf"), fontWeight: 700 },
   ],
 });
 
 Font.register({
   family: "Sans",
   fonts: [
-    { src: "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2", fontWeight: 400 },
-    { src: "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuI6fAZ9hiJ-Ek-_EeA.woff2", fontWeight: 600 },
+    { src: path.join(FONTS_DIR, "Inter-Regular.ttf"), fontWeight: 400 },
+    { src: path.join(FONTS_DIR, "Inter-SemiBold.ttf"), fontWeight: 600 },
   ],
 });
 

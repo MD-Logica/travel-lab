@@ -1,0 +1,116 @@
+# PT — Fix PDF Font Loading (Use Local Font Files)
+
+The PDF generator is failing because react-pdf runs server-side and tries to fetch fonts from `fonts.gstatic.com` at render time. Replit's server process cannot make outbound HTTP requests to external domains, so the font fetch fails and the PDF crashes. The fix is to download the font files once into the project and reference them as local absolute paths.
+
+**Do not change any other part of `pdf-generator.tsx` except the two `Font.register()` calls at the top.**
+
+---
+
+## Step 1 — Download font files into `server/fonts/`
+
+Create the directory `server/fonts/` and download these four files into it using `fetch` or `curl` during a setup step, OR use the Replit shell to download them. The files needed are:
+
+**Cormorant Garamond** (get from Google Fonts static CDN):
+- `server/fonts/CormorantGaramond-Regular.ttf`
+- `server/fonts/CormorantGaramond-Italic.ttf`  
+- `server/fonts/CormorantGaramond-Bold.ttf`
+
+**Inter** (reliable fallback for the sans font):
+- `server/fonts/Inter-Regular.ttf`
+- `server/fonts/Inter-SemiBold.ttf`
+
+To download them, run these commands in the Replit shell (one at a time):
+
+```bash
+mkdir -p server/fonts
+
+# Cormorant Garamond - get the correct static URLs by curling with a desktop user-agent
+curl -A "Mozilla/5.0" "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,700;1,400&display=swap" | grep -o 'https://fonts.gstatic.com[^)]*\.ttf'
+```
+
+This will print the actual current TTF URLs. Use those URLs to download the files:
+
+```bash
+# Replace the URLs below with whatever the curl above returned
+curl -o server/fonts/CormorantGaramond-Regular.ttf "https://fonts.gstatic.com/s/cormorantgaramond/v22/[ACTUAL-REGULAR-PATH].ttf"
+curl -o server/fonts/CormorantGaramond-Italic.ttf "https://fonts.gstatic.com/s/cormorantgaramond/v22/[ACTUAL-ITALIC-PATH].ttf"
+curl -o server/fonts/CormorantGaramond-Bold.ttf "https://fonts.gstatic.com/s/cormorantgaramond/v22/[ACTUAL-BOLD-PATH].ttf"
+
+# Inter (stable well-known URLs)
+curl -o server/fonts/Inter-Regular.ttf "https://github.com/rsms/inter/raw/master/docs/font-files/Inter-Regular.ttf"
+curl -o server/fonts/Inter-SemiBold.ttf "https://github.com/rsms/inter/raw/master/docs/font-files/Inter-SemiBold.ttf"
+```
+
+Verify the files exist and are non-zero size:
+```bash
+ls -lh server/fonts/
+```
+
+---
+
+## Step 2 — Update `server/pdf-generator.tsx` font registrations
+
+Once the font files are confirmed downloaded, replace the two `Font.register()` calls at the top of `server/pdf-generator.tsx`.
+
+First, add a path import at the top of the file if it isn't already there:
+```typescript
+import path from "path";
+```
+
+Then replace the font registrations:
+
+**Before:**
+```typescript
+Font.register({
+  family: "Serif",
+  fonts: [
+    { src: "https://fonts.gstatic.com/s/cormorantgaramond/v22/co3YmX5slCNuHLi8bLeY9MK7whWMhyjYqXtK.ttf", fontWeight: 400 },
+    { src: "https://fonts.gstatic.com/s/cormorantgaramond/v22/co3YmX5slCNuHLi8bLeY9MK7whWMhyjYqXtK.ttf", fontWeight: 400, fontStyle: "italic" },
+    { src: "https://fonts.gstatic.com/s/cormorantgaramond/v22/co3VmX5slCNuHLi8bLeY9MK7whWMhyjornFLsS6V7w.ttf", fontWeight: 700 },
+  ],
+});
+
+Font.register({
+  family: "Sans",
+  fonts: [
+    { src: "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuLyfAZ9hiJ-Ek-_EeA.woff2", fontWeight: 400 },
+    { src: "https://fonts.gstatic.com/s/inter/v18/UcCO3FwrK3iLTeHuS_nVMrMxCp50SjIw2boKoduKmMEVuI6fAZ9hiJ-Ek-_EeA.woff2", fontWeight: 600 },
+  ],
+});
+```
+
+**After:**
+```typescript
+const FONTS_DIR = path.join(__dirname, "fonts");
+
+Font.register({
+  family: "Serif",
+  fonts: [
+    { src: path.join(FONTS_DIR, "CormorantGaramond-Regular.ttf"), fontWeight: 400 },
+    { src: path.join(FONTS_DIR, "CormorantGaramond-Italic.ttf"), fontWeight: 400, fontStyle: "italic" },
+    { src: path.join(FONTS_DIR, "CormorantGaramond-Bold.ttf"), fontWeight: 700 },
+  ],
+});
+
+Font.register({
+  family: "Sans",
+  fonts: [
+    { src: path.join(FONTS_DIR, "Inter-Regular.ttf"), fontWeight: 400 },
+    { src: path.join(FONTS_DIR, "Inter-SemiBold.ttf"), fontWeight: 600 },
+  ],
+});
+```
+
+---
+
+## Step 3 — Verify
+
+After making the changes, trigger a PDF export from the app. The PDF should download correctly. The cover title and day headers will render in Cormorant Garamond, all body text in Inter.
+
+If the PDF still fails after this, check the server logs for the specific error. A missing file error means the font wasn't downloaded to the right path. A font format error means the downloaded file is corrupt or is HTML (which happens when curl follows a redirect to an error page) — re-run the curl commands and check the file size is >50KB.
+
+---
+
+## Why this approach
+
+react-pdf generates PDFs in a Node.js server process. When fonts are specified as remote URLs, react-pdf tries to fetch them via HTTP at render time. Replit's server environment blocks outbound HTTP requests to external domains from server processes, so the fetch fails silently and the PDF generator crashes. Local file paths bypass this entirely — the fonts are embedded directly into the PDF from disk, which is also faster and more reliable.
