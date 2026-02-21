@@ -26,6 +26,7 @@ import {
   Building2,
   BarChart2,
   MessageCircle,
+  Bookmark,
 } from "lucide-react";
 
 const navItems = [
@@ -33,6 +34,7 @@ const navItems = [
   { title: "Messages", path: "/dashboard/messages", icon: MessageCircle },
   { title: "Analytics", path: "/dashboard/analytics", icon: BarChart2 },
   { title: "Trips", path: "/trips", icon: Map },
+  { title: "Templates", path: "/templates", icon: Bookmark },
   { title: "Clients", path: "/clients", icon: Users },
   { title: "Settings", path: "/settings", icon: Settings },
 ];

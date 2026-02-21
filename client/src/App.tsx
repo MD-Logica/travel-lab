@@ -30,6 +30,7 @@ import ClientDetailPage from "@/pages/client-detail";
 import SettingsPage from "@/pages/settings";
 import AnalyticsPage from "@/pages/analytics";
 import MessagesPage from "@/pages/messages";
+import TemplatesPage from "@/pages/templates";
 import LoginPage from "@/pages/auth/login";
 import SignupPage from "@/pages/auth/signup";
 import ForgotPasswordPage from "@/pages/auth/forgot-password";
@@ -51,6 +52,7 @@ function AuthenticatedRoutes() {
       <Route path="/trips/:id" component={TripDetailPage} />
       <Route path="/clients" component={ClientsPage} />
       <Route path="/clients/:id" component={ClientDetailPage} />
+      <Route path="/templates" component={TemplatesPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>

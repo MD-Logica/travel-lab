@@ -1,0 +1,63 @@
+# Fix: Profile Photo Upload in Settings
+
+## Problem
+The Settings page shows "Photo upload coming soon" instead of a working photo upload.
+The `avatarUrl` field exists on profiles in the DB. Object storage is already wired up
+for document uploads. We need to add avatar upload to the profile.
+
+## Required Changes
+
+### 1. Add avatar upload route in `server/routes.ts`
+
+Find the `PATCH /api/profile` route (around line 326). BEFORE it, add a new route:
+
+```
+POST /api/profile/avatar
+```
+
+This route should:
+- Accept a multipart file upload (use multer with `memoryStorage()`)
+- Accept only image files (jpg, png, webp, gif) — max 5MB
+- Upload the file to object storage using `objectStorageService` (already imported)
+- Get the public URL back
+- Update the profile's `avatarUrl` in the database using `storage.updateProfile(userId, { avatarUrl: publicUrl })`
+- Return `{ avatarUrl: publicUrl }`
+
+Use the same multer setup already used elsewhere in routes.ts. If there is no existing multer setup, add:
+```typescript
+import multer from "multer";
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+```
+
+Also update the `PATCH /api/profile` schema to accept `avatarUrl` as an optional string field, so the URL can also be cleared manually.
+
+### 2. Update `client/src/pages/settings.tsx`
+
+Replace the "Photo upload coming soon" section (around line 96) with a working upload UI.
+
+Current code:
+```tsx
+<Avatar className="w-16 h-16">
+  <AvatarFallback ...>{getInitials(profile.fullName)}</AvatarFallback>
+</Avatar>
+<div>
+  <p className="font-medium">{profile.fullName}</p>
+  <p className="text-xs text-muted-foreground mt-0.5">Photo upload coming soon</p>
+</div>
+```
+
+Replace with:
+- Show the avatar (with `AvatarImage` using `profile.avatarUrl` if it exists)
+- Below or overlaying the avatar: a small "Upload photo" button that triggers a hidden `<input type="file" accept="image/*" />`
+- On file select: POST to `/api/profile/avatar` with `FormData`
+- Show a loading spinner while uploading
+- On success: invalidate the `["/api/profile"]` query so the new avatar appears everywhere (sidebar, etc.)
+- On error: show a toast "Upload failed"
+- Also add a small "Remove" link if `profile.avatarUrl` exists, which calls `PATCH /api/profile` with `{ avatarUrl: null }`
+
+Keep the rest of the settings profile section exactly as-is.
+
+### What NOT to change
+- Do not change any other page
+- Do not change the sidebar avatar (it will auto-update when `/api/profile` query is invalidated)
+- Do not change any trip-related files
