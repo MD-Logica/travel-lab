@@ -57,6 +57,7 @@ export const profiles = pgTable("profiles", {
   website: text("website"),
   timeFormat: text("time_format").notNull().default("24h"),
   canViewAllClients: boolean("can_view_all_clients").notNull().default(false),
+  showAllConversations: boolean("show_all_conversations").notNull().default(false),
   preferences: jsonb("preferences").default({}),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

@@ -1,0 +1,199 @@
+Scope the Messages inbox and push notifications so each advisor only sees and gets pinged about their own clients' conversations. Owners get a toggle to view all. Co-advisors (via clientCollaborators) are included automatically.
+
+---
+
+**Step 1 — Add `showAllConversations` field to profiles (`shared/schema.ts`)**
+
+Add one boolean column to the `profiles` table:
+```typescript
+showAllConversations: boolean("show_all_conversations").notNull().default(false),
+```
+
+This is an owner-only preference. Non-owners always see only their own clients. Owners default to their own clients too (default false) but can flip this on in settings.
+
+Run the database migration.
+
+---
+
+**Step 2 — New scoped storage method (`server/storage.ts`)**
+
+Add a new method to the storage interface and implementation:
+
+```typescript
+getConversationsForAdvisor(
+  orgId: string,
+  advisorId: string
+): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]>
+```
+
+This should return conversations where the client's `assigned_advisor_id = advisorId` OR where `advisorId` appears in `client_collaborators` for that client. Use the same pattern already established in `getClientsByAdvisor`:
+
+```sql
+SELECT c.*,
+  cl.full_name AS client_name,
+  cl.avatar_url AS client_avatar_url,
+  COALESCE((
+    SELECT COUNT(*)::int FROM messages m
+    WHERE m.conversation_id = c.id
+    AND m.is_read = false
+    AND m.sender_type = 'client'
+  ), 0) AS unread_count
+FROM conversations c
+JOIN clients cl ON cl.id = c.client_id
+WHERE c.org_id = [orgId]
+AND (
+  cl.assigned_advisor_id = [advisorId]
+  OR EXISTS (
+    SELECT 1 FROM client_collaborators cc
+    WHERE cc.client_id = cl.id
+    AND cc.advisor_id = [advisorId]
+    AND cc.org_id = [orgId]
+  )
+)
+ORDER BY c.last_message_at DESC NULLS LAST
+```
+
+Keep the existing `getConversationsByOrg` method unchanged — it's used when an owner has `showAllConversations = true`.
+
+---
+
+**Step 3 — Update the conversations route (`server/routes.ts`)**
+
+In `GET /api/conversations`, replace the single `getConversationsByOrg` call with logic that branches on the advisor's profile:
+
+```typescript
+app.get("/api/conversations", isAuthenticated, orgMiddleware, async (req: any, res) => {
+  try {
+    const profile = req._profile;
+    const showAll = profile.role === "owner" && profile.showAllConversations === true;
+    
+    const convos = showAll
+      ? await storage.getConversationsByOrg(req._orgId)
+      : await storage.getConversationsForAdvisor(req._orgId, profile.id);
+    
+    res.json(convos);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch conversations" });
+  }
+});
+```
+
+---
+
+**Step 4 — New targeted push notification helper (`server/routes.ts`)**
+
+Add a new helper function alongside `sendPushToOrg`:
+
+```typescript
+async function sendPushToAdvisorsForClient(
+  orgId: string,
+  clientId: string,
+  payload: { title: string; body: string; url?: string }
+) {
+  try {
+    const { db } = await import("./db");
+    const { eq, and, or, inArray } = await import("drizzle-orm");
+
+    // Get assigned advisor
+    const [client] = await db.select({ assignedAdvisorId: clients.assignedAdvisorId })
+      .from(clients).where(eq(clients.id, clientId));
+
+    // Get co-advisors
+    const collabs = await db.select({ advisorId: clientCollaborators.advisorId })
+      .from(clientCollaborators)
+      .where(and(eq(clientCollaborators.clientId, clientId), eq(clientCollaborators.orgId, orgId)));
+
+    const targetIds = [
+      client?.assignedAdvisorId,
+      ...collabs.map(c => c.advisorId)
+    ].filter(Boolean) as string[];
+
+    if (targetIds.length === 0) return;
+
+    // Get push subscriptions for those specific advisors only
+    const subs = await db.select().from(pushSubscriptions)
+      .where(and(
+        eq(pushSubscriptions.orgId, orgId),
+        inArray(pushSubscriptions.profileId, targetIds)
+      ));
+
+    const payloadStr = JSON.stringify(payload);
+    await Promise.allSettled(
+      subs.map(sub =>
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          payloadStr
+        ).catch(() => {})
+      )
+    );
+  } catch {}
+}
+```
+
+---
+
+**Step 5 — Replace `sendPushToOrg` calls with the scoped helper**
+
+There are two places in `server/routes.ts` where push notifications fire for new messages:
+
+**Advisor sends a message** (around line 2035): The current call notifies the whole org minus the sender. Replace with `sendPushToOrg` as-is — this one is fine because it's the advisor notifying themselves, which is already excluded via `excludeProfileId`. Actually leave this one unchanged.
+
+**Client sends a message** (around line 2120): This is the important one. Replace:
+```typescript
+sendPushToOrg(tokenData.orgId, {
+  title: `New message from ${client?.fullName || "Client"}`,
+  body: content.substring(0, 100),
+  url: `/dashboard/messages?id=${req.params.id}`,
+}).catch(() => {});
+```
+With:
+```typescript
+sendPushToAdvisorsForClient(tokenData.orgId, tokenData.clientId, {
+  title: `New message from ${client?.fullName || "Client"}`,
+  body: content.substring(0, 100),
+  url: `/dashboard/messages?id=${req.params.id}`,
+}).catch(() => {});
+```
+
+Also update the system event message notifications in PB (selections submitted, itinerary approved) to use `sendPushToAdvisorsForClient` instead of `sendPushToOrg`.
+
+---
+
+**Step 6 — Add the toggle to Settings (`client/src/pages/settings.tsx`)**
+
+In the team permissions section (where `canViewAllClients` toggle is shown per team member), add a separate section for the owner's own preferences — or add it to the existing personal preferences section:
+
+```
+Show all client conversations in my inbox
+[toggle — only visible if profile.role === "owner"]
+Small note: "When off, you only see conversations for clients assigned to you."
+```
+
+Save via `PATCH /api/profile` with `{ showAllConversations: boolean }`. Make sure the profile PATCH route in `server/routes.ts` accepts and saves this new field.
+
+The toggle should only render if `profile.role === "owner"`. Non-owners always see their scoped inbox with no option to change it.
+
+---
+
+**Step 7 — Update unread count (`server/routes.ts`)**
+
+The `GET /api/messages/unread-count` route currently returns org-wide unread. Scope it the same way:
+
+```typescript
+app.get("/api/messages/unread-count", isAuthenticated, orgMiddleware, async (req: any, res) => {
+  try {
+    const profile = req._profile;
+    const showAll = profile.role === "owner" && profile.showAllConversations === true;
+    
+    const unreadCount = showAll
+      ? await storage.getUnreadMessageCount(req._orgId)
+      : await storage.getUnreadMessageCountForAdvisor(req._orgId, profile.id);
+    
+    res.json({ unreadCount });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch unread count" });
+  }
+});
+```
+
+Add `getUnreadMessageCountForAdvisor(orgId, advisorId)` to storage — same logic as `getUnreadMessageCount` but with the advisor/collaborator filter applied to the JOIN.
