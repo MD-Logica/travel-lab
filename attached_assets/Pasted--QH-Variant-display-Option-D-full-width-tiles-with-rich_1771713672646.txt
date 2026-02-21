@@ -1,0 +1,327 @@
+# QH — Variant display: Option D full-width tiles with rich descriptions
+
+Two files change: `client/src/components/segment-editor.tsx`, `client/src/pages/trip-view.tsx`.
+
+This replaces the two-column post-choice layout with a cohesive full-width stacked tile design used consistently for both hotels and flights. The same tile component renders in both the standard `VariantCards` path and inside `ChoiceGroupViewCard`.
+
+---
+
+## Change 1: `segment-editor.tsx` — upgrade description field to Textarea
+
+The variant description field is currently a single-line `<Input>`. Replace it with a `<Textarea>` so advisors can write multi-line descriptions (room features, baggage policy, perks).
+
+Find inside the variants section:
+```tsx
+<Input
+  value={v.description || ""}
+  onChange={(e) => updateVariant(i, { description: e.target.value })}
+  placeholder="Description (optional)"
+  data-testid={`input-variant-description-${i}`}
+/>
+```
+
+Replace with:
+```tsx
+<Textarea
+  value={v.description || ""}
+  onChange={(e) => updateVariant(i, { description: e.target.value })}
+  placeholder={
+    type === "hotel"
+      ? "e.g. 2,100 sq ft · Private plunge pool · Ocean view\nButler service included · King bed"
+      : "e.g. 2 checked bags included (up to 50 lbs each)\nCarry-on + personal item · Lounge access"
+  }
+  rows={3}
+  className="text-sm resize-none"
+  data-testid={`input-variant-description-${i}`}
+/>
+```
+
+Also update the `FieldLabel` above the description field (if one exists — add one if not) to `"Perks / Description"` so the purpose is clear to advisors.
+
+---
+
+## Change 2: `trip-view.tsx` — replace two-column layout with Option D full-width tiles
+
+### 2A: Update standard `VariantCards` — add `whitespace-pre-wrap` to description
+
+The existing `VariantCards` component already renders `v.description` but without line break support. Find:
+
+```tsx
+{v.description && (
+  <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
+)}
+```
+
+Replace with:
+
+```tsx
+{v.description && (
+  <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">{v.description}</p>
+)}
+```
+
+Do the same for the primary variant's description if it shows one (check if the primary button tile renders a description — if not, no change needed there since the primary description lives on the segment itself via the `notes` field).
+
+### 2B: Replace the two-column layout inside `ChoiceGroupViewCard`
+
+The current code has a branch: `{isChosen && hasVariantsForOption && !isApproved ? (two-column layout) : (full-width layout)}`. 
+
+Replace the entire two-column branch with a full-width approach: when `isChosen && hasVariantsForOption && !isApproved`, show the full segment card with its emerald treatment, then immediately below it render an inline variant selection zone with full-width tiles.
+
+**Find the entire two-column block** starting from:
+```tsx
+{isChosen && hasVariantsForOption && !isApproved ? (
+  <div className="rounded-xl border border-emerald-200/70 ...">
+    <div className="h-0.5 w-full bg-gradient-to-r ..."/>
+    <div className="flex">
+      <div className="w-[55%] border-r ...">
+        ...
+      </div>
+      <div className="flex-1 bg-background">
+        ...
+      </div>
+    </div>
+  </div>
+) : (
+```
+
+**Replace that entire branch** with:
+
+```tsx
+{isChosen && hasVariantsForOption && !isApproved ? (
+  <div>
+    {/* Full segment card with emerald selection treatment */}
+    <div className="rounded-xl border border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20 overflow-hidden">
+      <div className="h-0.5 w-full bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" />
+      <div className="p-0">
+        <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
+      </div>
+      {/* Selected footer with change link */}
+      <div className="px-4 py-2.5 border-t border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/40 dark:bg-emerald-950/10 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+            <Check className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+            {isLocked ? "Your selection — submitted to advisor" : "Selected"}
+          </span>
+        </div>
+        {showChoiceUI && !isLocked && (
+          <button
+            onClick={() => onSelectChoice?.(choiceGroupId, "")}
+            className="text-[9px] text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 transition-colors"
+          >
+            change
+          </button>
+        )}
+      </div>
+    </div>
+
+    {/* Upgrade tier selection — full-width tiles below the chosen card */}
+    {showChoiceUI && (
+      <div className="mt-2 pl-3 border-l-2 border-emerald-200/50 dark:border-emerald-800/30">
+        <p className="text-[9px] font-semibold tracking-widest uppercase text-muted-foreground mb-2 pt-1">
+          {option.type === "hotel" ? "Now choose your room type" : "Now choose your cabin class"}
+        </p>
+        <div className="space-y-2">
+
+          {/* Primary tier tile */}
+          {(!isVariantLocked || !selectedVariantId || selectedVariantId === "primary") && (
+            <button
+              type="button"
+              onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, "")}
+              className={`w-full text-left rounded-lg border p-3 transition-all ${
+                (!selectedVariantId || selectedVariantId === "primary")
+                  ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                  : "border-border/50 hover:border-primary/30 bg-background"
+              } ${isVariantLocked ? "cursor-default" : ""}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">
+                      {option.type === "hotel"
+                        ? ((option.metadata as any)?.roomType || option.subtitle || "Standard Room")
+                        : (bookingClassLabels[(option.metadata as any)?.bookingClass] || (option.metadata as any)?.bookingClass || "Economy")
+                      }
+                    </span>
+                    {(!selectedVariantId || selectedVariantId === "primary") && (
+                      <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0" />
+                    )}
+                  </div>
+                  {/* Primary segment description (from notes or subtitle) */}
+                  {(() => {
+                    const desc = option.type === "hotel"
+                      ? (option.metadata as any)?.roomDescription || option.notes
+                      : option.notes;
+                    return desc ? (
+                      <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">{desc}</p>
+                    ) : null;
+                  })()}
+                </div>
+                <div className="text-right shrink-0">
+                  {showPricing && option.cost != null && option.cost > 0 && (
+                    <p className="text-sm font-medium">
+                      {formatViewCurrency(option.cost, option.currency || "USD")}
+                    </p>
+                  )}
+                  {(() => {
+                    const r = (option.metadata as any)?.refundability || option.refundability;
+                    if (!r || r === "unknown") return null;
+                    return (
+                      <p className={`text-[10px] mt-0.5 ${
+                        r === "non_refundable" ? "text-red-500" :
+                        r === "fully_refundable" ? "text-emerald-500" : "text-amber-500"
+                      }`}>
+                        {r === "non_refundable" ? "Non-refundable" :
+                         r === "fully_refundable" ? "Refundable" : "Partial refund"}
+                      </p>
+                    );
+                  })()}
+                </div>
+              </div>
+            </button>
+          )}
+
+          {/* Upgrade variant tiles */}
+          {optionVariants!.map((v: any) => {
+            const isVSelected = selectedVariantId === v.id;
+            if (isVariantLocked && !isVSelected) return null;
+            const vCost = v.cost || 0;
+            const vCurrency = v.currency || option.currency || "USD";
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, v.id)}
+                className={`w-full text-left rounded-lg border p-3 transition-all ${
+                  isVSelected
+                    ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                    : "border-border/50 hover:border-primary/30 bg-background"
+                } ${isVariantLocked ? "cursor-default" : ""}`}
+                data-testid={`variant-tile-choice-${v.id}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{v.label}</span>
+                      {isVSelected && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0" />}
+                    </div>
+                    {v.description && (
+                      <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">{v.description}</p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    {showPricing && vCost > 0 && (
+                      <p className="text-sm font-medium">
+                        {formatViewCurrency(vCost, vCurrency)}
+                      </p>
+                    )}
+                    {v.refundability && v.refundability !== "unknown" && (
+                      <p className={`text-[10px] mt-0.5 ${
+                        v.refundability === "non_refundable" ? "text-red-500" :
+                        v.refundability === "fully_refundable" ? "text-emerald-500" :
+                        "text-amber-500"
+                      }`}>
+                        {v.refundability === "non_refundable" ? "Non-refundable" :
+                         v.refundability === "fully_refundable" ? "Refundable" : "Partial refund"}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Nudge if no variant selected yet */}
+        {showChoiceUI && !selectedVariantId && !isVariantLocked && (
+          <p className="text-[10px] text-amber-600/60 dark:text-amber-400/50 mt-2 flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-amber-400/60 inline-block" />
+            Select your preferred option above
+          </p>
+        )}
+      </div>
+    )}
+  </div>
+) : (
+  {/* ... existing full-width card code unchanged ... */}
+```
+
+---
+
+## What the client sees
+
+### Pre-choice (unchanged from QG)
+Both hotel/flight cards at full width with "Select this option" footer.
+
+### After choosing The Peninsula (has 3 room types with descriptions)
+
+```
+● Option selected — review below                    change
+
+[The Beverly Hills Hotel]                      (35% opacity)
+
+              or  (faded)
+
+┌─────────────────────────────────────────────────────────┐
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔ (emerald gradient) ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+│  [The Peninsula Beverly Hills — full segment card]       │
+│─────────────────────────────────────────────────────────│
+│  ✓ Selected                                    change   │
+└─────────────────────────────────────────────────────────┘
+
+  ┊ Now choose your room type
+  ┊
+  ┊ ┌────────────────────────────────────────── $6,200 ──┐
+  ┊ │ Grand Suite                          ✓             │
+  ┊ │ 2,100 sq ft · Private plunge pool                  │
+  ┊ │ Ocean view · Butler service included               │
+  ┊ │                                        Refundable  │
+  ┊ └────────────────────────────────────────────────────┘
+  ┊
+  ┊ ┌────────────────────────────────────────── $3,800 ──┐
+  ┊ │ Deluxe Room                                        │
+  ┊ │ 650 sq ft · Garden view · King bed                 │
+  ┊ │                                    Non-refundable  │
+  ┊ └────────────────────────────────────────────────────┘
+  ┊
+  ┊ ┌────────────────────────────────────────── $2,900 ──┐
+  ┊ │ Classic Room                                       │
+  ┊ │ 420 sq ft · City view                              │
+  ┊ │                                    Non-refundable  │
+  ┊ └────────────────────────────────────────────────────┘
+```
+
+### Same pattern for flights: choose carrier, then cabin options expand below
+
+```
+┌─────────────────────────────────────────────────────────┐
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔ (emerald gradient) ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+│  [American Airlines AA 1700 JFK→LAX — full card]         │
+│─────────────────────────────────────────────────────────│
+│  ✓ Selected                                    change   │
+└─────────────────────────────────────────────────────────┘
+
+  ┊ Now choose your cabin class
+  ┊
+  ┊ ┌────────────────────────────────────────── $890 ───┐
+  ┊ │ Economy                                           │
+  ┊ │ 1 carry-on + 1 personal item                      │
+  ┊ │ No checked bags included                          │
+  ┊ └───────────────────────────────────────────────────┘
+  ┊
+  ┊ ┌────────────────────────────────────────── $2,400 ─┐
+  ┊ │ Business Class                              ✓     │
+  ┊ │ 2 checked bags (up to 50 lbs each)                │
+  ┊ │ Carry-on + personal item · Priority boarding      │
+  ┊ │ Star Alliance lounge access                       │
+  ┊ └───────────────────────────────────────────────────┘
+```
+
+The left green border on the tile zone visually connects it to the selected card above — it reads as "sub-choices belonging to this selection" rather than a separate section.
+
+---
+
+## No schema changes needed
+`description` is already `text` type (unlimited length) on `segmentVariants`. No migration required.

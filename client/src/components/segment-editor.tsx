@@ -1822,12 +1822,21 @@ export function SegmentEditor({
                       <X className="w-4 h-4" />
                     </Button>
                   </div>
-                  <Input
-                    value={v.description || ""}
-                    onChange={(e) => updateVariant(i, { description: e.target.value })}
-                    placeholder="Description (optional)"
-                    data-testid={`input-variant-description-${i}`}
-                  />
+                  <div>
+                    <FieldLabel>Perks / Description</FieldLabel>
+                    <Textarea
+                      value={v.description || ""}
+                      onChange={(e) => updateVariant(i, { description: e.target.value })}
+                      placeholder={
+                        type === "hotel"
+                          ? "e.g. 2,100 sq ft · Private plunge pool · Ocean view\nButler service included · King bed"
+                          : "e.g. 2 checked bags included (up to 50 lbs each)\nCarry-on + personal item · Lounge access"
+                      }
+                      rows={3}
+                      className="text-sm resize-none"
+                      data-testid={`input-variant-description-${i}`}
+                    />
+                  </div>
                   <FieldRow cols={3}>
                     <div>
                       <FieldLabel>Price</FieldLabel>

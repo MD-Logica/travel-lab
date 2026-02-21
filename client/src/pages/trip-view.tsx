@@ -1044,131 +1044,151 @@ function ChoiceGroupViewCard({
                 transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
               >
                 {isChosen && hasVariantsForOption && !isApproved ? (
-                  <div className="rounded-xl border border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20 overflow-hidden">
-                    <div className="h-0.5 w-full bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" />
-
-                    <div className="flex">
-                      <div className="w-[55%] border-r border-emerald-100/40 dark:border-emerald-900/30 bg-emerald-50/20 dark:bg-emerald-950/5">
-                        <div className="p-3">
-                          <div className="flex items-start gap-2">
-                            <div className="flex items-center justify-center w-7 h-7 rounded-md shrink-0 bg-emerald-100/60 dark:bg-emerald-950/40 mt-0.5">
-                              {option.type === "hotel" ? (
-                                <Hotel className="w-3.5 h-3.5 text-emerald-600" strokeWidth={1.5} />
-                              ) : (
-                                <Plane className="w-3.5 h-3.5 text-emerald-600" strokeWidth={1.5} />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-semibold font-serif leading-tight text-foreground truncate">
-                                {option.type === "hotel"
-                                  ? ((option.metadata as any)?.hotelName || option.title || "Hotel")
-                                  : (() => {
-                                      const m = (option.metadata as any) || {};
-                                      const dep = m.departure?.iata || m.departureAirport || "";
-                                      const arr = m.arrival?.iata || m.arrivalAirport || "";
-                                      const fn = m.flightNumber || "";
-                                      return dep && arr ? `${fn ? fn + " · " : ""}${dep} → ${arr}` : option.title;
-                                    })()
-                                }
-                              </p>
-                              <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/60 font-medium mt-0.5 flex items-center gap-1">
-                                <Check className="w-3 h-3" />
-                                Selected
-                              </p>
-                              {showPricing && option.cost != null && option.cost > 0 && (
-                                <p className="text-[11px] text-muted-foreground mt-1">
-                                  {formatViewCurrency(option.cost, option.currency || "USD")}
-                                </p>
-                              )}
-                            </div>
+                  <div>
+                    <div className="rounded-xl border border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20 overflow-hidden">
+                      <div className="h-0.5 w-full bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" />
+                      <div className="p-0">
+                        <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
+                      </div>
+                      <div className="px-4 py-2.5 border-t border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/40 dark:bg-emerald-950/10 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+                            <Check className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
                           </div>
-                          {showChoiceUI && !isLocked && (
+                          <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                            {isLocked ? "Your selection — submitted to advisor" : "Selected"}
+                          </span>
+                        </div>
+                        {showChoiceUI && !isLocked && (
+                          <button
+                            onClick={() => onSelectChoice?.(choiceGroupId, "")}
+                            className="text-[9px] text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 transition-colors"
+                          >
+                            change
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 pl-3 border-l-2 border-emerald-200/50 dark:border-emerald-800/30">
+                        <p className="text-[9px] font-semibold tracking-widest uppercase text-muted-foreground mb-2 pt-1">
+                          {option.type === "hotel" ? (showChoiceUI ? "Now choose your room type" : "Room type") : (showChoiceUI ? "Now choose your cabin class" : "Cabin class")}
+                        </p>
+                        <div className="space-y-2">
+                          {(!isVariantLocked || !selectedVariantId || selectedVariantId === "primary") && (
                             <button
-                              onClick={() => onSelectChoice?.(choiceGroupId, "")}
-                              className="text-[9px] text-muted-foreground/40 hover:text-muted-foreground underline underline-offset-2 mt-2 block transition-colors"
+                              type="button"
+                              onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, "")}
+                              className={`w-full text-left rounded-lg border p-3 transition-all ${
+                                (!selectedVariantId || selectedVariantId === "primary")
+                                  ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                                  : "border-border/50 hover:border-primary/30 bg-background"
+                              } ${isVariantLocked ? "cursor-default" : ""}`}
                             >
-                              change selection
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium">
+                                      {option.type === "hotel"
+                                        ? ((option.metadata as any)?.roomType || option.subtitle || "Standard Room")
+                                        : (bookingClassLabels[(option.metadata as any)?.bookingClass] || (option.metadata as any)?.bookingClass || "Economy")
+                                      }
+                                    </span>
+                                    {(!selectedVariantId || selectedVariantId === "primary") && (
+                                      <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0" />
+                                    )}
+                                  </div>
+                                  {(() => {
+                                    const desc = option.type === "hotel"
+                                      ? (option.metadata as any)?.roomDescription || option.notes
+                                      : option.notes;
+                                    return desc ? (
+                                      <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">{desc}</p>
+                                    ) : null;
+                                  })()}
+                                </div>
+                                <div className="text-right shrink-0">
+                                  {showPricing && option.cost != null && option.cost > 0 && (
+                                    <p className="text-sm font-medium">
+                                      {formatViewCurrency(option.cost, option.currency || "USD")}
+                                    </p>
+                                  )}
+                                  {(() => {
+                                    const r = (option.metadata as any)?.refundability || option.refundability;
+                                    if (!r || r === "unknown") return null;
+                                    return (
+                                      <p className={`text-[10px] mt-0.5 ${
+                                        r === "non_refundable" ? "text-red-500" :
+                                        r === "fully_refundable" ? "text-emerald-500" : "text-amber-500"
+                                      }`}>
+                                        {r === "non_refundable" ? "Non-refundable" :
+                                         r === "fully_refundable" ? "Refundable" : "Partial refund"}
+                                      </p>
+                                    );
+                                  })()}
+                                </div>
+                              </div>
                             </button>
                           )}
-                        </div>
-                      </div>
 
-                      <div className="flex-1 bg-background">
-                        <div className="p-3">
-                          <p className="text-[9px] font-semibold tracking-widest uppercase text-muted-foreground mb-2">
-                            {option.type === "hotel" ? "Choose room type" : "Choose cabin class"}
-                          </p>
-                          <div className="space-y-1.5">
-                            {(!isVariantLocked || !selectedVariantId || selectedVariantId === "primary") && (
+                          {optionVariants!.map((v: any) => {
+                            const isVSelected = selectedVariantId === v.id;
+                            if (isVariantLocked && !isVSelected) return null;
+                            const vCost = v.cost || 0;
+                            const vCurrency = v.currency || option.currency || "USD";
+                            return (
                               <button
+                                key={v.id}
                                 type="button"
-                                onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, "")}
-                                className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs transition-all ${
-                                  (!selectedVariantId || selectedVariantId === "primary")
+                                onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, v.id)}
+                                className={`w-full text-left rounded-lg border p-3 transition-all ${
+                                  isVSelected
                                     ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
                                     : "border-border/50 hover:border-primary/30 bg-background"
                                 } ${isVariantLocked ? "cursor-default" : ""}`}
+                                data-testid={`variant-tile-choice-${v.id}`}
                               >
-                                <div className="flex items-center justify-between gap-1">
-                                  <span className="font-medium truncate">
-                                    {option.type === "hotel"
-                                      ? ((option.metadata as any)?.roomType || option.subtitle || "Standard")
-                                      : (bookingClassLabels[(option.metadata as any)?.bookingClass] || (option.metadata as any)?.bookingClass || "Economy")
-                                    }
-                                  </span>
-                                  {(!selectedVariantId || selectedVariantId === "primary") && (
-                                    <CheckCircle className="w-3 h-3 text-primary shrink-0" />
-                                  )}
-                                </div>
-                                {showPricing && option.cost != null && option.cost > 0 && (
-                                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                                    {formatViewCurrency(option.cost, option.currency || "USD")}
-                                  </p>
-                                )}
-                              </button>
-                            )}
-                            {optionVariants!.map((v: any) => {
-                              const isVSelected = selectedVariantId === v.id;
-                              if (isVariantLocked && !isVSelected) return null;
-                              return (
-                                <button
-                                  key={v.id}
-                                  type="button"
-                                  onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, v.id)}
-                                  className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs transition-all ${
-                                    isVSelected
-                                      ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
-                                      : "border-border/50 hover:border-primary/30 bg-background"
-                                  } ${isVariantLocked ? "cursor-default" : ""}`}
-                                >
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="font-medium truncate">{v.label}</span>
-                                    {isVSelected && <CheckCircle className="w-3 h-3 text-primary shrink-0" />}
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-sm font-medium">{v.label}</span>
+                                      {isVSelected && <CheckCircle className="w-3.5 h-3.5 text-primary shrink-0" />}
+                                    </div>
+                                    {v.description && (
+                                      <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">{v.description}</p>
+                                    )}
                                   </div>
-                                  {showPricing && v.cost != null && v.cost > 0 && (
-                                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                                      {formatViewCurrency(v.cost, v.currency || option.currency || "USD")}
-                                    </p>
-                                  )}
-                                  {v.refundability && v.refundability !== "unknown" && (
-                                    <p className={`text-[9px] mt-0.5 ${
-                                      v.refundability === "non_refundable" ? "text-red-500" :
-                                      v.refundability === "fully_refundable" ? "text-emerald-500" :
-                                      "text-amber-500"
-                                    }`}>
-                                      {v.refundability === "non_refundable" ? "Non-refundable" :
-                                       v.refundability === "fully_refundable" ? "Refundable" : "Partial refund"}
-                                    </p>
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
+                                  <div className="text-right shrink-0">
+                                    {showPricing && vCost > 0 && (
+                                      <p className="text-sm font-medium">
+                                        {formatViewCurrency(vCost, vCurrency)}
+                                      </p>
+                                    )}
+                                    {v.refundability && v.refundability !== "unknown" && (
+                                      <p className={`text-[10px] mt-0.5 ${
+                                        v.refundability === "non_refundable" ? "text-red-500" :
+                                        v.refundability === "fully_refundable" ? "text-emerald-500" :
+                                        "text-amber-500"
+                                      }`}>
+                                        {v.refundability === "non_refundable" ? "Non-refundable" :
+                                         v.refundability === "fully_refundable" ? "Refundable" : "Partial refund"}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
-                      </div>
-                    </div>
-                  </div>
 
+                        {showChoiceUI && !selectedVariantId && !isVariantLocked && (
+                          <p className="text-[10px] text-amber-600/60 dark:text-amber-400/50 mt-2 flex items-center gap-1.5">
+                            <span className="w-1 h-1 rounded-full bg-amber-400/60 inline-block" />
+                            Select your preferred option above
+                          </p>
+                        )}
+                      </div>
+                  </div>
                 ) : (
                   <div className={`relative rounded-xl border overflow-hidden transition-all duration-400 ${
                     isChosen
@@ -1503,7 +1523,7 @@ function VariantCards({
               })()}
             </p>
             {v.description && (
-              <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
+              <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap leading-relaxed">{v.description}</p>
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
               {vCost > 0 && (
