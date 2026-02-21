@@ -1,0 +1,63 @@
+# Fix: Build the Template Library Page
+
+## Problem
+Segment templates can be saved (via the "Save as reusable template" checkbox in the segment editor)
+and they appear in the "Add" dropdown within each trip. But there is NO dedicated Template Library page
+where advisors can browse, search, and delete their saved templates.
+
+The API routes already exist:
+- `GET /api/segment-templates` — returns all org templates
+- `DELETE /api/segment-templates/:id` — deletes a template (only creator or owner can delete)
+- `POST /api/segment-templates/:id/use` — increments use count
+
+## Required Changes
+
+### 1. Create `client/src/pages/templates.tsx`
+
+Build a full page component `TemplatesPage` (default export).
+
+Layout:
+- Page header: "Template Library" (serif font, like other pages)
+- Subtitle: "Reusable segments for quick itinerary building"
+- A search input to filter by label or type
+- Grid or list of template cards
+- Each card shows:
+  - Type icon (same icons as segment types: Plane, Hotel, Car, etc.)
+  - Template label (bold)
+  - Type badge (e.g., "Hotel", "Flight")
+  - Use count: "Used {n} times"
+  - Created date: "Created Jan 12"
+  - Delete button (trash icon, ghost, only visible on hover)
+  - Confirmation before deleting ("Delete this template?")
+- Empty state: "No templates yet. Save a segment as a template when adding it to a trip."
+
+Use the existing `useQuery` for `GET /api/segment-templates` and `useMutation` for `DELETE /api/segment-templates/:id`.
+
+After delete, invalidate the `["/api/segment-templates"]` query.
+
+### 2. Register the route in `client/src/App.tsx`
+
+Add:
+```typescript
+import TemplatesPage from "@/pages/templates";
+```
+
+And inside `AuthenticatedRoutes`:
+```tsx
+<Route path="/templates" component={TemplatesPage} />
+```
+
+### 3. Add "Templates" to the sidebar in `client/src/components/app-sidebar.tsx`
+
+Add a nav item:
+```typescript
+{ title: "Templates", path: "/templates", icon: Bookmark },
+```
+
+Place it after "Trips" and before "Clients". Import `Bookmark` from `lucide-react`.
+
+### What NOT to change
+- Do not change segment-editor.tsx
+- Do not change trip-edit.tsx
+- Do not change any server file
+- Do not change any other page

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,6 +20,7 @@ import {
 import {
   Drawer, DrawerContent, DrawerTrigger, DrawerClose,
 } from "@/components/ui/drawer";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -1199,6 +1200,8 @@ function EditTripSheet({ trip, open, onOpenChange }: {
   const [coverImageUrl, setCoverImageUrl] = useState(trip.coverImageUrl || "");
   const [clientSearch, setClientSearch] = useState("");
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
+  const [companionPopoverOpen, setCompanionPopoverOpen] = useState(false);
+  const [companionSearch, setCompanionSearch] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -1728,16 +1731,51 @@ export default function TripEditPage() {
   });
 
   const additionalIds = trip?.additionalClientIds as string[] | undefined;
-  const { data: allClients } = useQuery<Client[]>({
+  const { data: orgClients } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
-    enabled: !!additionalIds && additionalIds.length > 0,
   });
   const companionNames = useMemo(() => {
-    if (!additionalIds || additionalIds.length === 0 || !allClients) return [];
+    if (!additionalIds || additionalIds.length === 0 || !orgClients) return [];
     return additionalIds
-      .map(id => allClients.find(c => c.id === id)?.fullName)
+      .map(id => orgClients.find(c => c.id === id)?.fullName)
       .filter(Boolean) as string[];
-  }, [additionalIds, allClients]);
+  }, [additionalIds, orgClients]);
+
+  const { data: companionRelations } = useQuery<any[]>({
+    queryKey: [`/api/clients/${trip?.clientId}/companions`],
+    enabled: !!trip?.clientId,
+  });
+
+  const updateCompanionsMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      return apiRequest("PATCH", `/api/trips/${id}`, { additionalClientIds: ids });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+      toast({ title: "Companions updated" });
+    },
+  });
+
+  const toggleCompanion = useCallback((companionId: string) => {
+    const current = (trip?.additionalClientIds as string[] | undefined) || [];
+    const next = current.includes(companionId)
+      ? current.filter(cid => cid !== companionId)
+      : [...current, companionId];
+    updateCompanionsMutation.mutate(next);
+  }, [trip?.additionalClientIds, updateCompanionsMutation]);
+
+  const companionCandidates = useMemo(() => {
+    if (!orgClients) return [];
+    const q = companionSearch.toLowerCase();
+    return orgClients
+      .filter(c => c.id !== trip?.clientId)
+      .filter(c => !q || c.fullName.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q));
+  }, [orgClients, companionSearch, trip?.clientId]);
+
+  const suggestedCompanionIds = useMemo(() => {
+    if (!companionRelations) return new Set<string>();
+    return new Set(companionRelations.map((r: any) => r.companion?.id).filter(Boolean));
+  }, [companionRelations]);
 
   const { data: flightTrackings = [] } = useQuery<FlightTracking[]>({
     queryKey: ["/api/trips", id, "flight-tracking"],
@@ -2186,12 +2224,81 @@ export default function TripEditPage() {
                 {(trip.destination || (trip as any).destinations) && (
                   <span>{formatDestinationsShort((trip as any).destinations, trip.destination)}</span>
                 )}
-                {companionNames.length > 0 && (
-                  <span className="flex items-center gap-1" data-testid="text-traveling-with">
-                    <Users className="w-3 h-3" strokeWidth={1.5} />
-                    Traveling with: {companionNames.join(", ")}
-                  </span>
-                )}
+                <Popover open={companionPopoverOpen} onOpenChange={setCompanionPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <button className="flex items-center gap-1 hover:text-foreground transition-colors group" data-testid="button-edit-companions">
+                      <Users className="w-3 h-3" strokeWidth={1.5} />
+                      {companionNames.length > 0
+                        ? <>Traveling with: {companionNames.join(", ")}</>
+                        : <span className="text-muted-foreground">Add companions</span>
+                      }
+                      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity ml-0.5" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72 p-0" align="start">
+                    <div className="p-2 border-b border-border/50">
+                      <Input
+                        placeholder="Search clients..."
+                        value={companionSearch}
+                        onChange={(e) => setCompanionSearch(e.target.value)}
+                        className="h-8 text-sm"
+                        data-testid="input-companion-search"
+                      />
+                    </div>
+                    <div className="max-h-56 overflow-y-auto p-1">
+                      {companionRelations && companionRelations.length > 0 && (
+                        <>
+                          <p className="px-2.5 py-1 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Suggested</p>
+                          {companionRelations
+                            .filter((r: any) => {
+                              if (!companionSearch) return true;
+                              const q = companionSearch.toLowerCase();
+                              return r.companion?.fullName?.toLowerCase().includes(q);
+                            })
+                            .map((rel: any) => {
+                              const cId = rel.companion?.id;
+                              if (!cId) return null;
+                              const isSelected = ((trip?.additionalClientIds as string[]) || []).includes(cId);
+                              return (
+                                <label key={cId} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer">
+                                  <Checkbox
+                                    checked={isSelected}
+                                    onCheckedChange={() => toggleCompanion(cId)}
+                                    data-testid={`checkbox-companion-${cId}`}
+                                  />
+                                  <span className="text-sm flex-1 truncate">{rel.companion.fullName}</span>
+                                  {rel.relationshipLabel && (
+                                    <Badge variant="secondary" className="text-[10px] shrink-0">{rel.relationshipLabel}</Badge>
+                                  )}
+                                </label>
+                              );
+                            })}
+                          <Separator className="my-1" />
+                        </>
+                      )}
+                      <p className="px-2.5 py-1 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">All Clients</p>
+                      {companionCandidates
+                        .filter(c => !suggestedCompanionIds.has(c.id))
+                        .slice(0, 20)
+                        .map((c) => {
+                          const isSelected = ((trip?.additionalClientIds as string[]) || []).includes(c.id);
+                          return (
+                            <label key={c.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer">
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={() => toggleCompanion(c.id)}
+                                data-testid={`checkbox-client-${c.id}`}
+                              />
+                              <span className="text-sm flex-1 truncate">{c.fullName}</span>
+                            </label>
+                          );
+                        })}
+                      {companionCandidates.filter(c => !suggestedCompanionIds.has(c.id)).length === 0 && (
+                        <p className="px-2.5 py-2 text-sm text-muted-foreground text-center">No clients found</p>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
             </div>
           </div>
