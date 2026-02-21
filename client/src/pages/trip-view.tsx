@@ -760,6 +760,7 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, lo
                 selectedVariantId={localSelections?.[primaryLeg.id]}
                 onSelect={onSelectVariant}
                 locked={lockedSegments?.has(primaryLeg.id)}
+                journeyLegs={legs}
               />
             </div>
           );
@@ -964,9 +965,17 @@ function SegmentView({ segment, showPricing, timeFormat = "24h" }: { segment: Tr
   );
 }
 
-function buildPrimaryLabel(segment: TripSegment): string {
+function buildPrimaryLabel(segment: TripSegment, journeyLegs?: TripSegment[]): string {
   const meta = (segment.metadata || {}) as Record<string, any>;
   if (segment.type === "flight" || segment.type === "charter_flight") {
+    if (journeyLegs && journeyLegs.length > 1) {
+      const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+      const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+      const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+      const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+      const airline = firstMeta.airline || "";
+      return dep && arr ? `${dep} → ${arr}` : (airline || "Flight");
+    }
     const dep = meta.departure?.iata || meta.departureAirport || "";
     const arr = meta.arrival?.iata || meta.arrivalAirport || "";
     const flight = meta.flightNumber || "";
@@ -986,19 +995,21 @@ function VariantCards({
   selectedVariantId,
   onSelect,
   locked,
+  journeyLegs,
 }: {
   segment: TripSegment;
   variants: any[];
   selectedVariantId?: string;
   onSelect: (segmentId: string, variantId: string) => void;
   locked?: boolean;
+  journeyLegs?: TripSegment[];
 }) {
   const isPrimarySelected = !selectedVariantId || selectedVariantId === "" || selectedVariantId === "primary";
   const segMeta = (segment.metadata || {}) as Record<string, any>;
   const primaryQty = segMeta.quantity || 1;
   const primaryPpu = segMeta.pricePerUnit;
   const primaryCost = segment.cost || 0;
-  const primaryLabel = buildPrimaryLabel(segment);
+  const primaryLabel = buildPrimaryLabel(segment, journeyLegs);
 
   return (
     <div className="mt-3 space-y-2" data-testid={`variant-list-${segment.id}`}>
@@ -1027,10 +1038,26 @@ function VariantCards({
               const meta = (segment.metadata || {}) as Record<string, any>;
               if (segment.type === "flight" || segment.type === "charter_flight") {
                 const fn = meta.flightNumber || "";
-                const dep = meta.departure?.iata || meta.departureAirport || "";
-                const arr = meta.arrival?.iata || meta.arrivalAirport || "";
                 const cabin = bookingClassLabels[meta.bookingClass] || "";
                 const qty = meta.quantity || 1;
+
+                if (journeyLegs && journeyLegs.length > 1) {
+                  const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+                  const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+                  const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+                  const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+                  const airline = firstMeta.airline || "";
+                  const stops = journeyLegs.length - 1;
+                  const routePart = dep && arr ? `${dep} → ${arr}` : (airline || "Flight");
+                  const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+                  const extras: string[] = [stopsPart];
+                  if (cabin) extras.push(cabin);
+                  if (qty > 1) extras.push(`${qty} passengers`);
+                  return `${routePart} (${extras.join(", ")})`;
+                }
+
+                const dep = meta.departure?.iata || meta.departureAirport || "";
+                const arr = meta.arrival?.iata || meta.arrivalAirport || "";
                 const parts: string[] = [];
                 if (fn) parts.push(fn);
                 if (dep && arr) parts.push(`${dep} → ${arr}`);
@@ -1058,9 +1085,12 @@ function VariantCards({
                 {formatViewCurrency(primaryCost, segment.currency || "USD")}
               </span>
             )}
-            {primaryPpu != null && primaryPpu > 0 && primaryQty > 1 && (
+            {primaryQty > 1 && (
               <span className="text-[11px] text-muted-foreground">
-                {formatViewCurrency(primaryPpu, segment.currency || "USD")} × {primaryQty} {segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}
+                {primaryPpu != null && primaryPpu > 0
+                  ? `${formatViewCurrency(primaryPpu, segment.currency || "USD")} × ${primaryQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
+                  : `${primaryQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
+                }
               </span>
             )}
             {segMeta.refundability === "non_refundable" && (
@@ -1119,9 +1149,12 @@ function VariantCards({
                   {formatViewCurrency(v.cost, v.currency || "USD")}
                 </span>
               )}
-              {vPpu != null && vPpu > 0 && vQty > 1 && (
+              {vQty > 1 && (
                 <span className="text-[11px] text-muted-foreground">
-                  {formatViewCurrency(vPpu, v.currency || "USD")} × {vQty} {segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}
+                  {vPpu != null && vPpu > 0
+                    ? `${formatViewCurrency(vPpu, v.currency || "USD")} × ${vQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
+                    : `${vQty} ${segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}`
+                  }
                 </span>
               )}
               {v.refundability === "non_refundable" && (
@@ -1522,6 +1555,28 @@ export default function TripViewPage() {
               >
                 <CalendarPlus className="w-3 h-3 mr-1" /> Cal
               </Button>
+              {token && !(trip.approvedVersionId || approvalSuccess) && (
+                <>
+                  <Separator orientation="vertical" className="h-5" />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-primary"
+                    onClick={() => setApproveSheetOpen(true)}
+                    data-testid="button-floating-approve"
+                  >
+                    <CheckCircle className="w-3 h-3 mr-1" /> Approve
+                  </Button>
+                </>
+              )}
+              {token && !!(trip.approvedVersionId || approvalSuccess) && (
+                <>
+                  <Separator orientation="vertical" className="h-5" />
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" /> Approved
+                  </span>
+                </>
+              )}
             </div>
           </motion.div>
         )}
@@ -1660,6 +1715,81 @@ export default function TripViewPage() {
           )}
           <p className="text-center text-xs text-muted-foreground/40 tracking-wider uppercase mt-6">Travel Lab</p>
         </footer>
+
+        {token && activeVersion && (() => {
+          const allSegments = activeVersion.segments || [];
+          const variantSegments = allSegments.filter(s => s.hasVariants);
+          const totalVariantSegments = variantSegments.length;
+          const selectedCount = variantSegments.filter(s => localSelections[s.id]).length;
+          const allLocked = variantSegments.length > 0 && variantSegments.every(s => lockedSegments.has(s.id));
+          const isAlreadyApproved = !!(trip.approvedVersionId || approvalSuccess);
+
+          return (
+            <div className="border-t border-border/40 py-10 space-y-6" data-testid="bottom-action-section">
+              {totalVariantSegments > 0 && (
+                <div className="text-center space-y-3">
+                  {allLocked || submitSuccess ? (
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400">
+                      <CheckCircle className="w-4 h-4" />
+                      <span className="text-sm font-medium">Options submitted</span>
+                      {trip.selectionsSubmittedAt && (
+                        <span className="text-xs opacity-70">· {format(new Date(trip.selectionsSubmittedAt), "d MMM")}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium">
+                        {selectedCount > 0
+                          ? `${selectedCount} of ${totalVariantSegments} options selected`
+                          : "You have options to review above"
+                        }
+                      </p>
+                      <Button
+                        variant="outline"
+                        className="rounded-full px-8"
+                        disabled={selectedCount === 0}
+                        onClick={() => { setSubmitSuccess(false); setSubmitSheetOpen(true); }}
+                        data-testid="button-review-submit-bottom"
+                      >
+                        <Send className="w-3.5 h-3.5 mr-2" />
+                        Review & Submit Options
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="text-center space-y-3">
+                {isAlreadyApproved ? (
+                  <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">
+                      {activeVersion?.name} approved
+                    </span>
+                    {trip.approvedAt && (
+                      <span className="text-xs opacity-70">· {format(new Date(trip.approvedAt), "d MMM")}</span>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium">Ready to proceed with {activeVersion?.name}?</p>
+                    <p className="text-xs text-muted-foreground">
+                      This confirms you'd like to move forward. Your advisor will be notified.
+                    </p>
+                    <Button
+                      className="rounded-full px-8"
+                      onClick={() => { setApprovalSuccess(false); setApproveSheetOpen(true); }}
+                      data-testid="button-approve-bottom"
+                    >
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Approve {activeVersion?.name}
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {(() => {
@@ -1669,251 +1799,151 @@ export default function TripViewPage() {
         const totalVariantSegments = variantSegments.length;
         if (totalVariantSegments === 0) return null;
         const selectedCount = variantSegments.filter(s => localSelections[s.id]).length;
-        const allLocked = variantSegments.every(s => lockedSegments.has(s.id));
 
         return (
-          <>
-            <AnimatePresence>
-              <motion.div
-                initial={{ y: 60, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 60, opacity: 0 }}
-                transition={{ duration: 0.3, ease: "easeOut" }}
-                className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
-                data-testid="variant-submit-bar"
-              >
-                {allLocked || submitSuccess ? (
-                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-emerald-600 text-white shadow-2xl">
-                    <CheckCircle className="w-4 h-4" />
-                    <span className="text-sm font-medium">Selections submitted</span>
-                    {trip.selectionsSubmittedAt && (
-                      <span className="text-xs opacity-80">
-                        {format(new Date(trip.selectionsSubmittedAt), "d MMM")}
-                      </span>
+          <Sheet open={submitSheetOpen} onOpenChange={setSubmitSheetOpen}>
+            <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
+              <SheetHeader className="text-left">
+                <SheetTitle>Your Selections</SheetTitle>
+                <SheetDescription>Review and submit your choices to your advisor</SheetDescription>
+              </SheetHeader>
+
+              {submitSuccess ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="submit-success">
+                  <CheckCircle className="w-10 h-10 text-emerald-500" />
+                  <p className="text-base font-medium">Selections submitted!</p>
+                  <p className="text-sm text-muted-foreground">Your advisor has been notified.</p>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-3">
+                  {variantSegments.map((seg) => {
+                    const selectedId = localSelections[seg.id];
+                    const variants = variantMap[seg.id] || [];
+                    const selectedVariant = variants.find((v: any) => v.id === selectedId);
+                    const isPrimary = selectedId === "primary";
+                    const hasSelection = !!selectedId;
+                    return (
+                      <div key={seg.id} className="flex items-center justify-between py-2 border-b border-border/30 last:border-b-0" data-testid={`sheet-segment-${seg.id}`}>
+                        <div>
+                          <p className="text-sm font-medium">{seg.title}</p>
+                          {selectedVariant ? (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {selectedVariant.label}
+                              {selectedVariant.cost > 0 && ` · ${formatViewCurrency(selectedVariant.cost, selectedVariant.currency || "USD")}`}
+                            </p>
+                          ) : isPrimary ? (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {buildPrimaryLabel(seg)}
+                              {seg.cost != null && seg.cost > 0 && ` · ${formatViewCurrency(seg.cost, seg.currency || "USD")}`}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground/60 mt-0.5 italic">Not yet selected</p>
+                          )}
+                        </div>
+                        {hasSelection && <CheckCircle className="w-4 h-4 text-primary shrink-0" />}
+                      </div>
+                    );
+                  })}
+
+                  <div className="pt-3 space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      {selectedCount} of {totalVariantSegments} options selected
+                    </p>
+                    {selectedCount < totalVariantSegments && (
+                      <p className="text-xs text-muted-foreground/70">
+                        You can submit now and return to select the remaining options later.
+                      </p>
                     )}
-                  </div>
-                ) : !token ? (
-                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
-                    <span className="text-sm font-medium">
-                      {totalVariantSegments} option{totalVariantSegments !== 1 ? "s" : ""} available
-                    </span>
-                    {selectedCount > 0 && (
-                      <span className="text-xs opacity-70">{selectedCount} selected by client</span>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
-                    <span className="text-sm font-medium">
-                      Options reviewed: {selectedCount} of {totalVariantSegments}
-                    </span>
-                    {trip.selectionsSubmittedAt ? (
-                      <span className="text-xs opacity-70">
-                        Last submitted {format(new Date(trip.selectionsSubmittedAt), "d MMM")}
-                      </span>
-                    ) : null}
                     <Button
-                      size="sm"
-                      variant="secondary"
-                      className="rounded-full"
-                      onClick={() => { setSubmitSuccess(false); setSubmitSheetOpen(true); }}
-                      data-testid="button-review-submit"
+                      className="w-full"
+                      disabled={selectedCount === 0}
+                      onClick={async () => {
+                        try {
+                          await fetch(`/api/trips/${trip.id}/submit-selections?token=${token}`, { method: "POST" });
+                          setSubmitSuccess(true);
+                          setTimeout(() => {
+                            setSubmitSheetOpen(false);
+                          }, 2000);
+                        } catch {}
+                      }}
+                      data-testid="button-submit-selections"
                     >
-                      Review & Submit <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                      <Send className="w-3.5 h-3.5 mr-1.5" />
+                      Submit {selectedCount} selection{selectedCount !== 1 ? "s" : ""}
                     </Button>
                   </div>
-                )}
-              </motion.div>
-            </AnimatePresence>
-
-            <Sheet open={submitSheetOpen} onOpenChange={setSubmitSheetOpen}>
-              <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
-                <SheetHeader className="text-left">
-                  <SheetTitle>Your Selections</SheetTitle>
-                  <SheetDescription>Review and submit your choices to your advisor</SheetDescription>
-                </SheetHeader>
-
-                {submitSuccess ? (
-                  <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="submit-success">
-                    <CheckCircle className="w-10 h-10 text-emerald-500" />
-                    <p className="text-base font-medium">Selections submitted!</p>
-                    <p className="text-sm text-muted-foreground">Your advisor has been notified.</p>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-3">
-                    {variantSegments.map((seg) => {
-                      const selectedId = localSelections[seg.id];
-                      const variants = variantMap[seg.id] || [];
-                      const selectedVariant = variants.find((v: any) => v.id === selectedId);
-                      const isPrimary = selectedId === "primary";
-                      const hasSelection = !!selectedId;
-                      return (
-                        <div key={seg.id} className="flex items-center justify-between py-2 border-b border-border/30 last:border-b-0" data-testid={`sheet-segment-${seg.id}`}>
-                          <div>
-                            <p className="text-sm font-medium">{seg.title}</p>
-                            {selectedVariant ? (
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {selectedVariant.label}
-                                {selectedVariant.cost > 0 && ` · ${formatViewCurrency(selectedVariant.cost, selectedVariant.currency || "USD")}`}
-                              </p>
-                            ) : isPrimary ? (
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {buildPrimaryLabel(seg)}
-                                {seg.cost != null && seg.cost > 0 && ` · ${formatViewCurrency(seg.cost, seg.currency || "USD")}`}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-muted-foreground/60 mt-0.5 italic">Not yet selected</p>
-                            )}
-                          </div>
-                          {hasSelection && <CheckCircle className="w-4 h-4 text-primary shrink-0" />}
-                        </div>
-                      );
-                    })}
-
-                    <div className="pt-3 space-y-2">
-                      <p className="text-sm text-muted-foreground">
-                        {selectedCount} of {totalVariantSegments} options selected
-                      </p>
-                      {selectedCount < totalVariantSegments && (
-                        <p className="text-xs text-muted-foreground/70">
-                          You can submit now and return to select the remaining options later.
-                        </p>
-                      )}
-                      <Button
-                        className="w-full"
-                        disabled={selectedCount === 0}
-                        onClick={async () => {
-                          try {
-                            await fetch(`/api/trips/${trip.id}/submit-selections?token=${token}`, { method: "POST" });
-                            setSubmitSuccess(true);
-                            setTimeout(() => {
-                              setSubmitSheetOpen(false);
-                            }, 2000);
-                          } catch {}
-                        }}
-                        data-testid="button-submit-selections"
-                      >
-                        <Send className="w-3.5 h-3.5 mr-1.5" />
-                        Submit {selectedCount} selection{selectedCount !== 1 ? "s" : ""}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </SheetContent>
-            </Sheet>
-          </>
+                </div>
+              )}
+            </SheetContent>
+          </Sheet>
         );
       })()}
       {(() => {
         if (!token || !activeVersion) return null;
         const isAlreadyApproved = !!(trip.approvedVersionId || approvalSuccess);
-        const approvedVersionName = isAlreadyApproved
-          ? (trip.approvedVersionId
-            ? data.versions.find(v => v.id === trip.approvedVersionId)?.name || "Version"
-            : activeVersion.name)
-          : null;
 
         return (
-          <>
-            <AnimatePresence>
-              <motion.div
-                initial={{ y: 60, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: 60, opacity: 0 }}
-                transition={{ duration: 0.3, ease: "easeOut", delay: 0.1 }}
-                className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40"
-                data-testid="version-approve-bar"
-              >
-                {isAlreadyApproved ? (
-                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-emerald-600 text-white shadow-2xl">
-                    <CheckCircle className="w-4 h-4" />
-                    <span className="text-sm font-medium">Itinerary approved</span>
-                    {trip.approvedAt && (
-                      <span className="text-xs opacity-80">
-                        {format(new Date(trip.approvedAt), "d MMM")}
-                      </span>
+          <Sheet open={approveSheetOpen} onOpenChange={setApproveSheetOpen}>
+            <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
+              <SheetHeader className="text-left">
+                <SheetTitle>Approve Itinerary</SheetTitle>
+                <SheetDescription>
+                  Confirm that you're happy with {activeVersion.name} of "{trip.title}"
+                </SheetDescription>
+              </SheetHeader>
+
+              {approvalSuccess ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="approval-success">
+                  <CheckCircle className="w-10 h-10 text-emerald-500" />
+                  <p className="text-base font-medium">Itinerary approved!</p>
+                  <p className="text-sm text-muted-foreground">Your advisor has been notified and will begin finalising arrangements.</p>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-4">
+                  <div className="p-4 rounded-lg bg-muted/50 border border-border/30">
+                    <p className="text-sm font-medium">{activeVersion.name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{trip.title}</p>
+                    {trip.startDate && (
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {formatDateRange(trip.startDate, trip.endDate)}
+                      </p>
                     )}
                   </div>
-                ) : (
-                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-primary text-primary-foreground shadow-2xl">
-                    <span className="text-sm font-medium">
-                      Ready to approve {activeVersion.name}?
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="rounded-full"
-                      onClick={() => setApproveSheetOpen(true)}
-                      data-testid="button-open-approve"
-                    >
-                      Approve Itinerary <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                    </Button>
-                  </div>
-                )}
-              </motion.div>
-            </AnimatePresence>
-
-            <Sheet open={approveSheetOpen} onOpenChange={setApproveSheetOpen}>
-              <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
-                <SheetHeader className="text-left">
-                  <SheetTitle>Approve Itinerary</SheetTitle>
-                  <SheetDescription>
-                    Confirm that you're happy with {activeVersion.name} of "{trip.title}"
-                  </SheetDescription>
-                </SheetHeader>
-
-                {approvalSuccess ? (
-                  <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="approval-success">
-                    <CheckCircle className="w-10 h-10 text-emerald-500" />
-                    <p className="text-base font-medium">Itinerary approved!</p>
-                    <p className="text-sm text-muted-foreground">Your advisor has been notified and will begin finalising arrangements.</p>
-                  </div>
-                ) : (
-                  <div className="mt-4 space-y-4">
-                    <div className="p-4 rounded-lg bg-muted/50 border border-border/30">
-                      <p className="text-sm font-medium">{activeVersion.name}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{trip.title}</p>
-                      {trip.startDate && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatDateRange(trip.startDate, trip.endDate)}
-                        </p>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      By approving, you confirm that this itinerary version meets your expectations.
-                      Your advisor will proceed with bookings and finalise the arrangements.
-                    </p>
-                    <Button
-                      className="w-full"
-                      disabled={approvalPending}
-                      onClick={async () => {
-                        setApprovalPending(true);
-                        try {
-                          const res = await fetch(
-                            `/api/trips/${trip.id}/approve-version?token=${token}`,
-                            {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ versionId: activeVersion.id }),
-                            }
-                          );
-                          if (res.ok) {
-                            setApprovalSuccess(true);
-                            setTimeout(() => setApproveSheetOpen(false), 2500);
+                  <p className="text-sm text-muted-foreground">
+                    By approving, you confirm that this itinerary version meets your expectations.
+                    Your advisor will proceed with bookings and finalise the arrangements.
+                  </p>
+                  <Button
+                    className="w-full"
+                    disabled={approvalPending}
+                    onClick={async () => {
+                      setApprovalPending(true);
+                      try {
+                        const res = await fetch(
+                          `/api/trips/${trip.id}/approve-version?token=${token}`,
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ versionId: activeVersion.id }),
                           }
-                        } catch {} finally {
-                          setApprovalPending(false);
+                        );
+                        if (res.ok) {
+                          setApprovalSuccess(true);
+                          setTimeout(() => setApproveSheetOpen(false), 2500);
                         }
-                      }}
-                      data-testid="button-confirm-approve"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
-                      {approvalPending ? "Approving..." : `Approve ${activeVersion.name}`}
-                    </Button>
-                  </div>
-                )}
-              </SheetContent>
-            </Sheet>
-          </>
+                      } catch {} finally {
+                        setApprovalPending(false);
+                      }
+                    }}
+                    data-testid="button-confirm-approve"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                    {approvalPending ? "Approving..." : `Approve ${activeVersion.name}`}
+                  </Button>
+                </div>
+              )}
+            </SheetContent>
+          </Sheet>
         );
       })()}
       {token && data?.trip?.clientId && (
