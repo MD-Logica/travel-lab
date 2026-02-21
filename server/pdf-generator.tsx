@@ -70,6 +70,40 @@ const s = StyleSheet.create({
   segmentConfirmation: { fontSize: 9, fontWeight: 600, color: colors.primary, marginTop: 3 },
   segmentNotes: { fontSize: 9, color: colors.muted, fontStyle: "italic", marginTop: 3 },
   variantBox: { marginTop: 6, padding: 6, backgroundColor: colors.white, borderRadius: 2, borderWidth: 0.5, borderColor: colors.border },
+  choiceGroupWrapper: {
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#fcd34d",
+    borderStyle: "dashed" as const,
+    borderRadius: 4,
+    padding: 6,
+    backgroundColor: "#fffbeb",
+  },
+  choiceGroupLabel: {
+    fontSize: 7,
+    fontWeight: 600,
+    letterSpacing: 1.5,
+    textTransform: "uppercase" as const,
+    color: "#d97706",
+    marginBottom: 6,
+  },
+  orDivider: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    marginVertical: 6,
+  },
+  orDividerLine: {
+    flex: 1,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#fcd34d",
+  },
+  orDividerText: {
+    fontSize: 7,
+    fontWeight: 700,
+    color: "#f59e0b",
+    paddingHorizontal: 6,
+    letterSpacing: 1.5,
+  },
   variantLabel: { fontSize: 8, fontWeight: 600, flex: 1 },
   variantDetail: { fontSize: 8, color: colors.muted, textAlign: "right" as const, flexShrink: 0 },
   variantHeader: { fontSize: 8, fontWeight: 600, color: colors.primary, marginBottom: 4, textTransform: "uppercase" as const, letterSpacing: 1 },
@@ -663,31 +697,41 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantM
 
 type PdfDayRenderItem =
   | { kind: "segment"; segment: TripSegment }
-  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] }
+  | { kind: "choiceGroup"; choiceGroupId: string; options: TripSegment[] };
 
 function buildPdfDayItems(daySegments: TripSegment[]): PdfDayRenderItem[] {
   const items: PdfDayRenderItem[] = [];
   const seenJourneyIds = new Set<string>();
+  const seenChoiceGroupIds = new Set<string>();
   const journeyGroups = new Map<string, TripSegment[]>();
+  const choiceGroups = new Map<string, TripSegment[]>();
 
   for (const seg of daySegments) {
     if (seg.journeyId) {
       if (!journeyGroups.has(seg.journeyId)) journeyGroups.set(seg.journeyId, []);
       journeyGroups.get(seg.journeyId)!.push(seg);
     }
+    if (seg.choiceGroupId) {
+      if (!choiceGroups.has(seg.choiceGroupId)) choiceGroups.set(seg.choiceGroupId, []);
+      choiceGroups.get(seg.choiceGroupId)!.push(seg);
+    }
   }
 
   for (const seg of daySegments) {
-    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+    if (seg.journeyId && (journeyGroups.get(seg.journeyId)?.length ?? 0) > 1) {
       if (!seenJourneyIds.has(seg.journeyId)) {
         seenJourneyIds.add(seg.journeyId);
         const legs = journeyGroups.get(seg.journeyId)!;
-        legs.sort((a, b) => {
-          const aLeg = (a.metadata as any)?.legNumber || 0;
-          const bLeg = (b.metadata as any)?.legNumber || 0;
-          return aLeg - bLeg;
-        });
+        legs.sort((a, b) => ((a.metadata as any)?.legNumber || 0) - ((b.metadata as any)?.legNumber || 0));
         items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+        seenChoiceGroupIds.add(seg.choiceGroupId);
+        const options = choiceGroups.get(seg.choiceGroupId)!;
+        options.sort((a, b) => a.sortOrder - b.sortOrder);
+        items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
       }
     } else {
       items.push({ kind: "segment", segment: seg });
@@ -793,6 +837,48 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
                   if (item.kind === "journey") {
                     return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} isApproved={isApproved} />;
                   }
+
+                  if (item.kind === "choiceGroup") {
+                    if (isApproved) {
+                      const chosen = item.options.find(o => o.isChoiceSelected) || item.options[0];
+                      return (
+                        <SegmentView
+                          key={`choice-approved-${chosen.id}`}
+                          segment={chosen}
+                          photos={photoMap.get(chosen.id)}
+                          showPricing={showPricing}
+                          timeFormat={timeFormat}
+                          variants={variantMap.get(chosen.id)}
+                          isApproved={isApproved}
+                        />
+                      );
+                    }
+                    return (
+                      <View key={`choice-${item.choiceGroupId}`} style={s.choiceGroupWrapper}>
+                        <Text style={s.choiceGroupLabel}>Choose one option</Text>
+                        {item.options.map((option, idx) => (
+                          <View key={option.id}>
+                            {idx > 0 && (
+                              <View style={s.orDivider}>
+                                <View style={s.orDividerLine} />
+                                <Text style={s.orDividerText}>OR</Text>
+                                <View style={s.orDividerLine} />
+                              </View>
+                            )}
+                            <SegmentView
+                              segment={option}
+                              photos={photoMap.get(option.id)}
+                              showPricing={showPricing}
+                              timeFormat={timeFormat}
+                              variants={variantMap.get(option.id)}
+                              isApproved={false}
+                            />
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  }
+
                   const seg = item.segment;
                   if (seg.propertyGroupId && seg.type === "hotel") {
                     if (seenPropertyGroups.has(seg.propertyGroupId)) return null;
@@ -812,6 +898,7 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
         {showPricing && (() => {
           const subtotal = isApproved
             ? segments.reduce((sum, seg) => {
+                if (seg.choiceGroupId && !seg.isChoiceSelected) return sum;
                 if (seg.hasVariants) {
                   const segVariants = variantMap.get(seg.id);
                   const sel = segVariants?.find(v => v.isSelected);
@@ -819,7 +906,15 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
                 }
                 return sum + (seg.cost || 0);
               }, 0)
-            : segments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
+            : segments.reduce((sum, seg) => {
+                if (seg.choiceGroupId && !seg.isChoiceSelected) {
+                  const groupHasSelection = segments.some(
+                    s => s.choiceGroupId === seg.choiceGroupId && s.isChoiceSelected
+                  );
+                  if (groupHasSelection) return sum;
+                }
+                return sum + (seg.cost || 0);
+              }, 0);
           if (subtotal <= 0) return null;
           const currency = segments.find(seg => seg.currency)?.currency || trip.currency || "USD";
           const vDiscount = (version as any).discount || 0;
