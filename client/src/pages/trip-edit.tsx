@@ -298,6 +298,18 @@ function SegmentCard({
     else if (meta.departureTime) extraLines.push(`Departs: ${meta.departureTime}`);
     if (meta.status && meta.status !== "Scheduled") badges.push({ label: meta.status, variant: "outline" });
     if (meta.bookingClass) badges.push({ label: bookingClassLabels[meta.bookingClass] || meta.bookingClass, variant: "secondary" });
+    const qty = meta.quantity || 1;
+    const ppu = meta.pricePerUnit;
+    if (qty > 1) {
+      const currency = segment.currency || "USD";
+      const cost = segment.cost || 0;
+      const effectivePpu = ppu && ppu > 0 ? ppu : (cost > 0 ? Math.round(cost / qty) : null);
+      if (effectivePpu) {
+        extraLines.push(`${qty} passengers · ${currency} ${effectivePpu.toLocaleString()} / passenger`);
+      } else {
+        extraLines.push(`${qty} passengers`);
+      }
+    }
   } else if (isCharterFlight) {
     primaryText = meta.operator || "Private Charter";
     const depLoc = meta.departureLocation || "";
@@ -313,6 +325,18 @@ function SegmentCard({
     if (meta.address) extraLines.push(meta.address);
     if (meta.starRating && Number(meta.starRating) > 0) {
       extraLines.push(`${meta.starRating}-star`);
+    }
+    const qty = meta.quantity || 1;
+    const ppu = meta.pricePerUnit;
+    if (qty > 1) {
+      const currency = segment.currency || "USD";
+      const cost = segment.cost || 0;
+      const effectivePpu = ppu && ppu > 0 ? ppu : (cost > 0 ? Math.round(cost / qty) : null);
+      if (effectivePpu) {
+        extraLines.push(`${qty} rooms · ${currency} ${effectivePpu.toLocaleString()} / room`);
+      } else {
+        extraLines.push(`${qty} rooms`);
+      }
     }
   } else if (segment.type === "restaurant") {
     primaryText = meta.restaurantName || segment.title || "Restaurant";
@@ -598,12 +622,14 @@ function JourneyCard({
   onEdit,
   trackingBySegment,
   showPricing,
+  positionInDay,
 }: {
   legs: TripSegment[];
   tripId: string;
   onEdit: (s: TripSegment) => void;
   trackingBySegment: Map<string, FlightTracking>;
   showPricing?: boolean;
+  positionInDay?: number;
 }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
@@ -640,6 +666,11 @@ function JourneyCard({
     <Card className="group relative hover-elevate border-sky-200/40 dark:border-sky-800/40" data-testid={`card-journey-${firstLeg.journeyId}`}>
       <CardContent className="p-3 space-y-2">
         <div className="flex items-center gap-2">
+          {positionInDay != null && (
+            <div className="w-6 h-6 rounded-full bg-muted/50 text-[10px] font-medium text-muted-foreground shrink-0 flex items-center justify-center self-center">
+              {positionInDay}
+            </div>
+          )}
           <div className="flex items-center justify-center w-9 h-9 rounded-md shrink-0 text-sky-600 bg-sky-50 dark:bg-sky-950/40">
             <Plane className="w-4 h-4" strokeWidth={1.5} />
           </div>
@@ -654,6 +685,11 @@ function JourneyCard({
               {hasRedEye && (
                 <Badge variant="outline" className="text-[10px] border-indigo-300 text-indigo-600 dark:border-indigo-700 dark:text-indigo-400">
                   Red-eye
+                </Badge>
+              )}
+              {legs[0].hasVariants && (
+                <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`badge-variants-journey-${legs[0].journeyId}`}>
+                  Options available
                 </Badge>
               )}
             </div>
@@ -674,6 +710,40 @@ function JourneyCard({
                   <span>{firstDepTime} &rarr; {lastArrTime}</span>
                 </>
               )}
+              {(() => {
+                const meta = (legs[0].metadata || {}) as Record<string, any>;
+                const qty = meta.quantity || 1;
+                const ppu = meta.pricePerUnit;
+                const totalCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0);
+                const currency = legs[0].currency || "USD";
+                if (qty <= 1 && !showPricing) return null;
+                return (
+                  <>
+                    {qty > 1 && (
+                      <>
+                        <span className="text-muted-foreground/40">&middot;</span>
+                        <span>{qty} passengers</span>
+                      </>
+                    )}
+                    {showPricing && totalCost > 0 && (
+                      <>
+                        <span className="text-muted-foreground/40">&middot;</span>
+                        <span className="font-medium text-foreground/80">
+                          {currency} {totalCost.toLocaleString()}
+                        </span>
+                        {qty > 1 && (() => {
+                          const effectivePpu = ppu && ppu > 0 ? ppu : (totalCost > 0 ? Math.round(totalCost / qty) : null);
+                          return effectivePpu ? (
+                            <span className="text-muted-foreground/60">
+                              ({currency} {effectivePpu.toLocaleString()} × {qty})
+                            </span>
+                          ) : null;
+                        })()}
+                      </>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground/60">
               <span>{originIata}</span>
@@ -2921,7 +2991,7 @@ export default function TripEditPage() {
                     </div>
                     {daySegments.length > 0 ? (
                       <div className="space-y-2 pl-0 md:pl-4">
-                        {buildDayRenderItems(daySegments).map((item) => {
+                        {buildDayRenderItems(daySegments).map((item, renderIdx) => {
                           if (item.kind === "journey") {
                             return (
                               <JourneyCard
@@ -2931,6 +3001,7 @@ export default function TripEditPage() {
                                 onEdit={openEditSegment}
                                 trackingBySegment={trackingBySegment}
                                 showPricing={showPricing}
+                                positionInDay={renderIdx + 1}
                               />
                             );
                           }
@@ -2945,7 +3016,6 @@ export default function TripEditPage() {
                               />
                             );
                           }
-                          const segIdx = daySegments.indexOf(item.segment);
                           return (
                             <SegmentCard
                               key={item.segment.id}
@@ -2954,7 +3024,7 @@ export default function TripEditPage() {
                               onEdit={openEditSegment}
                               tracking={item.segment.type === "flight" ? trackingBySegment.get(item.segment.id) : null}
                               showPricing={showPricing}
-                              positionInDay={segIdx + 1}
+                              positionInDay={renderIdx + 1}
                               daySegments={daySegments}
                               allSegments={segments}
                               currentVersionId={currentVersionId}

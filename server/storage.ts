@@ -417,8 +417,10 @@ export class DatabaseStorage implements IStorage {
     });
 
     const sourceSegments = await this.getTripSegments(sourceVersionId, orgId);
+    const segmentIdMap = new Map<string, string>();
+
     for (const seg of sourceSegments) {
-      await this.createTripSegment({
+      const newSeg = await this.createTripSegment({
         versionId: newVersion.id,
         tripId,
         orgId,
@@ -435,7 +437,38 @@ export class DatabaseStorage implements IStorage {
         notes: seg.notes,
         photos: seg.photos,
         metadata: seg.metadata as Record<string, unknown> | null,
+        journeyId: seg.journeyId,
+        hasVariants: seg.hasVariants,
+        propertyGroupId: seg.propertyGroupId,
       });
+      segmentIdMap.set(seg.id, newSeg.id);
+    }
+
+    const segEntries = Array.from(segmentIdMap.entries());
+    for (const [oldSegId, newSegId] of segEntries) {
+      const variants = await db.select().from(segmentVariants)
+        .where(eq(segmentVariants.segmentId, oldSegId));
+      for (const v of variants) {
+        const variantData: Record<string, any> = {
+          segmentId: newSegId,
+          tripId,
+          orgId,
+          label: v.label,
+          description: v.description,
+          cost: v.cost,
+          currency: v.currency,
+          quantity: v.quantity,
+          pricePerUnit: v.pricePerUnit,
+          refundability: v.refundability,
+          refundDeadline: v.refundDeadline,
+          variantType: v.variantType,
+          metadata: v.metadata,
+          sortOrder: v.sortOrder,
+          isSelected: false,
+          isSubmitted: false,
+        };
+        await db.insert(segmentVariants).values(variantData as InsertSegmentVariant);
+      }
     }
 
     return newVersion;
