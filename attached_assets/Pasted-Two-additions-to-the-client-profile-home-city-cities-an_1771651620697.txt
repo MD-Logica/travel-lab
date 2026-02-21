@@ -1,0 +1,65 @@
+Two additions to the client profile: home city/cities and a WhatsApp quick-launch button.
+
+---
+
+**Part 1 — Home Cities**
+
+**Schema (`shared/schema.ts`)**: Add one field to the `clients` table:
+```typescript
+homeCities: jsonb("home_cities").default([]),
+```
+This stores an array of `{ city: string, countryCode: string }` objects. Keeping it as an array from the start allows multiple residences without a schema change later, but the UI will encourage a primary + optional secondary at most.
+
+**Server**: Update the `PATCH /api/clients/:id` route to accept and save `homeCities`.
+
+**Client detail page (`client/src/pages/client-detail.tsx`)**:
+
+*Display*: In the client profile header area (where phone and email are shown), add a home city row. For each entry in `client.homeCities`, show:
+- A `Home` icon (lucide) in the primary slot, or for a bonus visual touch: if `countryCode` is set, render the country's flag emoji (derive it from the 2-letter ISO country code using the standard formula: `String.fromCodePoint(...countryCode.toUpperCase().split('').map(c => 0x1F1E6 + c.charCodeAt(0) - 65))` — this renders native emoji flags like 🇫🇷 🇮🇹). Show the flag emoji followed by the city name in small muted text.
+- If multiple cities, show them separated by `·`
+
+*Edit*: In the edit section, add a "Home Cities" field with:
+- One text input for the primary city + a country selector (simple text input or a small dropdown for the 2-letter country code)
+- An "Add another" link that reveals a second city input (max 2 for simplicity)
+- Prefill from `client.homeCities` on open
+
+---
+
+**Part 2 — WhatsApp Button**
+
+**Settings toggle (`client/src/pages/settings.tsx`)**: Add a toggle in the "Preferences" or "Display" section:
+```
+Show WhatsApp button on client profiles
+[toggle]
+```
+Store this in `profile.preferences.showWhatsAppButton` (the `preferences` jsonb field already exists on profiles). Save via the existing `PATCH /api/profile` route.
+
+**Client detail page**: After the existing "Message" button, conditionally render a WhatsApp button if:
+1. `profile.preferences?.showWhatsAppButton === true`
+2. `client.phone` is set (needs a phone number to link to)
+
+The WhatsApp button:
+```tsx
+<a
+  href={`https://wa.me/${client.phone.replace(/\D/g, "")}`}
+  target="_blank"
+  rel="noopener noreferrer"
+>
+  <Button variant="outline" size="sm">
+    {/* WhatsApp green logo icon — use an inline SVG or import from a package */}
+    WhatsApp
+  </Button>
+</a>
+```
+
+The URL `https://wa.me/[digits-only-phone]` is WhatsApp's official deep link format. On desktop it opens WhatsApp Web to that contact's chat. On mobile it opens the WhatsApp app directly. No API key or integration required — it's just a URL.
+
+For the WhatsApp icon, use this minimal inline SVG inside the button (the official WhatsApp green logo mark):
+```tsx
+<svg viewBox="0 0 24 24" className="w-3.5 h-3.5 mr-1.5 fill-[#25D366]">
+  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+  <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116 1.528 5.844L0 24l6.336-1.506A11.954 11.954 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.006-1.369l-.36-.213-3.728.886.919-3.626-.235-.373A9.773 9.773 0 012.182 12C2.182 6.58 6.58 2.182 12 2.182S21.818 6.58 21.818 12 17.42 21.818 12 21.818z"/>
+</svg>
+```
+
+Do not show the WhatsApp button if the toggle is off OR if the client has no phone number.

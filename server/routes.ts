@@ -776,10 +776,79 @@ export async function registerRoutes(
         console.error("Selection email failed:", emailErr);
       }
 
+      try {
+        if (trip.clientId) {
+          let clientName = "Client";
+          const [cl] = await db.select({ fullName: clients.fullName })
+            .from(clients).where(eq(clients.id, trip.clientId));
+          if (cl) clientName = cl.fullName;
+
+          const convo = await storage.getOrCreateConversation(trip.orgId, trip.clientId);
+          const msg = await storage.createMessage({
+            conversationId: convo.id,
+            orgId: trip.orgId,
+            senderType: "system",
+            senderId: "system",
+            senderName: "System",
+            content: `${clientName} submitted their option preferences for "${trip.title}"`,
+            isRead: false,
+            messageType: "event_selections_submitted",
+          });
+          broadcastNewMessage(convo.id, msg);
+        }
+      } catch (sysErr) {
+        console.error("System event message failed:", sysErr);
+      }
+
       res.json(result);
     } catch (error) {
       console.error("Submit selections error:", error);
       res.status(500).json({ message: "Failed to submit selections" });
+    }
+  });
+
+  app.post("/api/trips/:tripId/approve", async (req: any, res) => {
+    try {
+      const { tripId } = req.params;
+      const token = req.query.token as string;
+      if (!token) return res.status(401).json({ message: "Token required" });
+
+      const { db } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+
+      const [trip] = await db.select().from(trips).where(eq(trips.id, tripId));
+      if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      try {
+        if (trip.clientId) {
+          let clientName = "Client";
+          const [cl] = await db.select({ fullName: clients.fullName })
+            .from(clients).where(eq(clients.id, trip.clientId));
+          if (cl) clientName = cl.fullName;
+
+          const convo = await storage.getOrCreateConversation(trip.orgId, trip.clientId);
+          const msg = await storage.createMessage({
+            conversationId: convo.id,
+            orgId: trip.orgId,
+            senderType: "system",
+            senderId: "system",
+            senderName: "System",
+            content: `${clientName} approved the itinerary for "${trip.title}"`,
+            isRead: false,
+            messageType: "event_itinerary_approved",
+          });
+          broadcastNewMessage(convo.id, msg);
+        }
+      } catch (sysErr) {
+        console.error("System event message failed:", sysErr);
+      }
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Approve error:", error);
+      res.status(500).json({ message: "Failed to approve itinerary" });
     }
   });
 

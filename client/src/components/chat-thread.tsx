@@ -4,7 +4,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/use-auth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Send, MessageCircle, Plane, Search } from "lucide-react";
+import { ArrowLeft, Send, MessageCircle, Plane, Search, CheckCircle2, ListChecks } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
 import { Link } from "wouter";
 import type { Message, MessageReaction, Conversation, Trip } from "@shared/schema";
@@ -328,6 +328,7 @@ export function ChatThread({
       attachmentUrl: null,
       attachmentType: null,
       attachmentName: null,
+      messageType: "message",
       createdAt: new Date(),
       reactions: [],
     };
@@ -464,6 +465,26 @@ export function ChatThread({
               const isAdvisor = msg.senderType === "advisor";
               const prevMsg = idx > 0 ? grouped[idx - 1] : null;
               const showTs = shouldShowTimestamp(msg, prevMsg);
+
+              if ((msg as any).messageType?.startsWith("event_")) {
+                const isApproval = (msg as any).messageType === "event_itinerary_approved";
+                return (
+                  <div key={msg.id} className="flex justify-center my-3 px-4" data-testid={`event-${msg.id}`}>
+                    <div className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm max-w-[85%] ${
+                      isApproval
+                        ? "bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-300"
+                        : "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300"
+                    }`}>
+                      {isApproval
+                        ? <CheckCircle2 className="w-4 h-4 shrink-0" />
+                        : <ListChecks className="w-4 h-4 shrink-0" />
+                      }
+                      <span className="text-xs leading-relaxed">{msg.content}</span>
+                      <span className="text-[10px] opacity-50 shrink-0 ml-auto">{formatTimestamp(msg.createdAt)}</span>
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <div key={msg.id} data-testid={`message-${msg.id}`}>

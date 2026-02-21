@@ -271,6 +271,7 @@ export const messages = pgTable("messages", {
   attachmentUrl: text("attachment_url"),
   attachmentType: text("attachment_type"),
   attachmentName: text("attachment_name"),
+  messageType: text("message_type").default("message"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

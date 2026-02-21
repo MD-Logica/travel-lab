@@ -1,0 +1,98 @@
+Build a Media Library — an org-wide photo and file storage system with nested folders, accessible from the sidebar. Think Dropbox: navigate folders, upload files, organize by city/hotel/transport/etc.
+
+---
+
+**Step 1 — Schema (`shared/schema.ts`)**
+
+Add two new tables:
+
+```typescript
+export const mediaFolders = pgTable("media_folders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  name: text("name").notNull(),
+  parentId: varchar("parent_id"),  // null = root folder, otherwise references media_folders.id
+  createdBy: varchar("created_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const mediaFiles = pgTable("media_files", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  folderId: varchar("folder_id"),  // null = root level
+  uploadedBy: varchar("uploaded_by").notNull(),
+  fileName: text("file_name").notNull(),
+  fileType: text("file_type").notNull(),       // "image/jpeg", "image/png", etc.
+  fileSize: integer("file_size").notNull(),
+  storagePath: text("storage_path").notNull(), // path in object storage
+  publicUrl: text("public_url"),               // if served publicly
+  altText: text("alt_text"),                   // optional description
+  createdAt: timestamp("created_at").defaultNow(),
+});
+```
+
+Add insert schemas and export types.
+
+---
+
+**Step 2 — Server routes (`server/routes.ts`)**
+
+Add these routes (all require `isAuthenticated` and `orgMiddleware`):
+
+```
+GET    /api/media/folders              — list folders (with optional ?parentId= filter)
+POST   /api/media/folders              — create folder { name, parentId? }
+PATCH  /api/media/folders/:id          — rename folder { name }
+DELETE /api/media/folders/:id          — delete folder and all contents
+GET    /api/media/files                — list files (with optional ?folderId= filter)
+POST   /api/media/files/upload         — upload file (multipart, uses multer)
+PATCH  /api/media/files/:id            — update { altText, folderId } (move file)
+DELETE /api/media/files/:id            — delete file
+```
+
+Use the same multer + object storage pattern already used in the profile avatar upload route (`POST /api/profile/avatar`). Store files under `media/[orgId]/[filename]`.
+
+---
+
+**Step 3 — New page (`client/src/pages/media-library.tsx`)**
+
+Create a full page with this layout and behavior:
+
+**Header**: "Media Library" title + "New Folder" button + "Upload" button
+
+**Breadcrumb navigation**: Shows current path e.g. `Library / Cities / Rome` — each segment is clickable to navigate up. Root shows just "Library".
+
+**Folder + file grid**: Two-column-ish responsive grid showing:
+- Folder cards: folder icon (use `FolderOpen` from lucide), folder name, item count badge, click to navigate in
+- File cards: image thumbnail (for images), file icon (for non-images), file name, file size
+
+**Interactions**:
+- Click folder → navigate into it (update `currentFolderId` state, push to breadcrumb)
+- Click file → open a simple lightbox/modal showing the full image + alt text + copy URL button
+- Right-click or "⋯" menu on any item → Rename / Move / Delete options
+- "New Folder" button → inline input or dialog asking for folder name, creates under current folder
+- "Upload" button → file input (accept images + PDFs), uploads to current folder
+
+**State management**: Use `currentFolderId` (null = root) to filter both folder and file queries. Both queries use `useQuery` with `["/api/media/folders", currentFolderId]` and `["/api/media/files", currentFolderId]` as keys.
+
+**Empty state**: When a folder is empty, show a centered illustration with "Drop files here or click Upload" message.
+
+---
+
+**Step 4 — Register route + sidebar link**
+
+In `client/src/App.tsx`, add:
+```tsx
+<Route path="/media" component={MediaLibraryPage} />
+```
+
+In `client/src/components/app-sidebar.tsx`, add to `navItems` after Templates:
+```typescript
+{ title: "Media", path: "/media", icon: Images },
+```
+Import `Images` from lucide-react.
+
+---
+
+Run the database migration to create both new tables.
