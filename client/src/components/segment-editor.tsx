@@ -1288,7 +1288,7 @@ export function SegmentEditor({
     },
     onSuccess: async (savedSegment: any) => {
       const segmentId = savedSegment?.id || existingSegment?.id;
-      if (segmentId && (type === "hotel" || type === "flight") && (variants.length > 0 || existingVariantIds.length > 0)) {
+      if (segmentId && (type === "hotel" || type === "flight" || type === "charter_flight") && (variants.length > 0 || existingVariantIds.length > 0)) {
         try {
           const currentIds = variants.filter((v) => v.id).map((v) => v.id);
           const deletedIds = existingVariantIds.filter((id) => !currentIds.includes(id));
@@ -1502,7 +1502,7 @@ export function SegmentEditor({
             </>
           )}
 
-          {(type === "hotel" || type === "flight") && (
+          {(type === "hotel" || type === "flight" || type === "charter_flight") && (
             <>
               <FieldRow>
                 <div>
@@ -1546,7 +1546,7 @@ export function SegmentEditor({
             </>
           )}
 
-          {(type === "hotel" || type === "flight") && (
+          {(type === "hotel" || type === "flight" || type === "charter_flight") && (
             <>
               <SectionHeading>Options / Variants</SectionHeading>
               {variants.map((v, i) => (

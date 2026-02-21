@@ -104,6 +104,7 @@ function FlightCard({ segment, timeFormat = "24h" }: { segment: TripSegment; tim
   const meta = (segment.metadata || {}) as Record<string, any>;
   const depAirport = meta.departureAirport || "";
   const arrAirport = meta.arrivalAirport || "";
+  const currency = segment.currency || "USD";
 
   return (
     <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-segment-${segment.id}`}>
@@ -141,6 +142,25 @@ function FlightCard({ segment, timeFormat = "24h" }: { segment: TripSegment; tim
             {meta.flightNumber && <span className="font-mono">{meta.flightNumber}</span>}
             {(segment.confirmationNumber || meta.confirmationNumber) && (
               <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
+            )}
+            {meta.refundability && meta.refundability !== "unknown" && (
+              meta.refundability === "non_refundable" ? (
+                <Badge variant="outline" className="text-[10px] border-red-300 text-red-600 dark:text-red-400" data-testid={`flight-refund-${segment.id}`}>Non-refundable</Badge>
+              ) : meta.refundability === "fully_refundable" ? (
+                <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-600 dark:text-emerald-400" data-testid={`flight-refund-${segment.id}`}>
+                  Refundable{meta.refundDeadline ? ` until ${format(new Date(meta.refundDeadline), "d MMM")}` : ""}
+                </Badge>
+              ) : meta.refundability === "partially_refundable" ? (
+                <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-600 dark:text-amber-400" data-testid={`flight-refund-${segment.id}`}>
+                  Partial refund{meta.refundDeadline ? ` until ${format(new Date(meta.refundDeadline), "d MMM")}` : ""}
+                </Badge>
+              ) : null
+            )}
+            {meta.quantity > 1 && (
+              <span className="text-muted-foreground/70" data-testid={`flight-passengers-${segment.id}`}>{meta.quantity} passengers</span>
+            )}
+            {meta.pricePerUnit > 0 && (
+              <span className="text-muted-foreground/70" data-testid={`flight-price-per-unit-${segment.id}`}>{formatViewCurrency(meta.pricePerUnit, currency)} / person</span>
             )}
           </div>
         </div>
@@ -922,7 +942,7 @@ function DayAccordion({
                   return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
                 }
                 const seg = item.segment;
-                const variants = token && seg.hasVariants && variantMap?.[seg.id];
+                const variants = seg.hasVariants && variantMap?.[seg.id];
                 return (
                   <div key={seg.id}>
                     <SegmentView segment={seg} showPricing={showPricing} timeFormat={timeFormat} />
@@ -981,7 +1001,7 @@ export default function TripViewPage() {
   });
 
   useEffect(() => {
-    if (!data || !token) return;
+    if (!data) return;
     const allSegments = data.versions.flatMap(v => v.segments);
     const variantSegments = allSegments.filter(s => s.hasVariants);
     if (variantSegments.length === 0) return;
@@ -992,7 +1012,10 @@ export default function TripViewPage() {
       await Promise.all(
         variantSegments.map(async (seg) => {
           try {
-            const res = await fetch(`/api/segments/${seg.id}/variants?token=${token}`);
+            const url = token
+              ? `/api/segments/${seg.id}/variants?token=${token}`
+              : `/api/segments/${seg.id}/variants`;
+            const res = await fetch(url, { credentials: "include" });
             if (res.ok) {
               const variants = await res.json();
               newMap[seg.id] = variants;
@@ -1011,9 +1034,10 @@ export default function TripViewPage() {
   const selectVariant = useCallback(async (segmentId: string, variantId: string) => {
     setLocalSelections(prev => ({ ...prev, [segmentId]: variantId }));
     try {
-      await fetch(`/api/segments/${segmentId}/variants/${variantId}/select?token=${token}`, {
-        method: "POST",
-      });
+      const url = token
+        ? `/api/segments/${segmentId}/variants/${variantId}/select?token=${token}`
+        : `/api/segments/${segmentId}/variants/${variantId}/select`;
+      await fetch(url, { method: "POST", credentials: "include" });
     } catch {}
   }, [token]);
 
