@@ -1,0 +1,54 @@
+Fix two UX problems with the discount editor in the trip builder sidebar. Both are in `client/src/pages/trip-edit.tsx` only — no other files need to change.
+
+---
+
+**Problem 1 — Save button doesn't close the editor**
+
+In `handleSaveDiscount` (around line 1919), the function calls `saveDiscountMutation.mutate(...)` but never closes the editor. The row stays open with the Save and Remove buttons still visible after saving, which implies nothing happened.
+
+Fix: In the mutation's `onSuccess` callback, add `setShowDiscountEditor(false)`:
+
+```typescript
+const saveDiscountMutation = useMutation({
+  mutationFn: async (data) => { ... },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
+    toast({ title: "Discount saved" });
+    setShowDiscountEditor(false);  // ← add this line
+  },
+  ...
+});
+```
+
+---
+
+**Problem 2 — Pencil icon is ambiguous; no clear way to re-open or close**
+
+When a discount exists, the toggle button shows only a bare `<Pencil className="h-3 w-3" />` with no label. It's not obvious this is a toggle, what it will do, or that it will open an editor.
+
+Replace the toggle button (around line 2571) with a clearly labeled control:
+
+```tsx
+<button
+  onClick={() => setShowDiscountEditor(!showDiscountEditor)}
+  className="whitespace-nowrap hover:text-foreground transition-colors flex-shrink-0 flex items-center gap-1 text-[11px]"
+  data-testid="button-add-discount"
+>
+  {discountValue > 0 ? (
+    showDiscountEditor
+      ? <><ChevronUp className="h-3 w-3" /> Close</>
+      : <><Pencil className="h-3 w-3" /> Edit discount</>
+  ) : (
+    "+ Discount"
+  )}
+</button>
+```
+
+Import `ChevronUp` from lucide-react if not already imported.
+
+This way:
+- When no discount: shows `"+ Discount"` (existing behavior, already clear)
+- When a discount exists and editor is closed: shows `✏ Edit discount` (clear intent)
+- When a discount exists and editor is open: shows `∧ Close` (clear that clicking will collapse it)
+
+The Remove button already works correctly — clicking it clears the discount and closes the editor. No changes needed to Remove.
