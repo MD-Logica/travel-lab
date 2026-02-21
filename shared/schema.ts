@@ -110,6 +110,8 @@ export const trips = pgTable("trips", {
   shareToken: varchar("share_token").unique(),
   shareEnabled: boolean("share_enabled").notNull().default(false),
   selectionsSubmittedAt: timestamp("selections_submitted_at"),
+  approvedVersionId: varchar("approved_version_id"),
+  approvedAt: timestamp("approved_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

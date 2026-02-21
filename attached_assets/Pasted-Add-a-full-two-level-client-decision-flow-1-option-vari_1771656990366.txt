@@ -1,0 +1,474 @@
+Add a full two-level client decision flow: (1) option/variant preferences already being addressed in PM, and (2) a new itinerary version approval — where the client signals which version they want to proceed with. This is distinct from selecting options; it is a binding confirmation of the overall itinerary.
+
+---
+
+# PART A — Schema changes (`shared/schema.ts`)
+
+## A1 — Add approval fields to `trips` table
+
+```typescript
+approvedVersionId: varchar("approved_version_id"),
+approvedAt: timestamp("approved_at"),
+```
+
+`approvedVersionId` stores which version the client approved. `approvedAt` is the timestamp. No foreign key constraint needed — soft reference is fine.
+
+## A2 — Add `isPrimary` override for approved version to `tripVersions`
+
+No change needed — `isPrimary` already exists. When a client approves a version, the server will flip `isPrimary` to `true` on the approved version and `false` on all others, so the advisor view automatically shows the approved version first.
+
+Run migration for A1.
+
+---
+
+# PART B — Server: approval route (`server/routes.ts`)
+
+Add a new route:
+
+```typescript
+app.post("/api/trips/:tripId/approve-version", async (req: any, res) => {
+  try {
+    const { tripId } = req.params;
+    const token = req.query.token as string;
+    const { versionId } = req.body;
+
+    if (!token || !versionId) return res.status(400).json({ message: "token and versionId required" });
+
+    // Verify token access
+    const [trip] = await db.select().from(trips).where(eq(trips.id, tripId));
+    if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    // Verify versionId belongs to this trip
+    const [version] = await db.select().from(tripVersions)
+      .where(and(eq(tripVersions.id, versionId), eq(tripVersions.tripId, tripId)));
+    if (!version) return res.status(404).json({ message: "Version not found" });
+
+    // Stamp approval on trip
+    await db.update(trips).set({
+      approvedVersionId: versionId,
+      approvedAt: new Date(),
+      status: "confirmed",    // automatically advance trip status
+    }).where(eq(trips.id, tripId));
+
+    // Flip isPrimary: set approved version as primary, clear others
+    const allVersions = await db.select({ id: tripVersions.id })
+      .from(tripVersions).where(eq(tripVersions.tripId, tripId));
+    
+    await Promise.all(allVersions.map(v =>
+      db.update(tripVersions)
+        .set({ isPrimary: v.id === versionId })
+        .where(eq(tripVersions.id, v.id))
+    ));
+
+    // Get client name
+    let clientName = "Client";
+    if (trip.clientId) {
+      const [cl] = await db.select({ fullName: clients.fullName })
+        .from(clients).where(eq(clients.id, trip.clientId));
+      if (cl) clientName = cl.fullName;
+    }
+
+    // In-app notification for advisor
+    if (trip.advisorId) {
+      await storage.createNotification({
+        orgId: trip.orgId,
+        profileId: trip.advisorId,
+        type: "itinerary_approved",
+        title: `${clientName} approved "${version.name}" for "${trip.title}"`,
+        message: `${clientName} has confirmed they want to proceed with ${version.name}. The trip status has been updated to Confirmed.`,
+        data: {
+          tripId: trip.id,
+          versionId,
+          versionName: version.name,
+          clientName,
+          approvedAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    // System message in chat
+    try {
+      const convo = await storage.getOrCreateConversation(trip.orgId, trip.clientId);
+      const sysMsg = await storage.createMessage({
+        conversationId: convo.id,
+        orgId: trip.orgId,
+        senderType: "system",
+        senderId: "system",
+        senderName: "System",
+        content: `${clientName} approved ${version.name} for "${trip.title}" and wants to proceed.`,
+        isRead: false,
+        messageType: "event_itinerary_approved",
+      });
+      broadcastNewMessage(convo.id, sysMsg);
+    } catch (msgErr) {
+      console.error("System message failed:", msgErr);
+    }
+
+    // Email notification to advisor
+    try {
+      if (trip.advisorId) {
+        const [advisor] = await db.select({ email: profiles.email, fullName: profiles.fullName })
+          .from(profiles).where(eq(profiles.id, trip.advisorId));
+        if (advisor?.email) {
+          await sendItineraryApprovedEmail({
+            toEmail: advisor.email,
+            advisorName: advisor.fullName,
+            clientName,
+            tripTitle: trip.title,
+            versionName: version.name,
+          });
+        }
+      }
+    } catch (emailErr) {
+      console.error("Approval email failed:", emailErr);
+    }
+
+    res.json({ ok: true, approvedVersionId: versionId, versionName: version.name });
+  } catch (error) {
+    console.error("Approve version error:", error);
+    res.status(500).json({ message: "Failed to approve version" });
+  }
+});
+```
+
+---
+
+# PART C — Client-facing approval UI (`client/src/pages/trip-view.tsx`)
+
+## C1 — State
+
+Add state for the approval flow:
+
+```typescript
+const [approvalSheetOpen, setApprovalSheetOpen] = useState(false);
+const [approvalSuccess, setApprovalSuccess] = useState(false);
+const [approving, setApproving] = useState(false);
+```
+
+Derive approval state from trip data:
+```typescript
+const isApproved = !!(data?.trip as any)?.approvedVersionId;
+const approvedVersionId = (data?.trip as any)?.approvedVersionId;
+const approvedAt = (data?.trip as any)?.approvedAt;
+```
+
+## C2 — "Approve this Itinerary" button
+
+The approval button is separate from the options floating bar. It appears in TWO places:
+
+**Location 1: Bottom of each version's content**, just above the advisor contact footer, only when viewing via token (`token` is set) and the trip is not yet approved:
+
+```tsx
+{token && !isApproved && (
+  <div className="mt-8 pt-8 border-t border-border/40">
+    <div className="text-center space-y-3">
+      <p className="text-sm font-medium">Ready to proceed with {activeVersion?.name}?</p>
+      <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+        This confirms you'd like to move forward with this itinerary. Your advisor will be notified.
+      </p>
+      <Button
+        onClick={() => { setApprovalSuccess(false); setApprovalSheetOpen(true); }}
+        className="rounded-full px-8"
+        data-testid="button-approve-itinerary"
+      >
+        <CheckCircle className="w-4 h-4 mr-2" />
+        Approve {activeVersion?.name}
+      </Button>
+    </div>
+  </div>
+)}
+
+{token && isApproved && approvedVersionId === activeVersion?.id && (
+  <div className="mt-8 pt-8 border-t border-border/40">
+    <div className="text-center">
+      <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400">
+        <CheckCircle className="w-4 h-4" />
+        <span className="text-sm font-medium">You approved this itinerary</span>
+        {approvedAt && (
+          <span className="text-xs opacity-70">· {format(new Date(approvedAt), "d MMM")}</span>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+{token && isApproved && approvedVersionId !== activeVersion?.id && (
+  <div className="mt-8 pt-8 border-t border-border/40">
+    <div className="text-center">
+      <p className="text-xs text-muted-foreground">
+        You approved a different version of this itinerary.
+      </p>
+    </div>
+  </div>
+)}
+```
+
+**Location 2: The floating top bar**, when multiple versions exist. Add an approval indicator or CTA next to the version selector:
+
+```tsx
+{token && !isApproved && data.versions.length > 1 && (
+  <Button
+    size="sm"
+    variant="ghost"
+    className="h-7 px-2 text-xs text-primary"
+    onClick={() => { setApprovalSuccess(false); setApprovalSheetOpen(true); }}
+    data-testid="button-floating-approve"
+  >
+    <CheckCircle className="w-3 h-3 mr-1" /> Approve
+  </Button>
+)}
+{token && isApproved && (
+  <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+    <CheckCircle className="w-3 h-3" /> Approved
+  </span>
+)}
+```
+
+## C3 — Approval confirmation sheet
+
+```tsx
+<Sheet open={approvalSheetOpen} onOpenChange={setApprovalSheetOpen}>
+  <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
+    <SheetHeader className="text-left">
+      <SheetTitle>Approve {activeVersion?.name}</SheetTitle>
+      <SheetDescription>
+        Confirm you'd like to proceed with this itinerary. Your advisor will be notified immediately.
+      </SheetDescription>
+    </SheetHeader>
+
+    {approvalSuccess ? (
+      <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="approval-success">
+        <CheckCircle className="w-12 h-12 text-emerald-500" />
+        <p className="text-lg font-serif font-semibold">Itinerary Approved!</p>
+        <p className="text-sm text-muted-foreground text-center">
+          Your advisor has been notified and will be in touch to confirm next steps.
+        </p>
+      </div>
+    ) : (
+      <div className="mt-6 space-y-4">
+        {/* Summary of what they're approving */}
+        <div className="rounded-lg bg-muted/40 p-4 space-y-1">
+          <p className="text-sm font-medium">{trip.title}</p>
+          <p className="text-xs text-muted-foreground">{activeVersion?.name}</p>
+          {activeVersion?.showPricing && (() => {
+            const segs = activeVersion.segments || [];
+            const total = segs.reduce((sum, s) => sum + (s.cost || 0), 0);
+            const currency = segs.find(s => s.currency)?.currency || "USD";
+            return total > 0 ? (
+              <p className="text-sm font-semibold mt-1">
+                {new Intl.NumberFormat("en-US", { style: "currency", currency, minimumFractionDigits: 0 }).format(total)}
+              </p>
+            ) : null;
+          })()}
+          {trip.startDate && trip.endDate && (
+            <p className="text-xs text-muted-foreground">
+              {format(new Date(trip.startDate), "d MMM yyyy")} – {format(new Date(trip.endDate), "d MMM yyyy")}
+            </p>
+          )}
+        </div>
+
+        {/* Warning if they have unsubmitted options */}
+        {(() => {
+          const variantSegs = (activeVersion?.segments || []).filter(s => s.hasVariants);
+          const unsubmitted = variantSegs.filter(s => !localSelections[s.id]);
+          if (unsubmitted.length > 0) {
+            return (
+              <div className="flex gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  You haven't selected all options yet. You can still approve and submit your option preferences separately.
+                </p>
+              </div>
+            );
+          }
+          return null;
+        })()}
+
+        {/* Multi-version warning if applicable */}
+        {data.versions.length > 1 && (
+          <div className="flex gap-2 p-3 rounded-lg bg-muted/40 border border-border/50">
+            <p className="text-xs text-muted-foreground">
+              You are approving <strong>{activeVersion?.name}</strong> out of {data.versions.length} proposals. 
+              Make sure you're viewing the version you want to proceed with.
+            </p>
+          </div>
+        )}
+
+        <Button
+          className="w-full"
+          disabled={approving}
+          onClick={async () => {
+            if (!activeVersion) return;
+            setApproving(true);
+            try {
+              const res = await fetch(`/api/trips/${trip.id}/approve-version?token=${token}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ versionId: activeVersion.id }),
+              });
+              if (res.ok) {
+                setApprovalSuccess(true);
+                // Refresh trip data to reflect approved state
+                queryClient.invalidateQueries({ queryKey: ["/api/trip-view", id, token] });
+              }
+            } catch {} finally {
+              setApproving(false);
+            }
+          }}
+          data-testid="button-confirm-approval"
+        >
+          {approving ? (
+            <span className="flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Approving…</span>
+          ) : (
+            <><CheckCircle className="w-4 h-4 mr-2" /> Confirm Approval</>
+          )}
+        </Button>
+      </div>
+    )}
+  </SheetContent>
+</Sheet>
+```
+
+Import `AlertTriangle`, `Loader2` from lucide-react if not already imported.
+
+---
+
+# PART D — Advisor view (`client/src/pages/trip-edit.tsx`)
+
+## D1 — Approved version banner in the builder
+
+When `trip.approvedVersionId` is set, show a prominent banner at the top of the itinerary editor (above the version tabs, below the trip header):
+
+```tsx
+{trip.approvedVersionId && (
+  <div className="mx-4 mb-4 flex items-start gap-3 p-3 rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800">
+    <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+    <div className="min-w-0 flex-1">
+      <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+        Client approved {versions.find(v => v.id === trip.approvedVersionId)?.name || "a version"}
+      </p>
+      {trip.approvedAt && (
+        <p className="text-[11px] text-emerald-700/70 dark:text-emerald-400/70 mt-0.5">
+          {format(new Date(trip.approvedAt), "d MMM yyyy 'at' h:mm a")}
+        </p>
+      )}
+    </div>
+  </div>
+)}
+```
+
+## D2 — Version tab indicator
+
+On the version tab pills/buttons, add a small checkmark badge to the approved version so the advisor can instantly see which one was approved without reading the banner:
+
+```tsx
+// In the version tab rendering, wherever the tab label is rendered:
+<span className="flex items-center gap-1">
+  {v.name}
+  {v.id === trip.approvedVersionId && (
+    <CheckCircle className="w-3 h-3 text-emerald-500" />
+  )}
+</span>
+```
+
+## D3 — Trip list / card view
+
+In the trip card component (wherever trip cards are rendered in the trips list), add a "Client Approved" badge when `trip.approvedVersionId` is set. This should appear alongside the existing status badge:
+
+```tsx
+{trip.approvedVersionId && (
+  <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 dark:bg-emerald-950/30 gap-1">
+    <CheckCircle className="w-2.5 h-2.5" /> Client Approved
+  </Badge>
+)}
+```
+
+---
+
+# PART E — Notification bell for itinerary approvals (`client/src/components/notification-bell.tsx`)
+
+Add `itinerary_approved` to `changeTypeConfig`:
+
+```typescript
+import { CheckCircle2 } from "lucide-react";
+
+// In changeTypeConfig:
+itinerary_approved: { icon: CheckCircle2, color: "text-emerald-500" },
+```
+
+Render approval notifications with a distinct layout — larger, more prominent than a regular notification since it's a significant event:
+
+```tsx
+{notif.type === "itinerary_approved" ? (
+  <div className="space-y-1">
+    <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+      {notifData?.clientName} approved {notifData?.versionName}
+    </p>
+    <p className="text-xs text-muted-foreground">{notif.message}</p>
+  </div>
+) : notif.type === "selections_submitted" && notifData?.selections?.length > 0 ? (
+  // ... existing selections rendering from PM
+) : (
+  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{notif.message}</p>
+)}
+```
+
+---
+
+# PART F — Email for itinerary approval
+
+Add `sendItineraryApprovedEmail` to the email utility file (wherever `sendSelectionSubmittedEmail` lives):
+
+```typescript
+export async function sendItineraryApprovedEmail({
+  toEmail,
+  advisorName,
+  clientName,
+  tripTitle,
+  versionName,
+}: {
+  toEmail: string;
+  advisorName: string;
+  clientName: string;
+  tripTitle: string;
+  versionName: string;
+}) {
+  await resend.emails.send({
+    from: "Travel Lab <notifications@your-domain.com>",
+    to: toEmail,
+    subject: `${clientName} approved "${versionName}" — ${tripTitle}`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px;">
+        <h2 style="font-size: 20px; margin-bottom: 8px;">Itinerary Approved ✓</h2>
+        <p style="color: #6b7280; margin-bottom: 24px;">
+          ${clientName} has approved <strong>${versionName}</strong> for <strong>${tripTitle}</strong> and is ready to proceed.
+        </p>
+        <p style="color: #6b7280; font-size: 14px;">
+          The trip status has been automatically updated to <strong>Confirmed</strong>. Log in to Travel Lab to review the booking details and begin next steps.
+        </p>
+        <p style="color: #9ca3af; font-size: 12px; margin-top: 32px;">Travel Lab · Sent to ${advisorName}</p>
+      </div>
+    `,
+  });
+}
+```
+
+---
+
+# Summary of the full two-level flow
+
+**Level 1 — Option preferences** (PM prompt):
+- Client selects preferred variants/options on individual segments
+- Floating bottom bar shows "X of Y selected · Review & Submit"
+- Advisor gets notification bell entry + chat system message listing each selection
+
+**Level 2 — Version approval** (this prompt):
+- Client views any/all versions, then clicks "Approve Version X" at the bottom of the one they want
+- Confirmation sheet shows a summary of what they're approving + warning if options unsubmitted
+- Server: stamps `approvedVersionId` + `approvedAt` on trip, flips `isPrimary`, auto-advances status to `"confirmed"`
+- Advisor gets: (a) notification bell entry with client name + version name, (b) emerald banner at top of trip builder, (c) checkmark on the approved version tab, (d) "Client Approved" badge on trip card in list view, (e) email
+- Chat: system message "Client approved Version 2 and wants to proceed"
+
+The two levels are independent — a client can submit option preferences multiple times without approving, and can approve without having selected all options (with a warning). Both actions are clearly distinct in language, visual treatment, and weight.
