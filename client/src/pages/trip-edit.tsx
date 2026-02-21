@@ -40,7 +40,7 @@ import {
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
   ChevronDown, ChevronUp, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
-  Link2, ExternalLink, RotateCcw, Users, CheckCircle, ListChecks,
+  Link2, ExternalLink, RotateCcw, Users, CheckCircle, ListChecks, GitFork,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -171,6 +171,7 @@ function SegmentCard({
   daySegments,
   allSegments,
   currentVersionId,
+  onAddAlternative,
 }: {
   segment: TripSegment;
   tripId: string;
@@ -181,6 +182,7 @@ function SegmentCard({
   daySegments?: TripSegment[];
   allSegments?: TripSegment[];
   currentVersionId?: string;
+  onAddAlternative?: () => void;
 }) {
   const { toast } = useToast();
   const [editingPosition, setEditingPosition] = useState(false);
@@ -449,6 +451,11 @@ function SegmentCard({
                     Options available
                   </Badge>
                 )}
+                {segment.choiceGroupId && (
+                  <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-600 dark:text-amber-400" data-testid={`badge-choice-group-${segment.id}`}>
+                    Alternative option
+                  </Badge>
+                )}
               </div>
               {secondaryText && (
                 <p className="text-xs text-muted-foreground truncate mt-0.5">{secondaryText}</p>
@@ -469,6 +476,17 @@ function SegmentCard({
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
+              {onAddAlternative && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={onAddAlternative}
+                  title="Add alternative option"
+                  data-testid={`button-add-alternative-${segment.id}`}
+                >
+                  <GitFork className="w-3.5 h-3.5" />
+                </Button>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 mt-1.5">
@@ -574,7 +592,8 @@ function SegmentCard({
 type DayRenderItem =
   | { kind: "segment"; segment: TripSegment }
   | { kind: "journey"; journeyId: string; legs: TripSegment[] }
-  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] };
+  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] }
+  | { kind: "choiceGroup"; choiceGroupId: string; options: TripSegment[] };
 
 function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
   const items: DayRenderItem[] = [];
@@ -582,6 +601,8 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
   const journeyGroups = new Map<string, TripSegment[]>();
   const seenPropertyGroupIds = new Set<string>();
   const propertyGroups = new Map<string, TripSegment[]>();
+  const seenChoiceGroupIds = new Set<string>();
+  const choiceGroups = new Map<string, TripSegment[]>();
 
   for (const seg of daySegments) {
     if (seg.journeyId) {
@@ -595,6 +616,10 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
         propertyGroups.set(seg.propertyGroupId, []);
       }
       propertyGroups.get(seg.propertyGroupId)!.push(seg);
+    }
+    if (seg.choiceGroupId) {
+      if (!choiceGroups.has(seg.choiceGroupId)) choiceGroups.set(seg.choiceGroupId, []);
+      choiceGroups.get(seg.choiceGroupId)!.push(seg);
     }
   }
 
@@ -615,6 +640,13 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
         seenPropertyGroupIds.add(seg.propertyGroupId);
         const rooms = propertyGroups.get(seg.propertyGroupId)!;
         items.push({ kind: "propertyGroup", propertyGroupId: seg.propertyGroupId, rooms });
+      }
+    } else if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+        seenChoiceGroupIds.add(seg.choiceGroupId);
+        const options = choiceGroups.get(seg.choiceGroupId)!;
+        options.sort((a, b) => a.sortOrder - b.sortOrder);
+        items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
       }
     } else {
       items.push({ kind: "segment", segment: seg });
@@ -1000,6 +1032,105 @@ function PropertyGroupCard({
       </CardContent>
     </Card>
     </motion.div>
+  );
+}
+
+function ChoiceGroupCard({
+  options,
+  tripId,
+  onEdit,
+  showPricing,
+  trackingBySegment,
+  onUnlink,
+  onSelectChoice,
+}: {
+  options: TripSegment[];
+  tripId: string;
+  onEdit: (s: TripSegment) => void;
+  showPricing?: boolean;
+  trackingBySegment: Map<string, FlightTracking>;
+  onUnlink: (choiceGroupId: string) => void;
+  onSelectChoice: (segmentId: string, choiceGroupId: string) => void;
+}) {
+  const selectedOption = options.find(o => o.isChoiceSelected);
+
+  return (
+    <div className="relative">
+      <div className="border-2 border-dashed border-amber-300/60 dark:border-amber-700/40 rounded-lg p-3 space-y-0 bg-amber-50/30 dark:bg-amber-950/10">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600 dark:text-amber-400">
+              Either / Or
+            </span>
+            {selectedOption && (
+              <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-600 dark:text-emerald-400">
+                Choice made
+              </Badge>
+            )}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600/70 hover:text-amber-700">
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem
+                onClick={() => onUnlink(options[0].choiceGroupId!)}
+                className="text-muted-foreground"
+              >
+                Unlink alternatives
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {options.map((option, idx) => (
+          <div key={option.id}>
+            {idx > 0 && (
+              <div className="flex items-center gap-2 my-2">
+                <div className="flex-1 border-t border-amber-200/60 dark:border-amber-800/40" />
+                <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400 tracking-wider px-1">OR</span>
+                <div className="flex-1 border-t border-amber-200/60 dark:border-amber-800/40" />
+              </div>
+            )}
+            <div className={`relative transition-opacity ${selectedOption && !option.isChoiceSelected ? "opacity-50" : ""}`}>
+              <SegmentCard
+                segment={option}
+                tripId={tripId}
+                onEdit={onEdit}
+                tracking={option.type === "flight" ? trackingBySegment.get(option.id) : null}
+                showPricing={showPricing}
+              />
+              <div className="mt-1 flex justify-end">
+                {option.isChoiceSelected ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] border-emerald-300 text-emerald-600 dark:text-emerald-400 gap-1"
+                    onClick={() => onSelectChoice("", option.choiceGroupId!)}
+                    data-testid={`button-choice-selected-${option.id}`}
+                  >
+                    <Check className="w-3 h-3" />
+                    Selected
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                    onClick={() => onSelectChoice(option.id, option.choiceGroupId!)}
+                    data-testid={`button-select-choice-${option.id}`}
+                  >
+                    Select this option
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -2017,7 +2148,14 @@ export default function TripEditPage() {
     existingSegmentId: string;
     hotelName: string;
   }>({ open: false, newSegmentId: "", existingSegmentId: "", hotelName: "" });
+  const [addAlternativeDialog, setAddAlternativeDialog] = useState<{
+    open: boolean;
+    existingSegmentId: string;
+    segmentType: string;
+    dayNumber: number;
+  } | null>(null);
   const prevSegmentDialogOpen = useRef(false);
+  const prevSegmentDialogOpenForChoice = useRef(false);
 
   const { data: tripData, isLoading: tripLoading } = useQuery<TripFull>({
     queryKey: ["/api/trips", id, "full"],
@@ -2136,6 +2274,63 @@ export default function TripEditPage() {
     },
   });
 
+  const choiceGroupMutation = useMutation({
+    mutationFn: async ({ existingSegmentId, newSegmentId }: { existingSegmentId: string; newSegmentId: string }) => {
+      const groupId = crypto.randomUUID();
+      await apiRequest("PATCH", `/api/trips/${id}/segments/${existingSegmentId}`, { choiceGroupId: groupId });
+      await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegmentId}`, { choiceGroupId: groupId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "versions", currentVersionId, "segments"] });
+      toast({ title: "Alternatives linked", description: "Client will choose one option." });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error linking alternatives", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const unlinkChoiceMutation = useMutation({
+    mutationFn: async (choiceGroupId: string) => {
+      const groupSegments = segments.filter(s => s.choiceGroupId === choiceGroupId);
+      await Promise.all(
+        groupSegments.map(s =>
+          apiRequest("PATCH", `/api/trips/${id}/segments/${s.id}`, { choiceGroupId: null, isChoiceSelected: false })
+        )
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "versions", currentVersionId, "segments"] });
+      toast({ title: "Alternatives unlinked" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error unlinking", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const selectChoiceMutation = useMutation({
+    mutationFn: async ({ segmentId, choiceGroupId }: { segmentId: string; choiceGroupId: string }) => {
+      if (!segmentId) {
+        const groupSegments = segments.filter(s => s.choiceGroupId === choiceGroupId);
+        await Promise.all(
+          groupSegments.map(s =>
+            apiRequest("PATCH", `/api/trips/${id}/segments/${s.id}`, { isChoiceSelected: false })
+          )
+        );
+      } else {
+        await apiRequest("POST", `/api/trips/${id}/segments/${segmentId}/choose`);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "versions", currentVersionId, "segments"] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error recording choice", description: e.message, variant: "destructive" });
+    },
+  });
+
   useEffect(() => {
     if (prevSegmentDialogOpen.current && !segmentDialogOpen && segments.length > 0) {
       const hotelSegments = segments.filter(s => s.type === "hotel" && !s.propertyGroupId);
@@ -2161,6 +2356,30 @@ export default function TripEditPage() {
     }
     prevSegmentDialogOpen.current = segmentDialogOpen;
   }, [segmentDialogOpen, segments]);
+
+  useEffect(() => {
+    if (!addAlternativeDialog?.open) {
+      prevSegmentDialogOpenForChoice.current = segmentDialogOpen;
+      return;
+    }
+    if (prevSegmentDialogOpenForChoice.current && !segmentDialogOpen) {
+      const candidates = segments.filter(s =>
+        s.dayNumber === addAlternativeDialog.dayNumber &&
+        s.type === addAlternativeDialog.segmentType &&
+        !s.choiceGroupId &&
+        s.id !== addAlternativeDialog.existingSegmentId
+      );
+      if (candidates.length > 0) {
+        const newest = candidates[candidates.length - 1];
+        choiceGroupMutation.mutate({
+          existingSegmentId: addAlternativeDialog.existingSegmentId,
+          newSegmentId: newest.id,
+        });
+      }
+      setAddAlternativeDialog(null);
+    }
+    prevSegmentDialogOpenForChoice.current = segmentDialogOpen;
+  }, [segmentDialogOpen, segments, addAlternativeDialog]);
 
   const tripStart = trip?.startDate ? new Date(trip.startDate) : null;
   const tripEnd = trip?.endDate ? new Date(trip.endDate) : null;
@@ -3073,6 +3292,20 @@ export default function TripEditPage() {
                               />
                             );
                           }
+                          if (item.kind === "choiceGroup") {
+                            return (
+                              <ChoiceGroupCard
+                                key={`choice-${item.choiceGroupId}`}
+                                options={item.options}
+                                tripId={id!}
+                                onEdit={openEditSegment}
+                                showPricing={showPricing}
+                                trackingBySegment={trackingBySegment}
+                                onUnlink={(cgId) => unlinkChoiceMutation.mutate(cgId)}
+                                onSelectChoice={(segId, cgId) => selectChoiceMutation.mutate({ segmentId: segId, choiceGroupId: cgId })}
+                              />
+                            );
+                          }
                           return (
                             <SegmentCard
                               key={item.segment.id}
@@ -3085,6 +3318,19 @@ export default function TripEditPage() {
                               daySegments={daySegments}
                               allSegments={segments}
                               currentVersionId={currentVersionId}
+                              onAddAlternative={
+                                (["hotel", "flight", "charter", "charter_flight"].includes(item.segment.type) && !item.segment.choiceGroupId && !item.segment.journeyId && !item.segment.propertyGroupId)
+                                  ? () => {
+                                      setAddAlternativeDialog({
+                                        open: true,
+                                        existingSegmentId: item.segment.id,
+                                        segmentType: item.segment.type,
+                                        dayNumber: item.segment.dayNumber,
+                                      });
+                                      openAddSegment(item.segment.dayNumber, item.segment.type);
+                                    }
+                                  : undefined
+                              }
                             />
                           );
                         })}
