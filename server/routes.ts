@@ -2395,14 +2395,12 @@ export async function registerRoutes(
         return res.json({ error: "No flight found for this number and date." });
       }
 
-      const raw = data[0];
-      const depScheduled = raw.departure?.scheduledTime?.local || "";
-      const depUtc       = raw.departure?.scheduledTime?.utc   || "";
-      const arrScheduled = raw.arrival?.scheduledTime?.local || "";
-      const arrUtc       = raw.arrival?.scheduledTime?.utc     || "";
-
-      res.json({
-        flight: {
+      const flights = data.map((raw: any) => {
+        const depScheduled = raw.departure?.scheduledTime?.local || "";
+        const depUtc       = raw.departure?.scheduledTime?.utc   || "";
+        const arrScheduled = raw.arrival?.scheduledTime?.local || "";
+        const arrUtc       = raw.arrival?.scheduledTime?.utc     || "";
+        return {
           flightNumber: raw.number || flightNumber,
           airline: raw.airline?.name || "",
           aircraft: raw.aircraft?.model || "",
@@ -2423,8 +2421,10 @@ export async function registerRoutes(
             scheduledUtc: arrUtc,
             scheduledLocal: arrScheduled,
           },
-        },
+        };
       });
+
+      res.json({ flights });
     } catch (error) {
       console.error("[AeroDataBox] search error:", error);
       res.json({ error: "No flight found." });

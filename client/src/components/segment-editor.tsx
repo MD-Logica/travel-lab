@@ -18,6 +18,7 @@ import {
   Globe, Hash, User, Truck, Train, Bus, Anchor,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Landmark, Palette,
   Dumbbell, Sparkles, Ticket, Search, Bookmark, Loader2, Check, Diamond,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -162,21 +163,24 @@ function FlightSearchPanel({
   const [searchNumber, setSearchNumber] = useState(metadata.flightNumber || "");
   const [searchDate, setSearchDate] = useState(defaultDate || "");
   const [isSearching, setIsSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<any>(null);
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [currentResultIndex, setCurrentResultIndex] = useState(0);
   const [searchError, setSearchError] = useState("");
 
   const handleSearch = async () => {
     if (!searchNumber.trim()) return;
     setIsSearching(true);
-    setSearchResult(null);
+    setSearchResults([]);
+    setCurrentResultIndex(0);
     setSearchError("");
     try {
       const params = new URLSearchParams({ flightNumber: searchNumber.trim() });
       if (searchDate) params.set("date", searchDate);
       const res = await fetch(`/api/flights/search?${params}`, { credentials: "include" });
       const data = await res.json();
-      if (data.flight) {
-        setSearchResult(data.flight);
+      if (data.flights && data.flights.length > 0) {
+        setSearchResults(data.flights);
+        setCurrentResultIndex(0);
       } else {
         setSearchError(data.error || "Flight not found - you can enter the details manually below.");
       }
@@ -188,8 +192,8 @@ function FlightSearchPanel({
   };
 
   const applyFlightData = () => {
-    if (!searchResult) return;
-    const f = searchResult;
+    if (searchResults.length === 0) return;
+    const f = searchResults[currentResultIndex];
     onChange({
       ...metadata,
       flightNumber: f.flightNumber || metadata.flightNumber,
@@ -211,7 +215,7 @@ function FlightSearchPanel({
       departure: f.departure,
       arrival: f.arrival,
     });
-    setSearchResult(null);
+    setSearchResults([]);
   };
 
   return (
@@ -241,35 +245,68 @@ function FlightSearchPanel({
         </Button>
       </div>
 
-      {searchResult && (
+      {searchResults.length > 0 && (() => {
+        const sr = searchResults[currentResultIndex];
+        return (
         <div className="border border-border rounded-md p-3 space-y-2 bg-accent/20" data-testid={`card-flight-result${suffix}`}>
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-sm">{searchResult.flightNumber}</span>
-            {searchResult.airline && <span className="text-sm text-muted-foreground">{searchResult.airline}</span>}
-            {searchResult.status && <Badge variant="outline" className="text-xs">{searchResult.status}</Badge>}
+            <span className="font-medium text-sm">{sr.flightNumber}</span>
+            {sr.airline && <span className="text-sm text-muted-foreground">{sr.airline}</span>}
+            {sr.status && <Badge variant="outline" className="text-xs">{sr.status}</Badge>}
           </div>
           <div className="text-sm text-muted-foreground">
-            {searchResult.departure?.iata || ""} {"\u2192"} {searchResult.arrival?.iata || ""}
+            {sr.departure?.iata || ""} {"\u2192"} {sr.arrival?.iata || ""}
           </div>
-          {(searchResult.departure?.airport || searchResult.arrival?.airport) && (
+          {(sr.departure?.airport || sr.arrival?.airport) && (
             <div className="text-xs text-muted-foreground/60">
-              {searchResult.departure?.airport || ""} {"\u2192"} {searchResult.arrival?.airport || ""}
+              {sr.departure?.airport || ""} {"\u2192"} {sr.arrival?.airport || ""}
             </div>
           )}
-          {(searchResult.departure?.scheduledTime || searchResult.arrival?.scheduledTime) && (
+          {(sr.departure?.scheduledTime || sr.arrival?.scheduledTime) && (
             <div className="text-xs text-muted-foreground/60">
-              {searchResult.departure?.scheduledTime && <span>Departs: {searchResult.departure.scheduledTime}</span>}
-              {searchResult.departure?.scheduledTime && searchResult.arrival?.scheduledTime && <span className="mx-2">|</span>}
-              {searchResult.arrival?.scheduledTime && <span>Arrives: {searchResult.arrival.scheduledTime}</span>}
+              {sr.departure?.scheduledTime && <span>Departs: {sr.departure.scheduledTime}</span>}
+              {sr.departure?.scheduledTime && sr.arrival?.scheduledTime && <span className="mx-2">|</span>}
+              {sr.arrival?.scheduledTime && <span>Arrives: {sr.arrival.scheduledTime}</span>}
             </div>
           )}
-          {searchResult.aircraft && <div className="text-xs text-muted-foreground/40">Aircraft: {searchResult.aircraft}</div>}
-          <Button size="sm" onClick={applyFlightData} data-testid={`button-use-flight${suffix}`}>
-            <Check className="w-3.5 h-3.5 mr-1.5" />
-            Use this flight
-          </Button>
+          {sr.aircraft && <div className="text-xs text-muted-foreground/40">Aircraft: {sr.aircraft}</div>}
+          <div className="flex items-center justify-between pt-1">
+            <Button size="sm" onClick={applyFlightData} data-testid={`button-use-flight${suffix}`}>
+              <Check className="w-3.5 h-3.5 mr-1.5" />
+              Use this flight
+            </Button>
+            {searchResults.length > 1 && (
+              <div className="flex flex-col items-end gap-0.5">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setCurrentResultIndex((currentResultIndex - 1 + searchResults.length) % searchResults.length)}
+                    data-testid={`button-prev-flight${suffix}`}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <span className="text-xs text-muted-foreground tabular-nums" data-testid={`text-flight-index${suffix}`}>
+                    {currentResultIndex + 1} / {searchResults.length}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setCurrentResultIndex((currentResultIndex + 1) % searchResults.length)}
+                    data-testid={`button-next-flight${suffix}`}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+                <span className="text-[10px] text-muted-foreground/50">See other options</span>
+              </div>
+            )}
+          </div>
         </div>
-      )}
+        );
+      })()}
 
       {searchError && (
         <p className="text-sm text-muted-foreground/60 italic" data-testid={`text-flight-not-found${suffix}`}>{searchError}</p>

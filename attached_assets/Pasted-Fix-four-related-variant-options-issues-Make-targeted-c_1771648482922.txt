@@ -1,0 +1,50 @@
+Fix four related variant/options issues. Make targeted changes only to the files specified — do not touch anything else.
+
+---
+
+**Issue A — Variants disappear when re-opening the segment editor**
+
+File: `client/src/components/segment-editor.tsx`
+
+In the `useEffect` that runs when `existingSegment` changes (the one that fetches `/api/segments/${existingSegment.id}/variants`), verify the fetch runs and `setVariants(data)` is called. Make sure the condition that gates this fetch includes `type === "charter_flight"` in addition to `"hotel"` and `"flight"`. Also ensure `existingVariantIds` is populated from the fetched variant IDs so the save/delete logic works correctly on update.
+
+---
+
+**Issue B — Variants don't appear in the advisor's own preview**
+
+File: `client/src/pages/trip-view.tsx`
+
+The `useEffect` that loads `variantMap` only runs when a `token` (public share token) is present. Advisors viewing their own trip are authenticated but have no token, so variants never load for them.
+
+Fix: remove the gate on `token`. Instead, build the fetch URL conditionally:
+```typescript
+const url = token
+  ? `/api/segments/${seg.id}/variants?token=${token}`
+  : `/api/segments/${seg.id}/variants`;
+```
+The authenticated fetch (no token) will work because the `/api/segments/:id/variants` route already supports authenticated access via `req._orgId`.
+
+---
+
+**Issue C — Variants don't appear for flight segments grouped in JourneyViewCard**
+
+File: `client/src/pages/trip-view.tsx`
+
+`JourneyViewCard` renders connected flights but never shows variant options. Fix:
+
+1. Add two optional props to `JourneyViewCard`: `variantMap?: Record<string, any[]>` and `onSelectVariant?: (segmentId: string, variantId: string) => void`
+2. After the journey card content, check if `legs[0].hasVariants` and `variantMap?.[legs[0].id]` has entries — if so, render `<VariantCards>` below the journey card
+3. In `DayView` (where journey items are rendered), pass `variantMap` and `onSelectVariant` into `<JourneyViewCard>`
+
+---
+
+**Issue D — Refundability status and passenger count missing from FlightCard in preview**
+
+File: `client/src/pages/trip-view.tsx`
+
+In the `FlightCard` component, add display of:
+- Refundability: if `meta.refundability` is set and not `"unknown"`, show a colored badge (`non_refundable` → red, `fully_refundable` → green with deadline if `meta.refundDeadline` is set, `partially_refundable` → amber)
+- Passenger count: if `meta.quantity > 1`, show `"{meta.quantity} passengers"` in muted text
+- Per-unit price: if `meta.pricePerUnit > 0`, show `"{formatViewCurrency(meta.pricePerUnit, currency)} / person"` in muted text
+
+These should appear in the same info row where times and airport codes are shown.
