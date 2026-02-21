@@ -1,0 +1,246 @@
+# PU — Micro-animations and Hover Icons
+
+Five targeted additions across `client/src/pages/trip-view.tsx`, `client/src/pages/trip-edit.tsx`, and `client/src/components/notification-bell.tsx`. All use framer-motion v11 which is already installed. No new npm packages are needed except the Hover Icons CLI installs listed below.
+
+Do not add animations to: navigation elements, form inputs, settings pages, any loading spinners, or anything in the advisor-only builder that isn't a segment card. Animations should be felt, not noticed.
+
+---
+
+## Fix 1 — Segment cards: spring-physics whileHover lift (`client/src/pages/trip-edit.tsx`)
+
+The three card components — `SegmentCard`, `JourneyCard`, and `PropertyGroupCard` — currently use the CSS `hover-elevate` class for hover feedback. This is fine but mechanical. Wrap each `<Card>` element in a `motion.div` with a gentle spring lift. Keep the `hover-elevate` class in place for its brightness adjustment; the motion just adds the physical y-shift.
+
+`motion` is already imported from `framer-motion` in this file.
+
+For all three card types, wrap the outermost `<Card>` element in:
+
+```tsx
+<motion.div
+  whileHover={{ y: -2 }}
+  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+>
+  <Card className="group relative hover-elevate ...">
+    ...
+  </Card>
+</motion.div>
+```
+
+Apply this to:
+- `SegmentCard` — the `<Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>` 
+- `JourneyCard` — the `<Card className="group relative hover-elevate border-sky-200/40 ...">`
+- `PropertyGroupCard` — the `<Card className="group relative hover-elevate border-amber-200/40 ...">`
+
+Do not change any classNames on the Card elements themselves. The `motion.div` wrapper is purely additive.
+
+---
+
+## Fix 2 — Segment card entrance: tighten the existing stagger (`client/src/pages/trip-edit.tsx`)
+
+The day cards already use `motion.div` with `initial={{ opacity: 0, y: 8 }}` and `delay: dayNum * 0.02`. This is correct but the 20ms stagger is almost imperceptible. Update to make it slightly more readable while keeping it snappy:
+
+Find the existing motion.div on day cards:
+```tsx
+<motion.div
+  key={dayNum}
+  initial={{ opacity: 0, y: 8 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ delay: dayNum * 0.02, duration: 0.3 }}
+  data-testid={`day-card-${dayNum}`}
+>
+```
+
+Update the transition to:
+```tsx
+transition={{ delay: dayNum * 0.04, duration: 0.25, ease: [0.25, 0.46, 0.45, 0.94] }}
+```
+
+This doubles the stagger to 40ms (still fast), reduces duration from 300ms to 250ms (snappier), and uses the same premium easing curve already used in the dashboard. The `y: 8` stays the same — don't increase it.
+
+---
+
+## Fix 3 — Success states: spring celebration animation (`client/src/pages/trip-view.tsx`)
+
+Both the submit-selections success state and the approval success state currently show a static `<CheckCircle>` icon that just appears. Replace with a spring-scale entrance that feels earned.
+
+`motion` and `AnimatePresence` are already imported in this file.
+
+**Submit success state** — find:
+```tsx
+{submitSuccess ? (
+  <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="submit-success">
+    <CheckCircle className="w-10 h-10 text-emerald-500" />
+    <p className="text-base font-medium">Selections submitted!</p>
+    <p className="text-sm text-muted-foreground">Your advisor has been notified.</p>
+  </div>
+```
+
+Replace with:
+```tsx
+{submitSuccess ? (
+  <motion.div
+    className="flex flex-col items-center justify-center py-12 gap-3"
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    transition={{ duration: 0.2 }}
+    data-testid="submit-success"
+  >
+    <motion.div
+      initial={{ scale: 0.5, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.1 }}
+    >
+      <CheckCircle className="w-10 h-10 text-emerald-500" />
+    </motion.div>
+    <motion.p
+      className="text-base font-medium"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.25, duration: 0.2 }}
+    >
+      Selections submitted!
+    </motion.p>
+    <motion.p
+      className="text-sm text-muted-foreground"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: 0.35, duration: 0.2 }}
+    >
+      Your advisor has been notified.
+    </motion.p>
+  </motion.div>
+```
+
+**Approval success state** — find:
+```tsx
+{approvalSuccess ? (
+  <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="approval-success">
+    <CheckCircle className="w-10 h-10 text-emerald-500" />
+    <p className="text-base font-medium">Itinerary approved!</p>
+    <p className="text-sm text-muted-foreground">Your advisor has been notified and will begin finalising arrangements.</p>
+  </div>
+```
+
+Apply the identical animation pattern:
+```tsx
+{approvalSuccess ? (
+  <motion.div
+    className="flex flex-col items-center justify-center py-12 gap-3"
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    transition={{ duration: 0.2 }}
+    data-testid="approval-success"
+  >
+    <motion.div
+      initial={{ scale: 0.5, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.1 }}
+    >
+      <CheckCircle className="w-10 h-10 text-emerald-500" />
+    </motion.div>
+    <motion.p
+      className="text-base font-medium"
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.25, duration: 0.2 }}
+    >
+      Itinerary approved!
+    </motion.p>
+    <motion.p
+      className="text-sm text-muted-foreground"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: 0.35, duration: 0.2 }}
+    >
+      Your advisor has been notified and will begin finalising arrangements.
+    </motion.p>
+  </motion.div>
+```
+
+---
+
+## Fix 4 — Notification bell panel: AnimatePresence enter/exit (`client/src/components/notification-bell.tsx`)
+
+The notification panel currently pops open instantly with no animation. Add a smooth scale+fade entrance.
+
+**Step A** — add framer-motion import at the top of `notification-bell.tsx`:
+```tsx
+import { motion, AnimatePresence } from "framer-motion";
+```
+
+**Step B** — find the panel conditional render:
+```tsx
+{open && (
+  <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-popover border rounded-md shadow-lg z-50 max-h-[420px] flex flex-col" data-testid="panel-notifications">
+```
+
+Replace with:
+```tsx
+<AnimatePresence>
+  {open && (
+    <motion.div
+      className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-popover border rounded-md shadow-lg z-50 max-h-[420px] flex flex-col"
+      initial={{ opacity: 0, scale: 0.96, y: -4 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.96, y: -4 }}
+      transition={{ duration: 0.15, ease: "easeOut" }}
+      data-testid="panel-notifications"
+    >
+```
+
+Close the `motion.div` where the `</div>` currently closes the panel (at the very end of the panel JSX, just before `}</div>` that closes `relative`). Also close the `</AnimatePresence>` tag after.
+
+The panel content inside does not change at all.
+
+---
+
+## Fix 5 — Hover Icons: three selective icon replacements
+
+Install the three icons from itshover.com using the shadcn CLI. Run these commands in the Replit shell:
+
+```bash
+npx shadcn@latest add https://itshover.com/r/send-icon.json
+npx shadcn@latest add https://itshover.com/r/circle-check-icon.json
+npx shadcn@latest add https://itshover.com/r/bell-icon.json
+```
+
+This installs them as React components into `client/src/components/ui/`. The component names will be `SendIcon`, `CircleCheckIcon`, and `BellIcon` respectively (confirm the actual exported names after install by checking the generated files).
+
+**Replace icons in three specific places only:**
+
+**1. Submit button in `trip-view.tsx`** — the Send icon on the submit selections button (client-facing sheet only):
+
+Find:
+```tsx
+data-testid="button-submit-selections"
+>
+  <Send className="w-3.5 h-3.5 mr-1.5" />
+  Submit {selectedCount} selection{selectedCount !== 1 ? "s" : ""}
+```
+
+Replace `<Send className="w-3.5 h-3.5 mr-1.5" />` with `<SendIcon className="w-3.5 h-3.5 mr-1.5" />` and add the import for `SendIcon` from `"@/components/ui/send-icon"` (adjust path to match actual installed location).
+
+**2. Approval success checkmark in `trip-view.tsx`** — the animated CheckCircle in both success states added in Fix 3. Since Fix 3 already wraps the icon in a `motion.div` spring, simply swap the Lucide `CheckCircle` for `CircleCheckIcon` inside those motion wrappers:
+
+```tsx
+<CircleCheckIcon className="w-10 h-10 text-emerald-500" />
+```
+
+Import from `"@/components/ui/circle-check-icon"` (adjust to actual path).
+
+**3. Notification bell in `notification-bell.tsx`** — replace the static `<Bell>` icon on the button trigger:
+
+Find:
+```tsx
+<Bell className="w-4.5 h-4.5" />
+```
+
+Replace with:
+```tsx
+<BellIcon className="w-4.5 h-4.5" />
+```
+
+Import `BellIcon` from `"@/components/ui/bell-icon"` (adjust to actual path).
+
+**Important:** Only replace these three specific icon usages. Do not replace any other uses of `Send`, `CheckCircle`, or `Bell` throughout the codebase — particularly the `Bell` used in notification type configs in `notification-bell.tsx` and the `CheckCircle` used inline in buttons and badges throughout `trip-view.tsx` and `trip-edit.tsx`. Only the three instances listed above get Hover Icons.
+
+After installing, remove the now-unused `Send` import from `trip-view.tsx` if `Send` is no longer used anywhere in that file (check first — it may still be used elsewhere in the file). Do the same for `Bell` in `notification-bell.tsx`. Do not remove `CheckCircle` as it is still used in many other places.

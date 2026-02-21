@@ -1896,11 +1896,23 @@ export default function TripViewPage() {
               </SheetHeader>
 
               {submitSuccess ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="submit-success">
-                  <CheckCircle className="w-10 h-10 text-emerald-500" />
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                  className="flex flex-col items-center justify-center py-12 gap-3"
+                  data-testid="submit-success"
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 15, delay: 0.15 }}
+                  >
+                    <CheckCircle className="w-10 h-10 text-emerald-500" />
+                  </motion.div>
                   <p className="text-base font-medium">Selections submitted!</p>
                   <p className="text-sm text-muted-foreground">Your advisor has been notified.</p>
-                </div>
+                </motion.div>
               ) : (
                 <div className="mt-4 space-y-3">
                   {variantSegments.map((seg) => {

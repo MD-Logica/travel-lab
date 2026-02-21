@@ -376,6 +376,10 @@ function SegmentCard({
   const timeDisplay = depTime && arrTime ? `${depTime} \u2192 ${arrTime}` : depTime || arrTime || null;
 
   return (
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+    >
     <Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>
       <CardContent className="p-3 flex items-start gap-3">
         {positionInDay != null && (
@@ -561,6 +565,7 @@ function SegmentCard({
         </div>
       </CardContent>
     </Card>
+    </motion.div>
   );
 }
 
@@ -663,6 +668,10 @@ function JourneyCard({
     : firstMeta.departureTime ? isRedEye(firstMeta.departureTime) : false;
 
   return (
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+    >
     <Card className="group relative hover-elevate border-sky-200/40 dark:border-sky-800/40" data-testid={`card-journey-${firstLeg.journeyId}`}>
       <CardContent className="p-3 space-y-2">
         <div className="flex items-center gap-2">
@@ -862,6 +871,7 @@ function JourneyCard({
         })()}
       </CardContent>
     </Card>
+    </motion.div>
   );
 }
 
@@ -911,6 +921,10 @@ function PropertyGroupCard({
   const totalCost = rooms.reduce((sum, r) => sum + (r.cost || 0), 0);
 
   return (
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
+    >
     <Card className="group relative hover-elevate border-amber-200/40 dark:border-amber-800/40" data-testid={`card-property-group-${rooms[0].propertyGroupId}`}>
       <CardContent className="p-3 space-y-2">
         <div className="flex items-center gap-2">
@@ -983,6 +997,7 @@ function PropertyGroupCard({
         )}
       </CardContent>
     </Card>
+    </motion.div>
   );
 }
 
@@ -2966,9 +2981,9 @@ export default function TripEditPage() {
                 return (
                   <motion.div
                     key={dayNum}
-                    initial={{ opacity: 0, y: 8 }}
+                    initial={{ opacity: 0, y: 12 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: dayNum * 0.02, duration: 0.3 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 24, delay: dayNum * 0.04 }}
                     data-testid={`day-card-${dayNum}`}
                   >
                     <div className="flex items-center gap-3 mb-2.5">

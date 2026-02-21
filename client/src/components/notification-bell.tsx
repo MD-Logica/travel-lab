@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Bell, Check, Plane, AlertTriangle, MapPin, ArrowRight, CheckCircle, ListChecks } from "lucide-react";
@@ -94,8 +95,16 @@ export function NotificationBell() {
         )}
       </Button>
 
+      <AnimatePresence>
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-popover border rounded-md shadow-lg z-50 max-h-[420px] flex flex-col" data-testid="panel-notifications">
+        <motion.div
+          initial={{ opacity: 0, y: -8, scale: 0.96 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: -8, scale: 0.96 }}
+          transition={{ type: "spring", stiffness: 400, damping: 28 }}
+          className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-popover border rounded-md shadow-lg z-50 max-h-[420px] flex flex-col"
+          data-testid="panel-notifications"
+        >
           <div className="flex items-center justify-between gap-2 px-4 py-3 border-b">
             <span className="text-sm font-medium">Notifications</span>
             {unreadCount > 0 && (
@@ -182,8 +191,9 @@ export function NotificationBell() {
               })
             )}
           </div>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }
