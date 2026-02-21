@@ -1,0 +1,305 @@
+Completely overhaul how options/variants are presented in both the advisor preview and the public client share link. There are four distinct problems to fix, all in `client/src/pages/trip-view.tsx` only.
+
+---
+
+## Problem 1 — Primary segment is not presented as an option
+
+When variants exist, the current UI shows a "Choose an option" header followed only by the variant cards — the primary/base segment (e.g. the main flight or hotel already on the itinerary) is never shown as a selectable option. The client has no idea the primary is also a valid choice.
+
+**Fix**: In `VariantCards`, prepend a "primary" card before the variant list using the parent `segment`'s own data. The full `segment` object is already passed as a prop.
+
+Redesign `VariantCards` like this:
+
+```tsx
+function VariantCards({ segment, variants, selectedVariantId, onSelect }) {
+  // "primary" is represented by empty string selection (no variant chosen = keep primary)
+  const isPrimarySelected = !selectedVariantId || selectedVariantId === "";
+
+  const segMeta = (segment.metadata || {}) as Record<string, any>;
+  const primaryQty = segMeta.quantity || 1;
+  const primaryPpu = segMeta.pricePerUnit;
+  const primaryCost = segment.cost || 0;
+  const primaryLabel = buildPrimaryLabel(segment); // see below
+
+  return (
+    <div className="mt-3 space-y-2" data-testid={`variant-list-${segment.id}`}>
+      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        Choose an option
+      </p>
+
+      {/* PRIMARY CARD — always shown first */}
+      <button
+        type="button"
+        onClick={() => onSelect(segment.id, "")}
+        className={`w-full text-left rounded-md border p-3 transition-all relative ${
+          isPrimarySelected
+            ? "bg-primary/5 ring-1 ring-primary border-primary/30"
+            : "bg-card border-border/60 hover:border-primary/40"
+        }`}
+        data-testid={`variant-card-primary-${segment.id}`}
+      >
+        {isPrimarySelected && (
+          <div className="absolute top-2 right-2">
+            <CheckCircle className="w-4 h-4 text-primary" />
+          </div>
+        )}
+        <p className="text-sm font-medium pr-6">{primaryLabel}</p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+          {primaryCost > 0 && (
+            <span className="text-xs font-medium">
+              {formatViewCurrency(primaryCost, segment.currency || "USD")}
+            </span>
+          )}
+          {primaryPpu != null && primaryPpu > 0 && primaryQty > 1 && (
+            <span className="text-[11px] text-muted-foreground">
+              {formatViewCurrency(primaryPpu, segment.currency || "USD")} × {primaryQty} {segment.type === "flight" ? "passengers" : "rooms"}
+            </span>
+          )}
+          {/* Refundability from segment metadata */}
+          {segMeta.refundability === "non_refundable" && (
+            <span className="text-[11px] text-red-600 dark:text-red-400">Non-refundable</span>
+          )}
+          {segMeta.refundability === "fully_refundable" && (
+            <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Refundable</span>
+          )}
+        </div>
+      </button>
+
+      {/* VARIANT CARDS */}
+      {variants.map((v: any) => {
+        const isSelected = selectedVariantId === v.id;
+        const vQty = v.quantity || 1;
+        const vPpu = v.pricePerUnit;
+        return (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => onSelect(segment.id, v.id)}
+            className={`w-full text-left rounded-md border p-3 transition-all relative ${
+              isSelected
+                ? "bg-primary/5 ring-1 ring-primary border-primary/30"
+                : "bg-card border-border/60 hover:border-primary/40"
+            }`}
+            data-testid={`variant-card-${v.id}`}
+          >
+            {isSelected && (
+              <div className="absolute top-2 right-2">
+                <CheckCircle className="w-4 h-4 text-primary" />
+              </div>
+            )}
+            <p className="text-sm font-medium pr-6">{v.label}</p>
+            {v.description && (
+              <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+              {v.cost != null && v.cost > 0 && (
+                <span className="text-xs font-medium">
+                  {formatViewCurrency(v.cost, v.currency || "USD")}
+                </span>
+              )}
+              {vPpu != null && vPpu > 0 && vQty > 1 && (
+                <span className="text-[11px] text-muted-foreground">
+                  {formatViewCurrency(vPpu, v.currency || "USD")} × {vQty} {segment.type === "flight" ? "passengers" : "rooms"}
+                </span>
+              )}
+              {v.refundability === "non_refundable" && (
+                <span className="text-[11px] text-red-600 dark:text-red-400">Non-refundable</span>
+              )}
+              {v.refundability === "fully_refundable" && (
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                  Refundable{v.refundDeadline ? ` until ${format(new Date(v.refundDeadline), "d MMM yyyy")}` : ""}
+                </span>
+              )}
+              {v.refundability === "partially_refundable" && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Partial refund{v.refundDeadline ? ` until ${format(new Date(v.refundDeadline), "d MMM yyyy")}` : ""}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+```
+
+**`buildPrimaryLabel` helper** — add this small function near `VariantCards`:
+```tsx
+function buildPrimaryLabel(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  if (segment.type === "flight") {
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const flight = meta.flightNumber || "";
+    if (dep && arr && flight) return `${flight}: ${dep} → ${arr}`;
+    if (dep && arr) return `${dep} → ${arr}`;
+    return segment.title || "Primary flight";
+  }
+  if (segment.type === "hotel") {
+    return meta.hotelName || meta.roomType || segment.title || "Primary room";
+  }
+  return segment.title || "Primary option";
+}
+```
+
+---
+
+## Problem 2 — Passengers and rooms not shown on primary segment cards in the itinerary
+
+`FlightCard` and `HotelCard` never display quantity (passengers/rooms) or price per unit. Add them.
+
+**In `FlightCard`** (around line 103), add after the airline/flight number row:
+```tsx
+{(segMeta.quantity || 1) > 1 && (
+  <span className="text-xs text-muted-foreground flex items-center gap-1">
+    <Users className="w-3 h-3" />
+    {segMeta.quantity} passengers
+  </span>
+)}
+```
+Add this inside the `flex flex-wrap items-center gap-x-4` metadata row at the bottom of FlightCard.
+
+If `pricePerUnit` is set and quantity > 1, also show:
+```tsx
+{segMeta.pricePerUnit > 0 && (segMeta.quantity || 1) > 1 && (
+  <span className="text-xs text-muted-foreground">
+    {formatViewCurrency(segMeta.pricePerUnit, segment.currency || "USD")} / passenger
+  </span>
+)}
+```
+
+**In `HotelCard`** (around line 204), add to the metadata row:
+```tsx
+{(segMeta.quantity || 1) > 1 && (
+  <span className="text-xs text-muted-foreground flex items-center gap-1">
+    <BedDouble className="w-3 h-3" />
+    {segMeta.quantity} rooms
+  </span>
+)}
+{segMeta.pricePerUnit > 0 && (segMeta.quantity || 1) > 1 && (
+  <span className="text-xs text-muted-foreground">
+    {formatViewCurrency(segMeta.pricePerUnit, segment.currency || "USD")} / room / night
+  </span>
+)}
+```
+
+Import `BedDouble` from lucide-react if not already imported.
+
+---
+
+## Problem 3 — Variants not shown for authenticated advisors (token gate)
+
+In `DayAccordion` (around line 912), variants are gated with:
+```tsx
+const variants = token && seg.hasVariants && variantMap?.[seg.id];
+```
+
+This means advisors viewing their own trip preview (no token) never see variants. Remove the `token &&` check:
+```tsx
+const variants = seg.hasVariants && variantMap?.[seg.id];
+```
+
+Same fix for `JourneyViewCard` (around line 579):
+```tsx
+const variants = primaryLeg.hasVariants && variantMap?.[primaryLeg.id];
+```
+
+Also update the `useEffect` that fetches variants (around line 975). Currently it bails early if `!token`. Change it to also run for authenticated advisors:
+
+```tsx
+useEffect(() => {
+  if (!data) return;
+  const allSegments = data.versions.flatMap(v => v.segments);
+  const variantSegments = allSegments.filter(s => s.hasVariants);
+  if (variantSegments.length === 0) return;
+
+  const fetchVariants = async () => {
+    const newMap: Record<string, any[]> = {};
+    const newSelections: Record<string, string> = {};
+    await Promise.all(
+      variantSegments.map(async (seg) => {
+        try {
+          // Use token if present (public), otherwise rely on session auth (advisor)
+          const url = token
+            ? `/api/segments/${seg.id}/variants?token=${token}`
+            : `/api/segments/${seg.id}/variants`;
+          const res = await fetch(url, { credentials: "include" });
+          if (res.ok) {
+            const variants = await res.json();
+            newMap[seg.id] = variants;
+            const selected = variants.find((v: any) => v.isSelected);
+            if (selected) newSelections[seg.id] = selected.id;
+          }
+        } catch {}
+      })
+    );
+    setVariantMap(newMap);
+    setLocalSelections(prev => ({ ...prev, ...newSelections }));
+  };
+  fetchVariants();
+}, [data, token]);
+```
+
+---
+
+## Problem 4 — "No preference" selection handling
+
+When the client selects the primary card (empty string variantId), `selectVariant` currently calls `POST /api/segments/:segmentId/variants//select` which would 404. The primary selection means "no variant chosen" — it should clear any existing selection.
+
+Update `selectVariant` to handle the empty string case:
+```tsx
+const selectVariant = useCallback(async (segmentId: string, variantId: string) => {
+  setLocalSelections(prev => {
+    if (!variantId) {
+      const next = { ...prev };
+      delete next[segmentId];
+      return next;
+    }
+    return { ...prev, [segmentId]: variantId };
+  });
+
+  if (variantId) {
+    try {
+      await fetch(`/api/segments/${segmentId}/variants/${variantId}/select?token=${token}`, {
+        method: "POST",
+      });
+    } catch {}
+  } else {
+    // Clear selection on server — call a deselect endpoint or POST with empty
+    try {
+      await fetch(`/api/segments/${segmentId}/variants/deselect?token=${token}`, {
+        method: "POST",
+      });
+    } catch {}
+  }
+}, [token]);
+```
+
+Add a deselect route to `server/routes.ts`:
+```typescript
+app.post("/api/segments/:segmentId/variants/deselect", async (req: any, res) => {
+  try {
+    const { segmentId } = req.params;
+    const token = req.query.token as string | undefined;
+    // Verify access (same pattern as the select route)
+    // Then clear all isSelected flags for this segment
+    const { db } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    await db.update(segmentVariants)
+      .set({ isSelected: false })
+      .where(eq(segmentVariants.segmentId, segmentId));
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ message: "Failed to deselect" });
+  }
+});
+```
+
+Also update the submission count logic. Currently:
+```tsx
+const selectedCount = variantSegments.filter(s => localSelections[s.id]).length;
+```
+The primary card selection (empty string) won't be counted. Change the submit bar visibility logic to count segments where the client has made a deliberate choice — either a variant OR explicitly selecting the primary. Track primary selections with a separate `primarySelections` set, or simplify by counting total variant segments as "all selected" when the submit button is shown, since selecting the primary is the default state.
+
+Actually the simplest approach: show the submit bar whenever `variantSegments.length > 0` (there are options to choose from), not gated on `selectedCount > 0`. The count display can read: `"Options reviewed: X of Y"` where X is the number of segments where the user has explicitly clicked something (including primary).

@@ -257,6 +257,12 @@ function HotelCard({ segment, timeFormat = "24h" }: { segment: TripSegment; time
             {(segment.confirmationNumber || meta.confirmationNumber) && (
               <span className="font-mono tracking-wider">{segment.confirmationNumber || meta.confirmationNumber}</span>
             )}
+            {(meta.quantity || 1) > 1 && (
+              <span className="flex items-center gap-1"><Hotel className="w-3 h-3" />{meta.quantity} rooms</span>
+            )}
+            {meta.pricePerUnit > 0 && (meta.quantity || 1) > 1 && (
+              <span>{formatViewCurrency(meta.pricePerUnit, segment.currency || "USD")} / room / night</span>
+            )}
           </div>
           {(() => {
             const refs: string[] = meta.photos || meta.photoRefs || [];
@@ -744,7 +750,7 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, lo
       </div>
       {(() => {
         const primaryLeg = legs[0];
-        const variants = primaryLeg.hasVariants && variantMap?.[primaryLeg.id];
+        const variants = primaryLeg.hasVariants ? variantMap?.[primaryLeg.id] : undefined;
         if (variants && variants.length > 0 && onSelectVariant) {
           return (
             <div className="mt-2">
@@ -958,6 +964,22 @@ function SegmentView({ segment, showPricing, timeFormat = "24h" }: { segment: Tr
   );
 }
 
+function buildPrimaryLabel(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  if (segment.type === "flight" || segment.type === "charter_flight") {
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const flight = meta.flightNumber || "";
+    if (dep && arr && flight) return `${flight}: ${dep} → ${arr}`;
+    if (dep && arr) return `${dep} → ${arr}`;
+    return segment.title || "Primary flight";
+  }
+  if (segment.type === "hotel") {
+    return meta.hotelName || meta.roomType || segment.title || "Primary room";
+  }
+  return segment.title || "Primary option";
+}
+
 function VariantCards({
   segment,
   variants,
@@ -971,29 +993,65 @@ function VariantCards({
   onSelect: (segmentId: string, variantId: string) => void;
   locked?: boolean;
 }) {
-  const noSelection = !selectedVariantId;
+  const isPrimarySelected = !selectedVariantId || selectedVariantId === "" || selectedVariantId === "primary";
+  const segMeta = (segment.metadata || {}) as Record<string, any>;
+  const primaryQty = segMeta.quantity || 1;
+  const primaryPpu = segMeta.pricePerUnit;
+  const primaryCost = segment.cost || 0;
+  const primaryLabel = buildPrimaryLabel(segment);
+
   return (
-    <div className="ml-4 pl-4 border-l-2 border-primary/20 space-y-2" data-testid={`variant-list-${segment.id}`}>
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+    <div className="mt-3 space-y-2" data-testid={`variant-list-${segment.id}`}>
+      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         {locked ? "Selected option" : "Choose an option"}
       </p>
-      {!locked && (
+
+      {(!locked || isPrimarySelected) && (
         <button
           type="button"
-          onClick={() => onSelect(segment.id, "")}
+          onClick={locked ? undefined : () => onSelect(segment.id, "")}
           className={`w-full text-left rounded-md border p-3 transition-all relative ${
-            noSelection
+            isPrimarySelected
               ? "bg-primary/5 ring-1 ring-primary border-primary/30"
               : "bg-card border-border/60 hover:border-primary/40"
-          }`}
-          data-testid={`variant-card-no-preference-${segment.id}`}
+          } ${locked ? "cursor-default" : ""}`}
+          data-testid={`variant-card-primary-${segment.id}`}
         >
-          <p className="text-sm text-muted-foreground italic">No preference</p>
+          {isPrimarySelected && (
+            <div className="absolute top-2 right-2">
+              {locked ? <Lock className="w-4 h-4 text-muted-foreground" /> : <CheckCircle className="w-4 h-4 text-primary" />}
+            </div>
+          )}
+          <p className="text-sm font-medium pr-6">{primaryLabel}</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+            {primaryCost > 0 && (
+              <span className="text-xs font-medium">
+                {formatViewCurrency(primaryCost, segment.currency || "USD")}
+              </span>
+            )}
+            {primaryPpu != null && primaryPpu > 0 && primaryQty > 1 && (
+              <span className="text-[11px] text-muted-foreground">
+                {formatViewCurrency(primaryPpu, segment.currency || "USD")} × {primaryQty} {segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}
+              </span>
+            )}
+            {segMeta.refundability === "non_refundable" && (
+              <span className="text-[11px] text-red-600 dark:text-red-400">Non-refundable</span>
+            )}
+            {segMeta.refundability === "fully_refundable" && (
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Refundable</span>
+            )}
+            {segMeta.refundability === "partially_refundable" && (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400">Partial refund</span>
+            )}
+          </div>
         </button>
       )}
+
       {variants.map((v: any) => {
         const isSelected = selectedVariantId === v.id;
         if (locked && !isSelected) return null;
+        const vQty = v.quantity || 1;
+        const vPpu = v.pricePerUnit;
         return (
           <button
             key={v.id}
@@ -1015,10 +1073,15 @@ function VariantCards({
             {v.description && (
               <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
             )}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
               {v.cost != null && v.cost > 0 && (
                 <span className="text-xs font-medium">
                   {formatViewCurrency(v.cost, v.currency || "USD")}
+                </span>
+              )}
+              {vPpu != null && vPpu > 0 && vQty > 1 && (
+                <span className="text-[11px] text-muted-foreground">
+                  {formatViewCurrency(vPpu, v.currency || "USD")} × {vQty} {segment.type === "flight" || segment.type === "charter_flight" ? "passengers" : "rooms"}
                 </span>
               )}
               {v.refundability === "non_refundable" && (
@@ -1103,7 +1166,7 @@ function DayAccordion({
                   return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
                 }
                 const seg = item.segment;
-                const variants = seg.hasVariants && variantMap?.[seg.id];
+                const variants = seg.hasVariants ? variantMap?.[seg.id] : undefined;
                 return (
                   <div key={seg.id}>
                     <SegmentView segment={seg} showPricing={showPricing} timeFormat={timeFormat} />
@@ -1199,7 +1262,7 @@ export default function TripViewPage() {
       if (variantId) {
         next[segmentId] = variantId;
       } else {
-        delete next[segmentId];
+        next[segmentId] = "primary";
       }
       return next;
     });
@@ -1557,14 +1620,13 @@ export default function TripViewPage() {
       </div>
 
       {(() => {
-        if (!token || !activeVersion) return null;
+        if (!activeVersion) return null;
         const allSegments = activeVersion.segments || [];
         const variantSegments = allSegments.filter(s => s.hasVariants);
         const totalVariantSegments = variantSegments.length;
         if (totalVariantSegments === 0) return null;
         const selectedCount = variantSegments.filter(s => localSelections[s.id]).length;
         const allLocked = variantSegments.every(s => lockedSegments.has(s.id));
-        if (selectedCount === 0 && !trip.selectionsSubmittedAt && !submitSuccess) return null;
 
         return (
           <>
@@ -1587,10 +1649,19 @@ export default function TripViewPage() {
                       </span>
                     )}
                   </div>
+                ) : !token ? (
+                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
+                    <span className="text-sm font-medium">
+                      {totalVariantSegments} option{totalVariantSegments !== 1 ? "s" : ""} available
+                    </span>
+                    {selectedCount > 0 && (
+                      <span className="text-xs opacity-70">{selectedCount} selected by client</span>
+                    )}
+                  </div>
                 ) : (
                   <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
                     <span className="text-sm font-medium">
-                      {selectedCount} of {totalVariantSegments} selected
+                      Options reviewed: {selectedCount} of {totalVariantSegments}
                     </span>
                     {trip.selectionsSubmittedAt ? (
                       <span className="text-xs opacity-70">
@@ -1630,6 +1701,8 @@ export default function TripViewPage() {
                       const selectedId = localSelections[seg.id];
                       const variants = variantMap[seg.id] || [];
                       const selectedVariant = variants.find((v: any) => v.id === selectedId);
+                      const isPrimary = selectedId === "primary";
+                      const hasSelection = !!selectedId;
                       return (
                         <div key={seg.id} className="flex items-center justify-between py-2 border-b border-border/30 last:border-b-0" data-testid={`sheet-segment-${seg.id}`}>
                           <div>
@@ -1639,11 +1712,16 @@ export default function TripViewPage() {
                                 {selectedVariant.label}
                                 {selectedVariant.cost > 0 && ` · ${formatViewCurrency(selectedVariant.cost, selectedVariant.currency || "USD")}`}
                               </p>
+                            ) : isPrimary ? (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {buildPrimaryLabel(seg)}
+                                {seg.cost != null && seg.cost > 0 && ` · ${formatViewCurrency(seg.cost, seg.currency || "USD")}`}
+                              </p>
                             ) : (
                               <p className="text-xs text-muted-foreground/60 mt-0.5 italic">Not yet selected</p>
                             )}
                           </div>
-                          {selectedVariant && <CheckCircle className="w-4 h-4 text-primary shrink-0" />}
+                          {hasSelection && <CheckCircle className="w-4 h-4 text-primary shrink-0" />}
                         </div>
                       );
                     })}
