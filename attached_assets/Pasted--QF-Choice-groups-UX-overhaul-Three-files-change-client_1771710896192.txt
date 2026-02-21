@@ -1,0 +1,563 @@
+# QF — Choice groups: UX overhaul
+
+Three files change: `client/src/components/segment-editor.tsx`, `client/src/pages/trip-edit.tsx`, `client/src/pages/trip-view.tsx`.
+
+This prompt addresses two problems:
+1. The alternative-creation flow is broken — it opens the same editor used for upgrades, losing flight search and hotel lookup, and relies on a fragile useEffect to auto-link the new segment
+2. The visual treatment of choice groups is functional but not polished enough for luxury travel presentation
+
+---
+
+## Problem 1 fix: `segment-editor.tsx` — add `onCreated` callback + remove "Different Hotel/Flight" toggle
+
+### 1A: Add `onCreated` to `SegmentEditorProps`
+
+Find:
+```typescript
+interface SegmentEditorProps {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  tripId: string;
+  versionId: string;
+  existingSegment: TripSegment | null;
+  defaultDay: number;
+  templateData?: TemplateData | null;
+  defaultType?: string | null;
+}
+```
+
+Add `onCreated` at the end:
+```typescript
+  onCreated?: (segment: TripSegment) => void;
+```
+
+Destructure it in the function signature:
+```typescript
+export function SegmentEditor({
+  ...
+  onCreated,
+}: SegmentEditorProps) {
+```
+
+In `saveMutation.onSuccess`, after `toast({ title: isEdit ? "Segment updated" : "Segment added" })` and before `resetForm()`, call `onCreated` if it exists and it's a new segment (not an edit):
+
+```typescript
+if (!isEdit && onCreated) {
+  onCreated(savedSegment);
+}
+```
+
+### 1B: Remove the "Different Hotel/Flight" toggle from the variants section
+
+The variants section has a two-button toggle per variant: "Upgrade / Same Hotel/Flight" and "Different Hotel/Flight." The "Different" option is now handled by choice groups, not variants. Remove it.
+
+Find the variants section (around `SectionHeading>Options / Variants`). For each variant card, remove the two `<button>` toggles and the explanatory `<p>` below them:
+
+Remove:
+```tsx
+<div className="flex gap-2 mb-2">
+  <button type="button" onClick={() => updateVariant(i, { variantType: "upgrade" })} ...>
+    Upgrade / Same {type === "hotel" ? "Hotel" : "Flight"}
+  </button>
+  <button type="button" onClick={() => updateVariant(i, { variantType: "alternative" })} ...>
+    Different {type === "hotel" ? "Hotel" : "Flight"}
+  </button>
+</div>
+<p className="text-[10px] text-muted-foreground -mt-1 mb-1">
+  {(v.variantType || "upgrade") === "upgrade" ? ... : ...}
+</p>
+```
+
+The variant is now always an upgrade (same property, different tier). Update the placeholder text on the label input to reflect this — for hotels: `"e.g. Grand Suite"`, for flights: `"e.g. Premium Economy"`. Remove the conditional placeholder logic that checked `v.variantType`.
+
+Also update the section heading from `"Options / Variants"` to `"Upgrade Options"` and the "Add option" button to `"Add upgrade option"`.
+
+This keeps the section focused and clear: variants = tier upgrades on the same property or route, nothing else.
+
+---
+
+## Problem 2 fix: `trip-edit.tsx` — reliable alternative creation + visual redesign
+
+### 2A: Fix the alternative creation flow
+
+Remove the fragile `useEffect` that was added in QC to detect "newest segment." Replace it with the clean `onCreated` callback.
+
+**Remove** the `addAlternativeDialog` state and the entire `useEffect` block that watches `segmentDialogOpen` to auto-link. Also remove `setAddAlternativeDialog` references.
+
+**Add** a new piece of state to track a pending link operation:
+
+```typescript
+const [pendingAlternativeLink, setPendingAlternativeLink] = useState<{
+  existingSegmentId: string;
+  existingSegmentType: string;
+} | null>(null);
+```
+
+**Update the `onAddAlternative` handler** in the day render loop. When clicked, it now:
+1. Sets `pendingAlternativeLink` with the existing segment's ID and type
+2. Opens the full segment editor for a new segment of the same type and day
+
+```typescript
+onAddAlternative={
+  (["hotel", "flight", "charter", "charter_flight"].includes(item.segment.type) && !item.segment.choiceGroupId && !item.segment.journeyId && !item.segment.propertyGroupId)
+    ? () => {
+        setPendingAlternativeLink({
+          existingSegmentId: item.segment.id,
+          existingSegmentType: item.segment.type,
+        });
+        openAddSegment(item.segment.dayNumber, item.segment.type);
+      }
+    : undefined
+}
+```
+
+**Add `onCreated` to the `SegmentEditor` instantiation:**
+
+```tsx
+<SegmentEditor
+  ...
+  onCreated={async (newSegment) => {
+    if (pendingAlternativeLink) {
+      const groupId = crypto.randomUUID();
+      try {
+        await apiRequest("PATCH", `/api/trips/${id}/segments/${pendingAlternativeLink.existingSegmentId}`, { choiceGroupId: groupId });
+        await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegment.id}`, { choiceGroupId: groupId });
+        queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+        toast({ title: "Alternative added", description: "Client will choose one option." });
+      } catch {
+        toast({ title: "Alternative created but linking failed", variant: "destructive" });
+      }
+      setPendingAlternativeLink(null);
+    }
+  }}
+/>
+```
+
+This fires immediately on save, with the real segment ID in hand, before the editor closes. No detection heuristics, no timing dependency.
+
+### 2B: Visual redesign of `ChoiceGroupCard`
+
+The current implementation wraps both cards in an amber dashed border — functional, but feels like a debug state rather than a deliberate luxury design feature. The new design uses a structured comparison layout that communicates "these are two curated options, you must choose one" with clarity and elegance.
+
+**Replace the entire `ChoiceGroupCard` component** with the following:
+
+```tsx
+function ChoiceGroupCard({
+  options,
+  tripId,
+  onEdit,
+  showPricing,
+  trackingBySegment,
+  onUnlink,
+  onSelectChoice,
+}: {
+  options: TripSegment[];
+  tripId: string;
+  onEdit: (s: TripSegment) => void;
+  showPricing?: boolean;
+  trackingBySegment: Map<string, FlightTracking>;
+  onUnlink: (choiceGroupId: string) => void;
+  onSelectChoice: (segmentId: string, choiceGroupId: string) => void;
+}) {
+  const selectedOption = options.find(o => o.isChoiceSelected);
+  const choiceGroupId = options[0]?.choiceGroupId || "";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 28 }}
+    >
+      {/* Header bar — sits above the cards */}
+      <div className="flex items-center justify-between mb-1.5 px-1">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-400 dark:bg-amber-500" />
+            <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600/80 dark:text-amber-400/80">
+              Client chooses one
+            </span>
+          </div>
+          {selectedOption && (
+            <Badge
+              variant="outline"
+              className="text-[9px] border-emerald-300/60 text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20"
+            >
+              ✓ Choice recorded
+            </Badge>
+          )}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground/50 hover:text-muted-foreground"
+              data-testid={`button-choice-group-menu-${choiceGroupId}`}
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem
+              onClick={() => onUnlink(choiceGroupId)}
+              className="text-muted-foreground text-xs"
+            >
+              <GitFork className="w-3.5 h-3.5 mr-2 rotate-180" />
+              Separate into individual segments
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* Card stack with connecting OR spine */}
+      <div className="relative">
+        {/* Vertical connecting line between cards */}
+        <div className="absolute left-0 right-0 top-0 bottom-0 pointer-events-none">
+          <div className="absolute left-3 top-[calc(50%-12px)] w-0.5 h-6 bg-amber-200/70 dark:bg-amber-800/50" />
+        </div>
+
+        {options.map((option, idx) => {
+          const isSelected = !!selectedOption && option.isChoiceSelected;
+          const isDimmed = !!selectedOption && !option.isChoiceSelected;
+
+          return (
+            <div key={option.id}>
+              {idx > 0 && (
+                /* OR pill — floats between the two cards */
+                <div className="relative flex items-center justify-center my-1 z-10">
+                  <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30 mx-8" />
+                  <div className="absolute inline-flex items-center justify-center px-3 py-0.5 rounded-full border border-amber-200/70 dark:border-amber-700/40 bg-background text-[9px] font-bold tracking-widest uppercase text-amber-500/70 dark:text-amber-500/50 shadow-sm">
+                    or
+                  </div>
+                </div>
+              )}
+
+              <motion.div
+                animate={{ opacity: isDimmed ? 0.45 : 1, scale: isDimmed ? 0.995 : 1 }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+              >
+                {/* Left accent bar — green when selected, amber when neutral */}
+                <div className={`relative flex rounded-lg overflow-hidden border transition-all duration-300 ${
+                  isSelected
+                    ? "border-emerald-200/60 dark:border-emerald-800/40 shadow-sm shadow-emerald-500/5"
+                    : isDimmed
+                    ? "border-border/30"
+                    : "border-amber-200/40 dark:border-amber-800/30"
+                }`}>
+                  <div className={`w-0.5 shrink-0 transition-colors duration-300 ${
+                    isSelected ? "bg-emerald-400" : "bg-amber-300/60 dark:bg-amber-700/40"
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <SegmentCard
+                      segment={option}
+                      tripId={tripId}
+                      onEdit={onEdit}
+                      tracking={option.type === "flight" ? trackingBySegment.get(option.id) : null}
+                      showPricing={showPricing}
+                    />
+                  </div>
+                  {/* Selection affordance — right side */}
+                  <div className="shrink-0 flex items-center pr-2 pl-1">
+                    {isSelected ? (
+                      <button
+                        onClick={() => onSelectChoice("", choiceGroupId)}
+                        className="flex flex-col items-center gap-0.5 group"
+                        title="Clear selection"
+                        data-testid={`button-choice-selected-${option.id}`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <span className="text-[8px] text-emerald-600/60 opacity-0 group-hover:opacity-100 transition-opacity">clear</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onSelectChoice(option.id, choiceGroupId)}
+                        className="w-5 h-5 rounded-full border border-border/60 hover:border-emerald-300 dark:hover:border-emerald-700 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30 flex items-center justify-center transition-all duration-200 group"
+                        title="Record as selected option"
+                        data-testid={`button-select-choice-${option.id}`}
+                      >
+                        <Check className="w-3 h-3 text-muted-foreground/30 group-hover:text-emerald-500 transition-colors" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })}
+      </div>
+    </motion.div>
+  );
+}
+```
+
+---
+
+## Problem 3 fix: `trip-view.tsx` — visual redesign of `ChoiceGroupViewCard`
+
+The client-facing view needs to feel like a luxury concierge presenting two curated options, not a form with radio buttons. The design principles:
+
+- Both options are presented with full dignity — no visual hierarchy suggesting one is "better"
+- The action to choose is prominent but not garish — a clean button that feels decisive
+- Once chosen, the other option gracefully recedes rather than disappearing, preserving the sense of comparison
+- Pre-choice state has a gentle amber warmth suggesting "awaiting your preference"
+- Post-choice state celebrates the selection with emerald confidence
+
+**Replace the entire `ChoiceGroupViewCard` component** with:
+
+```tsx
+function ChoiceGroupViewCard({
+  options,
+  showPricing,
+  timeFormat = "24h",
+  localChoices,
+  onSelectChoice,
+  lockedChoices,
+  token,
+  isApproved,
+}: {
+  options: TripSegment[];
+  showPricing?: boolean;
+  timeFormat?: "12h" | "24h";
+  localChoices?: Record<string, string>;
+  onSelectChoice?: (choiceGroupId: string, segmentId: string) => void;
+  lockedChoices?: Set<string>;
+  token?: string | null;
+  isApproved?: boolean;
+}) {
+  const choiceGroupId = options[0]?.choiceGroupId || "";
+  const locallyChosenId = localChoices?.[choiceGroupId];
+  const serverChosenId = options.find(o => o.isChoiceSelected)?.id;
+  const chosenId = locallyChosenId || serverChosenId;
+  const isLocked = lockedChoices?.has(choiceGroupId);
+  const hasChosen = !!chosenId;
+  const showChoiceUI = !!token && !isApproved;
+
+  return (
+    <div data-testid={`view-choice-group-${choiceGroupId}`}>
+
+      {/* Context label — only shown pre-choice or when not locked */}
+      {showChoiceUI && (
+        <div className="flex items-center gap-2 mb-2 px-0.5">
+          <div className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${hasChosen ? "bg-emerald-400" : "bg-amber-400"}`} />
+            <span className={`text-[10px] font-semibold tracking-widest uppercase transition-colors duration-500 ${
+              hasChosen
+                ? "text-emerald-600/70 dark:text-emerald-400/70"
+                : "text-amber-600/70 dark:text-amber-400/70"
+            }`}>
+              {hasChosen ? (isLocked ? "Your selection" : "Option selected — review below") : "Your advisor is offering two options"}
+            </span>
+          </div>
+          {hasChosen && !isLocked && (
+            <button
+              onClick={() => onSelectChoice?.(choiceGroupId, "")}
+              className="text-[9px] text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 ml-auto transition-colors"
+            >
+              change
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Advisor view label (no token) */}
+      {!token && hasChosen && (
+        <div className="flex items-center gap-1.5 mb-2 px-0.5">
+          <Check className="w-3 h-3 text-emerald-500" />
+          <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 font-medium">
+            Client has indicated a preference
+          </span>
+        </div>
+      )}
+
+      {/* Options */}
+      <div className="space-y-0">
+        {options.map((option, idx) => {
+          const isChosen = chosenId === option.id;
+          const isOtherChosen = hasChosen && !isChosen;
+
+          return (
+            <div key={option.id}>
+              {idx > 0 && (
+                <div className="relative flex items-center justify-center my-2">
+                  <div className="flex-1 border-t border-border/30 mx-12" />
+                  <div className={`absolute inline-flex items-center justify-center w-7 h-7 rounded-full border text-[9px] font-bold tracking-wider transition-all duration-300 ${
+                    hasChosen
+                      ? "border-border/20 text-muted-foreground/20 bg-background"
+                      : "border-amber-200/60 dark:border-amber-800/30 text-amber-500/60 bg-background shadow-sm"
+                  }`}>
+                    or
+                  </div>
+                </div>
+              )}
+
+              <motion.div
+                animate={{
+                  opacity: isOtherChosen ? 0.35 : 1,
+                  scale: isOtherChosen ? 0.99 : 1,
+                }}
+                transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+              >
+                {/* Option card wrapper */}
+                <div className={`relative rounded-xl border overflow-hidden transition-all duration-400 ${
+                  isChosen
+                    ? "border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20"
+                    : isOtherChosen
+                    ? "border-border/20"
+                    : "border-border/50 hover:border-border/80"
+                }`}>
+
+                  {/* Top accent line */}
+                  <div className={`h-0.5 w-full transition-colors duration-300 ${
+                    isChosen ? "bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" : "bg-transparent"
+                  }`} />
+
+                  {/* Segment content */}
+                  <div className="p-0">
+                    <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
+                  </div>
+
+                  {/* Choice action footer */}
+                  {showChoiceUI && (
+                    <div className={`px-4 py-2.5 border-t transition-colors duration-300 ${
+                      isChosen
+                        ? "border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/40 dark:bg-emerald-950/10"
+                        : "border-border/30 bg-muted/10"
+                    }`}>
+                      {isChosen ? (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+                              <Check className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                            </div>
+                            <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                              {isLocked ? "Your selection — submitted to advisor" : "Selected"}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => onSelectChoice?.(choiceGroupId, option.id)}
+                          disabled={isLocked}
+                          className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg border border-border/50 hover:border-primary/40 bg-background hover:bg-accent/50 text-xs font-medium text-muted-foreground hover:text-foreground transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed active:scale-[0.99]"
+                          data-testid={`button-choose-option-${option.id}`}
+                        >
+                          Select this option
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Advisor view: show client's choice without buttons */}
+                  {!token && isChosen && (
+                    <div className="px-4 py-2 border-t border-emerald-100/40 dark:border-emerald-900/20 bg-emerald-50/30 dark:bg-emerald-950/10">
+                      <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 font-medium flex items-center gap-1.5">
+                        <Check className="w-3 h-3" />
+                        Client's preferred option
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Post-selection nudge — only before submission */}
+      {showChoiceUI && hasChosen && !isLocked && (
+        <motion.p
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-[10px] text-center text-muted-foreground/50 mt-2.5 tracking-wide"
+        >
+          Your selection will be confirmed when you submit your preferences
+        </motion.p>
+      )}
+    </div>
+  );
+}
+```
+
+Note: `motion.div` is available if framer-motion is already imported in `trip-view.tsx`. If it is not, import it at the top: `import { motion } from "framer-motion"`. Check first — if already imported, do not add duplicate import.
+
+---
+
+## Summary of what changes and why
+
+| File | Change | Why |
+|------|--------|-----|
+| `segment-editor.tsx` | Add `onCreated` callback | Enables reliable same-tick linking of new segment to its alternative group |
+| `segment-editor.tsx` | Remove "Different Hotel/Flight" toggle | Alternatives are now choice groups, not variants; toggle was confusing |
+| `segment-editor.tsx` | Rename section to "Upgrade Options" | Accurate labeling after removing alternative variant type |
+| `trip-edit.tsx` | Replace useEffect link detection with `onCreated` | Fixes the timing-dependent fragile link logic |
+| `trip-edit.tsx` | `ChoiceGroupCard` visual redesign | Polished, intent-clear treatment with left accent bar, circular selection affordance, smooth fade for unchosen option |
+| `trip-view.tsx` | `ChoiceGroupViewCard` visual redesign | Luxury presentation: full-card option frames, top accent gradient on selection, clean footer action, graceful opacity transition on non-chosen option |
+
+---
+
+## What the advisor sees (trip-edit)
+
+```
+· client chooses one                              [⋯]
+
+┌╴ [option card: The Beverly Hills Hotel]      ○ ┐
+└──────────────────────────────────────────────  ┘
+
+            ·· or ··
+
+┌╴ [option card: The Peninsula Beverly Hills]  ○ ┐
+└──────────────────────────────────────────────  ┘
+```
+
+After advisor clicks the circle on Peninsula:
+```
+· client chooses one              ✓ Choice recorded
+
+┌╴ [The Beverly Hills Hotel]              (faded) ┐
+└──────────────────────────────────────────────   ┘
+
+┌╴ [The Peninsula Beverly Hills]   [✓ green ring] ┐  ← emerald border + top gradient
+└──────────────────────────────────────────────   ┘
+```
+
+## What the client sees (trip-view, pre-choice)
+
+```
+  ● Your advisor is offering two options
+
+  ╔══════════════════════════════════════════╗
+  ║  [The Beverly Hills Hotel — full card]   ║
+  ║──────────────────────────────────────────║
+  ║     [ Select this option ]               ║
+  ╚══════════════════════════════════════════╝
+
+                    or
+
+  ╔══════════════════════════════════════════╗
+  ║  [The Peninsula Beverly Hills — full]    ║
+  ║──────────────────────────────────────────║
+  ║     [ Select this option ]               ║
+  ╚══════════════════════════════════════════╝
+```
+
+After client selects Peninsula:
+```
+  ● Option selected — review below               change
+
+  ╔══════════════════════════════════════════╗
+  ║  [The Beverly Hills Hotel]  (35% opacity)║
+  ╚══════════════════════════════════════════╝
+
+                    or  (faded)
+
+  ╔══════════════════════════════════════════╗  ← emerald border + ring
+  ▔▔▔▔▔▔▔ (emerald gradient line) ▔▔▔▔▔▔▔▔
+  ║  [The Peninsula Beverly Hills — full]    ║
+  ║──────────────────────────────────────────║
+  ║  ✓ Selected                              ║  ← emerald footer
+  ╚══════════════════════════════════════════╝
+
+  Your selection will be confirmed when you submit your preferences
+```

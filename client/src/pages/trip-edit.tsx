@@ -1053,84 +1053,128 @@ function ChoiceGroupCard({
   onSelectChoice: (segmentId: string, choiceGroupId: string) => void;
 }) {
   const selectedOption = options.find(o => o.isChoiceSelected);
+  const choiceGroupId = options[0]?.choiceGroupId || "";
 
   return (
-    <div className="relative">
-      <div className="border-2 border-dashed border-amber-300/60 dark:border-amber-700/40 rounded-lg p-3 space-y-0 bg-amber-50/30 dark:bg-amber-950/10">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600 dark:text-amber-400">
-              Either / Or
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 28 }}
+    >
+      <div className="flex items-center justify-between mb-1.5 px-1">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-400 dark:bg-amber-500" />
+            <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600/80 dark:text-amber-400/80">
+              Client chooses one
             </span>
-            {selectedOption && (
-              <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-600 dark:text-emerald-400">
-                Choice made
-              </Badge>
-            )}
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600/70 hover:text-amber-700">
-                <MoreHorizontal className="w-3.5 h-3.5" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem
-                onClick={() => onUnlink(options[0].choiceGroupId!)}
-                className="text-muted-foreground"
-              >
-                Unlink alternatives
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {selectedOption && (
+            <Badge
+              variant="outline"
+              className="text-[9px] border-emerald-300/60 text-emerald-600 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-950/20"
+            >
+              ✓ Choice recorded
+            </Badge>
+          )}
+        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground/50 hover:text-muted-foreground"
+              data-testid={`button-choice-group-menu-${choiceGroupId}`}
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem
+              onClick={() => onUnlink(choiceGroupId)}
+              className="text-muted-foreground text-xs"
+            >
+              <GitFork className="w-3.5 h-3.5 mr-2 rotate-180" />
+              Separate into individual segments
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      <div className="relative">
+        <div className="absolute left-0 right-0 top-0 bottom-0 pointer-events-none">
+          <div className="absolute left-3 top-[calc(50%-12px)] w-0.5 h-6 bg-amber-200/70 dark:bg-amber-800/50" />
         </div>
 
-        {options.map((option, idx) => (
-          <div key={option.id}>
-            {idx > 0 && (
-              <div className="flex items-center gap-2 my-2">
-                <div className="flex-1 border-t border-amber-200/60 dark:border-amber-800/40" />
-                <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400 tracking-wider px-1">OR</span>
-                <div className="flex-1 border-t border-amber-200/60 dark:border-amber-800/40" />
-              </div>
-            )}
-            <div className={`relative transition-opacity ${selectedOption && !option.isChoiceSelected ? "opacity-50" : ""}`}>
-              <SegmentCard
-                segment={option}
-                tripId={tripId}
-                onEdit={onEdit}
-                tracking={option.type === "flight" ? trackingBySegment.get(option.id) : null}
-                showPricing={showPricing}
-              />
-              <div className="mt-1 flex justify-end">
-                {option.isChoiceSelected ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-6 text-[10px] border-emerald-300 text-emerald-600 dark:text-emerald-400 gap-1"
-                    onClick={() => onSelectChoice("", option.choiceGroupId!)}
-                    data-testid={`button-choice-selected-${option.id}`}
-                  >
-                    <Check className="w-3 h-3" />
-                    Selected
-                  </Button>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-[10px] text-muted-foreground hover:text-foreground gap-1"
-                    onClick={() => onSelectChoice(option.id, option.choiceGroupId!)}
-                    data-testid={`button-select-choice-${option.id}`}
-                  >
-                    Select this option
-                  </Button>
-                )}
-              </div>
+        {options.map((option, idx) => {
+          const isSelected = !!selectedOption && option.isChoiceSelected;
+          const isDimmed = !!selectedOption && !option.isChoiceSelected;
+
+          return (
+            <div key={option.id}>
+              {idx > 0 && (
+                <div className="relative flex items-center justify-center my-1 z-10">
+                  <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30 mx-8" />
+                  <div className="absolute inline-flex items-center justify-center px-3 py-0.5 rounded-full border border-amber-200/70 dark:border-amber-700/40 bg-background text-[9px] font-bold tracking-widest uppercase text-amber-500/70 dark:text-amber-500/50 shadow-sm">
+                    or
+                  </div>
+                </div>
+              )}
+
+              <motion.div
+                animate={{ opacity: isDimmed ? 0.45 : 1, scale: isDimmed ? 0.995 : 1 }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+              >
+                <div className={`relative flex rounded-lg overflow-hidden border transition-all duration-300 ${
+                  isSelected
+                    ? "border-emerald-200/60 dark:border-emerald-800/40 shadow-sm shadow-emerald-500/5"
+                    : isDimmed
+                    ? "border-border/30"
+                    : "border-amber-200/40 dark:border-amber-800/30"
+                }`}>
+                  <div className={`w-0.5 shrink-0 transition-colors duration-300 ${
+                    isSelected ? "bg-emerald-400" : "bg-amber-300/60 dark:bg-amber-700/40"
+                  }`} />
+                  <div className="flex-1 min-w-0">
+                    <SegmentCard
+                      segment={option}
+                      tripId={tripId}
+                      onEdit={onEdit}
+                      tracking={option.type === "flight" ? trackingBySegment.get(option.id) : null}
+                      showPricing={showPricing}
+                    />
+                  </div>
+                  <div className="shrink-0 flex items-center pr-2 pl-1">
+                    {isSelected ? (
+                      <button
+                        onClick={() => onSelectChoice("", choiceGroupId)}
+                        className="flex flex-col items-center gap-0.5 group"
+                        title="Clear selection"
+                        data-testid={`button-choice-selected-${option.id}`}
+                      >
+                        <div className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <span className="text-[8px] text-emerald-600/60 opacity-0 group-hover:opacity-100 transition-opacity">clear</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onSelectChoice(option.id, choiceGroupId)}
+                        className="w-5 h-5 rounded-full border border-border/60 hover:border-emerald-300 dark:hover:border-emerald-700 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30 flex items-center justify-center transition-all duration-200 group"
+                        title="Record as selected option"
+                        data-testid={`button-select-choice-${option.id}`}
+                      >
+                        <Check className="w-3 h-3 text-muted-foreground/30 group-hover:text-emerald-500 transition-colors" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -2148,14 +2192,11 @@ export default function TripEditPage() {
     existingSegmentId: string;
     hotelName: string;
   }>({ open: false, newSegmentId: "", existingSegmentId: "", hotelName: "" });
-  const [addAlternativeDialog, setAddAlternativeDialog] = useState<{
-    open: boolean;
+  const [pendingAlternativeLink, setPendingAlternativeLink] = useState<{
     existingSegmentId: string;
-    segmentType: string;
-    dayNumber: number;
+    existingSegmentType: string;
   } | null>(null);
   const prevSegmentDialogOpen = useRef(false);
-  const prevSegmentDialogOpenForChoice = useRef(false);
 
   const { data: tripData, isLoading: tripLoading } = useQuery<TripFull>({
     queryKey: ["/api/trips", id, "full"],
@@ -2357,29 +2398,6 @@ export default function TripEditPage() {
     prevSegmentDialogOpen.current = segmentDialogOpen;
   }, [segmentDialogOpen, segments]);
 
-  useEffect(() => {
-    if (!addAlternativeDialog?.open) {
-      prevSegmentDialogOpenForChoice.current = segmentDialogOpen;
-      return;
-    }
-    if (prevSegmentDialogOpenForChoice.current && !segmentDialogOpen) {
-      const candidates = segments.filter(s =>
-        s.dayNumber === addAlternativeDialog.dayNumber &&
-        s.type === addAlternativeDialog.segmentType &&
-        !s.choiceGroupId &&
-        s.id !== addAlternativeDialog.existingSegmentId
-      );
-      if (candidates.length > 0) {
-        const newest = candidates[candidates.length - 1];
-        choiceGroupMutation.mutate({
-          existingSegmentId: addAlternativeDialog.existingSegmentId,
-          newSegmentId: newest.id,
-        });
-      }
-      setAddAlternativeDialog(null);
-    }
-    prevSegmentDialogOpenForChoice.current = segmentDialogOpen;
-  }, [segmentDialogOpen, segments, addAlternativeDialog]);
 
   const tripStart = trip?.startDate ? new Date(trip.startDate) : null;
   const tripEnd = trip?.endDate ? new Date(trip.endDate) : null;
@@ -3321,11 +3339,9 @@ export default function TripEditPage() {
                               onAddAlternative={
                                 (["hotel", "flight", "charter", "charter_flight"].includes(item.segment.type) && !item.segment.choiceGroupId && !item.segment.journeyId && !item.segment.propertyGroupId)
                                   ? () => {
-                                      setAddAlternativeDialog({
-                                        open: true,
+                                      setPendingAlternativeLink({
                                         existingSegmentId: item.segment.id,
-                                        segmentType: item.segment.type,
-                                        dayNumber: item.segment.dayNumber,
+                                        existingSegmentType: item.segment.type,
                                       });
                                       openAddSegment(item.segment.dayNumber, item.segment.type);
                                     }
@@ -3384,13 +3400,32 @@ export default function TripEditPage() {
         <SegmentEditor
           key={editingSegment?.id || `new-${addSegmentDay}-${addSegmentType || ''}-${templateForEditor?.templateId || ''}`}
           open={segmentDialogOpen}
-          onOpenChange={setSegmentDialogOpen}
+          onOpenChange={(open) => {
+            setSegmentDialogOpen(open);
+            if (!open && pendingAlternativeLink) {
+              setPendingAlternativeLink(null);
+            }
+          }}
           tripId={id!}
           versionId={currentVersionId}
           existingSegment={editingSegment}
           defaultDay={addSegmentDay}
           templateData={templateForEditor}
           defaultType={addSegmentType}
+          onCreated={async (newSegment) => {
+            if (pendingAlternativeLink) {
+              const groupId = crypto.randomUUID();
+              try {
+                await apiRequest("PATCH", `/api/trips/${id}/segments/${pendingAlternativeLink.existingSegmentId}`, { choiceGroupId: groupId });
+                await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegment.id}`, { choiceGroupId: groupId });
+                queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+                toast({ title: "Alternative added", description: "Client will choose one option." });
+              } catch {
+                toast({ title: "Alternative created but linking failed", variant: "destructive" });
+              }
+              setPendingAlternativeLink(null);
+            }
+          }}
         />
       )}
 

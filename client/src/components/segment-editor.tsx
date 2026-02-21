@@ -1352,6 +1352,7 @@ interface SegmentEditorProps {
   defaultDay: number;
   templateData?: TemplateData | null;
   defaultType?: string | null;
+  onCreated?: (segment: TripSegment) => void;
 }
 
 export function SegmentEditor({
@@ -1363,6 +1364,7 @@ export function SegmentEditor({
   defaultDay,
   templateData,
   defaultType,
+  onCreated,
 }: SegmentEditorProps) {
   const { toast } = useToast();
   const isEdit = !!existingSegment;
@@ -1591,6 +1593,9 @@ export function SegmentEditor({
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "segments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "full"] });
+      if (!isEdit && onCreated && savedSegment) {
+        onCreated(savedSegment);
+      }
       toast({ title: isEdit ? "Segment updated" : "Segment added" });
       resetForm();
       onOpenChange(false);
@@ -1796,50 +1801,14 @@ export function SegmentEditor({
 
           {(type === "hotel" || type === "flight" || type === "charter_flight") && (
             <>
-              <SectionHeading>Options / Variants</SectionHeading>
+              <SectionHeading>Upgrade Options</SectionHeading>
               {variants.map((v, i) => (
                 <div key={v.id || `new-${i}`} className="border border-border rounded-md p-3 space-y-2" data-testid={`card-variant-${i}`}>
-                  <div className="flex gap-2 mb-2">
-                    <button
-                      type="button"
-                      onClick={() => updateVariant(i, { variantType: "upgrade" })}
-                      className={`flex-1 text-xs py-1.5 px-2 rounded border transition-colors ${
-                        (v.variantType || "upgrade") === "upgrade"
-                          ? "bg-primary/10 border-primary/40 text-primary font-medium"
-                          : "border-border text-muted-foreground hover:border-primary/30"
-                      }`}
-                      data-testid={`button-variant-type-upgrade-${i}`}
-                    >
-                      Upgrade / Same {type === "hotel" ? "Hotel" : "Flight"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => updateVariant(i, { variantType: "alternative" })}
-                      className={`flex-1 text-xs py-1.5 px-2 rounded border transition-colors ${
-                        v.variantType === "alternative"
-                          ? "bg-primary/10 border-primary/40 text-primary font-medium"
-                          : "border-border text-muted-foreground hover:border-primary/30"
-                      }`}
-                      data-testid={`button-variant-type-alternative-${i}`}
-                    >
-                      Different {type === "hotel" ? "Hotel" : "Flight"}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground -mt-1 mb-1">
-                    {(v.variantType || "upgrade") === "upgrade"
-                      ? `Same ${type === "hotel" ? "hotel" : "flight"} — hotel name / route auto-included`
-                      : `Different ${type === "hotel" ? "property" : "airline or routing"} — use full name`
-                    }
-                  </p>
                   <div className="flex items-center justify-between gap-2">
                     <Input
                       value={v.label}
                       onChange={(e) => updateVariant(i, { label: e.target.value })}
-                      placeholder={
-                        v.variantType === "alternative"
-                          ? type === "hotel" ? "e.g. The Peninsula Beverly Hills" : "e.g. AA 1234 JFK → LAX direct"
-                          : type === "hotel" ? "e.g. Grand Suite" : "e.g. Premium Economy"
-                      }
+                      placeholder={type === "hotel" ? "e.g. Grand Suite" : "e.g. Premium Economy"}
                       className="flex-1"
                       data-testid={`input-variant-label-${i}`}
                     />
@@ -1910,7 +1879,7 @@ export function SegmentEditor({
                 data-testid="button-add-variant"
               >
                 <Plus className="w-3.5 h-3.5 mr-1.5" />
-                Add option
+                Add upgrade option
               </Button>
             </>
           )}

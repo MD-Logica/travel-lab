@@ -967,24 +967,44 @@ function ChoiceGroupViewCard({
   const chosenId = locallyChosenId || serverChosenId;
   const isLocked = lockedChoices?.has(choiceGroupId);
   const hasChosen = !!chosenId;
+  const showChoiceUI = !!token && !isApproved;
 
   return (
-    <div
-      className="rounded-lg border-2 border-dashed border-amber-300/50 dark:border-amber-700/30 overflow-hidden bg-amber-50/20 dark:bg-amber-950/5"
-      data-testid={`view-choice-group-${choiceGroupId}`}
-    >
-      <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-        <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600 dark:text-amber-400">
-          Choose one option
-        </span>
-        {hasChosen && (
-          <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-600 dark:text-emerald-400 ml-auto">
-            {isLocked ? "Choice submitted" : "Option selected"}
-          </Badge>
-        )}
-      </div>
+    <div data-testid={`view-choice-group-${choiceGroupId}`}>
 
-      <div className="px-3 pb-3 space-y-0">
+      {showChoiceUI && (
+        <div className="flex items-center gap-2 mb-2 px-0.5">
+          <div className="flex items-center gap-1.5">
+            <div className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${hasChosen ? "bg-emerald-400" : "bg-amber-400"}`} />
+            <span className={`text-[10px] font-semibold tracking-widest uppercase transition-colors duration-500 ${
+              hasChosen
+                ? "text-emerald-600/70 dark:text-emerald-400/70"
+                : "text-amber-600/70 dark:text-amber-400/70"
+            }`}>
+              {hasChosen ? (isLocked ? "Your selection" : "Option selected — review below") : "Your advisor is offering two options"}
+            </span>
+          </div>
+          {hasChosen && !isLocked && (
+            <button
+              onClick={() => onSelectChoice?.(choiceGroupId, "")}
+              className="text-[9px] text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 ml-auto transition-colors"
+            >
+              change
+            </button>
+          )}
+        </div>
+      )}
+
+      {!token && hasChosen && (
+        <div className="flex items-center gap-1.5 mb-2 px-0.5">
+          <Check className="w-3 h-3 text-emerald-500" />
+          <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 font-medium">
+            Client has indicated a preference
+          </span>
+        </div>
+      )}
+
+      <div className="space-y-0">
         {options.map((option, idx) => {
           const isChosen = chosenId === option.id;
           const isOtherChosen = hasChosen && !isChosen;
@@ -992,66 +1012,95 @@ function ChoiceGroupViewCard({
           return (
             <div key={option.id}>
               {idx > 0 && (
-                <div className="flex items-center gap-2 my-2.5">
-                  <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30" />
-                  <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400 tracking-widest px-1">OR</span>
-                  <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30" />
+                <div className="relative flex items-center justify-center my-2">
+                  <div className="flex-1 border-t border-border/30 mx-12" />
+                  <div className={`absolute inline-flex items-center justify-center w-7 h-7 rounded-full border text-[9px] font-bold tracking-wider transition-all duration-300 ${
+                    hasChosen
+                      ? "border-border/20 text-muted-foreground/20 bg-background"
+                      : "border-amber-200/60 dark:border-amber-800/30 text-amber-500/60 bg-background shadow-sm"
+                  }`}>
+                    or
+                  </div>
                 </div>
               )}
 
-              <div
-                className={`transition-all duration-300 ${isOtherChosen ? "opacity-40 pointer-events-none" : ""}`}
-                data-testid={`view-choice-option-${option.id}`}
+              <motion.div
+                animate={{
+                  opacity: isOtherChosen ? 0.35 : 1,
+                  scale: isOtherChosen ? 0.99 : 1,
+                }}
+                transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
               >
-                <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
+                <div className={`relative rounded-xl border overflow-hidden transition-all duration-400 ${
+                  isChosen
+                    ? "border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20"
+                    : isOtherChosen
+                    ? "border-border/20"
+                    : "border-border/50 hover:border-border/80"
+                }`}>
 
-                {token && !isApproved && onSelectChoice && (
-                  <div className="flex justify-end mt-1.5 mb-0.5">
-                    {isChosen ? (
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                          <Check className="w-3.5 h-3.5" />
-                          {isLocked ? "Your choice" : "Selected"}
-                        </span>
-                        {!isLocked && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 text-[10px] text-muted-foreground ml-2"
-                            onClick={() => onSelectChoice(choiceGroupId, "")}
-                          >
-                            Change
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs border-amber-300/60 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20"
-                        onClick={() => onSelectChoice(choiceGroupId, option.id)}
-                        disabled={isLocked}
-                        data-testid={`button-choose-option-${option.id}`}
-                      >
-                        Choose this option
-                      </Button>
-                    )}
-                  </div>
-                )}
+                  <div className={`h-0.5 w-full transition-colors duration-300 ${
+                    isChosen ? "bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" : "bg-transparent"
+                  }`} />
 
-                {!token && isChosen && (
-                  <div className="flex justify-end mt-1">
-                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
-                      <Check className="w-3 h-3" />
-                      Client's choice
-                    </span>
+                  <div className="p-0">
+                    <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
                   </div>
-                )}
-              </div>
+
+                  {showChoiceUI && (
+                    <div className={`px-4 py-2.5 border-t transition-colors duration-300 ${
+                      isChosen
+                        ? "border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/40 dark:bg-emerald-950/10"
+                        : "border-border/30 bg-muted/10"
+                    }`}>
+                      {isChosen ? (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+                              <Check className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                            </div>
+                            <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                              {isLocked ? "Your selection — submitted to advisor" : "Selected"}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => onSelectChoice?.(choiceGroupId, option.id)}
+                          disabled={isLocked}
+                          className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg border border-border/50 hover:border-primary/40 bg-background hover:bg-accent/50 text-xs font-medium text-muted-foreground hover:text-foreground transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed active:scale-[0.99]"
+                          data-testid={`button-choose-option-${option.id}`}
+                        >
+                          Select this option
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {!token && isChosen && (
+                    <div className="px-4 py-2 border-t border-emerald-100/40 dark:border-emerald-900/20 bg-emerald-50/30 dark:bg-emerald-950/10">
+                      <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 font-medium flex items-center gap-1.5">
+                        <Check className="w-3 h-3" />
+                        Client's preferred option
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </motion.div>
             </div>
           );
         })}
       </div>
+
+      {showChoiceUI && hasChosen && !isLocked && (
+        <motion.p
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-[10px] text-center text-muted-foreground/50 mt-2.5 tracking-wide"
+        >
+          Your selection will be confirmed when you submit your preferences
+        </motion.p>
+      )}
     </div>
   );
 }
