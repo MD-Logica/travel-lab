@@ -2,6 +2,7 @@ import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
   flightTracking, notifications, segmentTemplates, conversations, messages, pushSubscriptions,
   invitations, clientCollaborators, clientRelationships, segmentVariants,
+  messageReactions, clientChatTokens,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -14,13 +15,15 @@ import {
   type SegmentTemplate, type InsertSegmentTemplate,
   type Conversation, type InsertConversation,
   type Message, type InsertMessage,
+  type MessageReaction,
   type PushSubscription,
   type Invitation, type InsertInvitation,
   type ClientCollaborator, type InsertClientCollaborator,
   type SegmentVariant, type InsertSegmentVariant,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, count, sql, or, ilike, desc, inArray } from "drizzle-orm";
+import { eq, and, count, sql, or, ilike, desc, inArray, isNull, gt } from "drizzle-orm";
+import crypto from "crypto";
 
 export interface IStorage {
   createOrganization(org: InsertOrganization): Promise<Organization>;
@@ -114,10 +117,18 @@ export interface IStorage {
   getConversationsByOrg(orgId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]>;
   getOrCreateConversation(orgId: string, clientId: string): Promise<Conversation>;
   getConversation(id: string, orgId: string): Promise<Conversation | undefined>;
-  getMessages(conversationId: string, orgId: string, limit?: number): Promise<Message[]>;
+  getConversationById(id: string): Promise<Conversation | null>;
+  getMessages(conversationId: string, orgId: string, limit?: number): Promise<(Message & { reactions: MessageReaction[] })[]>;
   createMessage(data: InsertMessage): Promise<Message>;
   markMessagesRead(conversationId: string, orgId: string): Promise<void>;
+  markConversationSeenByClient(conversationId: string): Promise<void>;
   getUnreadMessageCount(orgId: string): Promise<number>;
+  createClientChatToken(clientId: string, orgId: string, tripId: string): Promise<string>;
+  validateClientChatToken(token: string): Promise<{ clientId: string; orgId: string; tripId: string } | null>;
+  addReaction(messageId: string, conversationId: string, orgId: string, reactorType: string, reactorId: string, reactorName: string, emoji: string): Promise<MessageReaction>;
+  removeReaction(messageId: string, reactorId: string, reactorType: string): Promise<void>;
+  getReactionsForMessage(messageId: string): Promise<MessageReaction[]>;
+  getReactionsByConversation(conversationId: string): Promise<Record<string, MessageReaction[]>>;
 
   getTripFullView(tripId: string): Promise<{
     trip: Trip;
@@ -972,11 +983,19 @@ export class DatabaseStorage implements IStorage {
     return result;
   }
 
-  async getMessages(conversationId: string, orgId: string, limit = 100): Promise<Message[]> {
-    return db.select().from(messages)
+  async getConversationById(id: string): Promise<Conversation | null> {
+    const [result] = await db.select().from(conversations)
+      .where(eq(conversations.id, id));
+    return result || null;
+  }
+
+  async getMessages(conversationId: string, orgId: string, limit = 100): Promise<(Message & { reactions: MessageReaction[] })[]> {
+    const msgs = await db.select().from(messages)
       .where(and(eq(messages.conversationId, conversationId), eq(messages.orgId, orgId)))
       .orderBy(messages.createdAt)
       .limit(limit);
+    const reactionsMap = await this.getReactionsByConversation(conversationId);
+    return msgs.map(m => ({ ...m, reactions: reactionsMap[m.id] || [] }));
   }
 
   async createMessage(data: InsertMessage): Promise<Message> {
@@ -1009,6 +1028,68 @@ export class DatabaseStorage implements IStorage {
         eq(messages.isRead, false),
       ));
     return result[0]?.count || 0;
+  }
+
+  async markConversationSeenByClient(conversationId: string): Promise<void> {
+    await db.update(messages)
+      .set({ seenAt: new Date() })
+      .where(and(
+        eq(messages.conversationId, conversationId),
+        eq(messages.senderType, "advisor"),
+        isNull(messages.seenAt),
+      ));
+  }
+
+  async createClientChatToken(clientId: string, orgId: string, tripId: string): Promise<string> {
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await db.insert(clientChatTokens).values({ clientId, orgId, tripId, token, expiresAt });
+    return token;
+  }
+
+  async validateClientChatToken(token: string): Promise<{ clientId: string; orgId: string; tripId: string } | null> {
+    const [row] = await db.select().from(clientChatTokens)
+      .where(and(eq(clientChatTokens.token, token), gt(clientChatTokens.expiresAt, new Date())));
+    if (!row) return null;
+    return { clientId: row.clientId, orgId: row.orgId, tripId: row.tripId };
+  }
+
+  async addReaction(messageId: string, conversationId: string, orgId: string, reactorType: string, reactorId: string, reactorName: string, emoji: string): Promise<MessageReaction> {
+    await db.delete(messageReactions)
+      .where(and(
+        eq(messageReactions.messageId, messageId),
+        eq(messageReactions.reactorId, reactorId),
+        eq(messageReactions.reactorType, reactorType),
+      ));
+    const [reaction] = await db.insert(messageReactions)
+      .values({ messageId, conversationId, orgId, reactorType, reactorId, reactorName, emoji })
+      .returning();
+    return reaction;
+  }
+
+  async removeReaction(messageId: string, reactorId: string, reactorType: string): Promise<void> {
+    await db.delete(messageReactions)
+      .where(and(
+        eq(messageReactions.messageId, messageId),
+        eq(messageReactions.reactorId, reactorId),
+        eq(messageReactions.reactorType, reactorType),
+      ));
+  }
+
+  async getReactionsForMessage(messageId: string): Promise<MessageReaction[]> {
+    return db.select().from(messageReactions)
+      .where(eq(messageReactions.messageId, messageId));
+  }
+
+  async getReactionsByConversation(conversationId: string): Promise<Record<string, MessageReaction[]>> {
+    const rows = await db.select().from(messageReactions)
+      .where(eq(messageReactions.conversationId, conversationId));
+    const map: Record<string, MessageReaction[]> = {};
+    for (const r of rows) {
+      if (!map[r.messageId]) map[r.messageId] = [];
+      map[r.messageId].push(r);
+    }
+    return map;
   }
 
   async savePushSubscription(profileId: string, orgId: string, endpoint: string, p256dh: string, auth: string): Promise<PushSubscription> {

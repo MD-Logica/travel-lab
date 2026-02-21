@@ -50,7 +50,10 @@ import {
   UserPlus,
   Shield,
   Search,
+  MessageCircle,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ChatThread } from "@/components/chat-thread";
 import { Switch } from "@/components/ui/switch";
 import { Link, useParams, useLocation } from "wouter";
 import type { Client, Trip, TripDocument, Profile, ClientCollaborator } from "@shared/schema";
@@ -1454,6 +1457,9 @@ export default function ClientDetailPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [showMessageSheet, setShowMessageSheet] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
 
   const [editName, setEditName] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -1623,6 +1629,23 @@ export default function ClientDetailPage() {
     });
   }
 
+  async function openMessageSheet() {
+    if (!id) return;
+    setShowMessageSheet(true);
+    setConversationLoading(true);
+    setConversationId(null);
+    try {
+      const res = await apiRequest("POST", "/api/conversations", { clientId: id });
+      const data = await res.json();
+      setConversationId(data.id);
+    } catch {
+      toast({ title: "Failed to open conversation", variant: "destructive" });
+      setShowMessageSheet(false);
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex-1 overflow-y-auto">
@@ -1674,8 +1697,9 @@ export default function ClientDetailPage() {
   const lastTripDate = clientTrips.reduce((latest: string | null, t) => {
     const d = t.startDate || t.endDate;
     if (!d) return latest;
-    if (!latest) return d;
-    return new Date(d).getTime() > new Date(latest).getTime() ? d : latest;
+    const dStr = typeof d === "string" ? d : new Date(d).toISOString();
+    if (!latest) return dStr;
+    return new Date(dStr).getTime() > new Date(latest).getTime() ? dStr : latest;
   }, null);
   const memberSince = client.createdAt ? format(new Date(client.createdAt), "MMM yyyy") : "—";
 
@@ -1824,6 +1848,15 @@ export default function ClientDetailPage() {
                       data-testid="button-edit-client"
                     >
                       <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={openMessageSheet}
+                      data-testid="button-message-client"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Message
                     </Button>
                     {client.invited === "yes" ? (
                       <div className="flex items-center gap-2">
@@ -2392,6 +2425,30 @@ export default function ClientDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Sheet open={showMessageSheet} onOpenChange={setShowMessageSheet}>
+        <SheetContent side="right" className="w-full sm:max-w-[480px] p-0 flex flex-col">
+          <SheetHeader className="px-4 py-3 border-b">
+            <SheetTitle className="font-serif text-lg">Message {client?.fullName?.split(" ")[0]}</SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 overflow-hidden">
+            {conversationLoading ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : conversationId && client ? (
+              <ChatThread
+                conversationId={conversationId}
+                clientName={client.fullName}
+                clientAvatarUrl={null}
+                clientId={client.id}
+                showHeader={false}
+                showBack={false}
+              />
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

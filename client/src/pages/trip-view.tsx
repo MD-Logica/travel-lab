@@ -24,6 +24,7 @@ import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "d
 import { calculateLayover, isRedEye, journeyTotalTime } from "@/lib/journey-utils";
 import { formatTime, timeFormatString } from "@/lib/time-utils";
 import { AdvisorContactCard } from "@/components/advisor-contact-card";
+import { ClientChatWidget } from "@/components/client-chat-widget";
 
 const segmentIcons: Record<string, typeof Plane> = {
   flight: Plane, charter: Diamond, charter_flight: Diamond, hotel: Hotel, transport: Car,
@@ -1425,6 +1426,13 @@ export default function TripViewPage() {
           </>
         );
       })()}
+      {token && data?.trip?.clientId && (
+        <ClientChatWidget
+          tripId={id}
+          shareToken={token}
+          tripTitle={data.trip.title || "Your Trip"}
+        />
+      )}
     </div>
   );
 }

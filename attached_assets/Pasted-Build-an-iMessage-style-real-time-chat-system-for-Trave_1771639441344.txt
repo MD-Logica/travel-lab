@@ -1,0 +1,275 @@
+Build an iMessage-style real-time chat system for Travel Lab. This upgrades the existing basic polling-based messaging into a polished, true real-time experience with WebSockets, iMessage blue bubbles, typing indicators, read receipts, emoji reactions, a floating client widget, and two-way messaging between advisors and clients.
+
+Read every section fully before writing any code. Complete all steps in order.
+
+---
+
+## UNDERSTAND WHAT ALREADY EXISTS
+
+Before writing anything, read these files so you understand what's already there:
+
+- `shared/schema.ts` — has a `conversations` table and `messages` table. Messages have: id, conversationId, orgId, senderType ("advisor" or "client"), senderId, senderName, content, isRead, createdAt.
+- `server/routes.ts` — has routes for listing conversations, creating conversations, fetching messages, sending messages (advisor only right now), and marking messages read. There is a `sendPushToOrg()` function already defined in this file for web push notifications.
+- `server/index.ts` — creates `httpServer` using `createServer(app)` and passes it to `registerRoutes(httpServer, app)`. This means you can attach a WebSocket server to `httpServer`.
+- `client/src/pages/messages.tsx` — the advisor's messages page. Has a conversation list on the left and a chat thread on the right. Currently polls for new messages every 5 seconds using `refetchInterval: 5000`. Bubbles are basic — advisor messages use `bg-primary` on the right, client messages use `bg-muted` on the left.
+- `client/src/pages/trip-view.tsx` — the client-facing portal at `/trip/:id?token=...`. The `token` is already extracted from the URL. The page loads `data` from `/api/trip-view/:id?token=...`. The `data` object has `data.trip` (with `.id`, `.clientId`, `.orgId`, `.title`), `data.advisor` (name, avatarUrl), and `data.client` (fullName).
+- `client/src/pages/client-detail.tsx` — the advisor's client profile page.
+
+---
+
+## STEP 1 — UPDATE THE DATABASE SCHEMA
+
+Open `shared/schema.ts` and make these three changes:
+
+**First:** Find the `messages` table definition. Add these four new columns inside it, alongside the existing columns:
+- `seenAt` — a nullable timestamp column named `"seen_at"`
+- `attachmentUrl` — a nullable text column named `"attachment_url"`
+- `attachmentType` — a nullable text column named `"attachment_type"`  
+- `attachmentName` — a nullable text column named `"attachment_name"`
+
+**Second:** After the messages table, add a brand new table called `messageReactions`. This table stores emoji reactions on messages. It needs these columns: id (primary key, auto UUID), messageId (varchar, foreign key to messages.id, cascade delete), conversationId (varchar, foreign key to conversations.id, cascade delete), orgId (varchar, foreign key to organizations.id), reactorType (text — will be "advisor" or "client"), reactorId (varchar), reactorName (text), emoji (text), createdAt (timestamp, default now). Export the TypeScript type for this table as `MessageReaction`.
+
+**Third:** After the reactions table, add another new table called `clientChatTokens`. This table lets clients authenticate for chat without a full account. Columns: id (primary key, auto UUID), clientId (varchar, foreign key to clients.id, cascade delete), orgId (varchar, foreign key to organizations.id), tripId (varchar — just store the string, no foreign key needed), token (varchar, must be unique), expiresAt (timestamp), createdAt (timestamp, default now). Export the TypeScript type as `ClientChatToken`.
+
+After updating the schema, run `npm run db:push` to apply these changes to the actual database. Check `package.json` to confirm that is the correct command — use whatever command this project uses to push schema changes.
+
+---
+
+## STEP 2 — ADD NEW STORAGE METHODS
+
+Open the storage file (find it — likely `server/storage.ts`). Add these new methods. Use the same patterns and database query style already used throughout that file.
+
+**Get a single conversation by its ID (no orgId required):** Query the conversations table for the row matching the given conversationId. Return the conversation or null.
+
+**Create a client chat token:** Generate a random 64-character hex string using Node's crypto module. Set expiresAt to 24 hours from now. Insert a row into the clientChatTokens table with the given clientId, orgId, tripId, the generated token, and expiresAt. Return the token string.
+
+**Validate a client chat token:** Look up a row in clientChatTokens where the token matches AND expiresAt is in the future. If found, return an object with clientId, orgId, and tripId. If not found or expired, return null.
+
+**Add a reaction:** First delete any existing reaction from this same reactor (matching messageId + reactorId + reactorType) to enforce one reaction per person per message. Then insert a new row into messageReactions with all the provided values.
+
+**Remove a reaction:** Delete the row from messageReactions matching messageId + reactorId + reactorType.
+
+**Get reactions for a single message:** Query messageReactions where messageId matches. Return the array of reactions.
+
+**Get all reactions for a conversation, grouped by messageId:** Query messageReactions where conversationId matches. Return a plain object (dictionary) where each key is a messageId and each value is the array of reactions for that message.
+
+**Mark conversation seen by client:** Update the messages table — set seenAt to the current timestamp on all rows where conversationId matches AND senderType is "advisor" AND seenAt is currently null.
+
+**Update the existing getMessages method:** After fetching the messages for a conversation, also call the "get all reactions for conversation" method. Then attach the matching reactions array to each message before returning. The return type is now an array of messages each with a `reactions` field (array of MessageReaction, empty array if none).
+
+---
+
+## STEP 3 — BUILD THE WEBSOCKET SERVER
+
+Create a new file `server/websocket.ts`. This file manages real-time communication between advisors and clients.
+
+It needs to:
+- Export a function called `setupWebSocket` that takes the httpServer as a parameter and attaches a `WebSocketServer` to it on the path `/ws/chat`
+- Export a function called `broadcastNewMessage(conversationId, message)` that sends a `{ type: "new_message", message }` event to all connected clients in that conversation room
+- Export a function called `broadcastReactionUpdate(conversationId, messageId, reactions)` that sends a `{ type: "reaction_update", messageId, reactions }` event to all connected clients in that room
+- Export a function called `broadcastSeen(conversationId, seenAt)` that sends a `{ type: "seen", seenAt }` event to all connected clients in that room
+
+Internally, maintain:
+- A map of conversationId → Set of connected WebSocket clients (the "room")
+- A map of conversationId → typing state object `{ advisorTyping: boolean, clientTyping: boolean }`
+- A map of each WebSocket connection → its metadata `{ conversationId, userType, userId }`
+
+When a client connects to `/ws/chat`, read these query parameters from the URL: `conversationId`, `userType` ("advisor" or "client"), `userId`. If any are missing, close the connection. Otherwise, add the connection to the correct room. Send the current typing state immediately upon connection.
+
+When a message is received from a connected client, handle two message types:
+- `{ type: "typing", isTyping: boolean }` — update the typing state for this conversation (set advisorTyping or clientTyping based on userType), then broadcast the updated typing state to everyone else in the room
+- `{ type: "seen" }` — broadcast a seen event to everyone else in the room
+
+When a connection closes or errors, remove it from the room and clear that user's typing state (set their typing to false), then broadcast the updated typing state.
+
+All `broadcastToRoom` calls should skip any WebSocket connection that is not in OPEN state, and optionally skip the sender.
+
+Install the `ws` package: run `npm install ws` and `npm install --save-dev @types/ws`.
+
+---
+
+## STEP 4 — WIRE WEBSOCKET INTO THE SERVER
+
+Open `server/index.ts`. Add an import for `setupWebSocket` from `./websocket`. After the line `await registerRoutes(httpServer, app)`, call `setupWebSocket(httpServer)`.
+
+---
+
+## STEP 5 — ADD NEW API ROUTES
+
+Open `server/routes.ts`. Add an import for `broadcastNewMessage`, `broadcastReactionUpdate`, and `broadcastSeen` from `./websocket` at the top of the file.
+
+Also update the existing `POST /api/conversations/:id/messages` route (the one where advisors send messages). After the line that creates the message in the database, add a call to `broadcastNewMessage` with the conversationId and the new message object.
+
+Now add the following new routes. Add them right after the existing `GET /api/messages/unread-count` route.
+
+**Route 1 — GET /api/chat-token**
+No authentication required. Reads `tripId` and `shareToken` from query parameters. Validates the share token by loading the trip via `storage.getTripFullView(tripId)` — check that the trip exists, that `shareEnabled` is true, and that `shareToken` matches `data.trip.shareToken`. If any check fails, return an appropriate error. If the trip has no `clientId`, return a 400 error. Otherwise, call `storage.getOrCreateConversation(orgId, clientId)` to get or create the conversation. Then call `storage.createClientChatToken(clientId, orgId, tripId)` to create a chat token. Return a JSON object with: chatToken, conversationId, clientId, clientName (from `data.client?.fullName`), orgId, advisorName (from `data.advisor?.fullName`), advisorAvatar (from `data.advisor?.avatarUrl`).
+
+**Route 2 — POST /api/conversations/:id/messages/client**
+No session authentication. Reads `content` and `chatToken` from the request body. Validate both are present. Call `storage.validateClientChatToken(chatToken)` — if null, return 401. Load the conversation using `storage.getConversationById(conversationId)` — verify it exists and that its orgId and clientId match the token data. Get the client's name using `storage.getClient(clientId, orgId)`. Create the message using `storage.createMessage` with senderType "client". Call `broadcastNewMessage` with the conversationId and new message. Call `sendPushToOrg` to notify the org's advisors (title: "New message from [clientName]", body: first 100 chars of content, url: `/dashboard/messages?id=[conversationId]`). Return the created message.
+
+**Route 3 — POST /api/conversations/:id/read/client**
+No session authentication. Reads `chatToken` from request body. Validate it. Verify the token is valid and the conversationId matches. Call `storage.markConversationSeenByClient(conversationId)`. Call `broadcastSeen(conversationId, new Date().toISOString())`. Return `{ ok: true }`.
+
+**Route 4 — POST /api/conversations/:id/messages/:messageId/reactions**
+Requires `isAuthenticated` and `orgMiddleware`. Reads `emoji` from request body. Validate it is one of: ❤️ 👍 😂 😮 😢 👎. Get the current user's profile to get their name. Call `storage.addReaction(messageId, conversationId, orgId, "advisor", userId, profileName, emoji)`. Fetch the updated reactions with `storage.getReactionsForMessage(messageId)`. Call `broadcastReactionUpdate`. Return the reactions array.
+
+**Route 5 — DELETE /api/conversations/:id/messages/:messageId/reactions**
+Requires `isAuthenticated` and `orgMiddleware`. Call `storage.removeReaction(messageId, userId, "advisor")`. Fetch updated reactions. Call `broadcastReactionUpdate`. Return the reactions array.
+
+---
+
+## STEP 6 — REWRITE THE MESSAGES PAGE
+
+Completely rewrite `client/src/pages/messages.tsx`. Keep the same overall two-panel layout (conversation list left, chat thread right, mobile shows one at a time). All the existing features must still work: search, unread counts, the active trip banner, the push notification banner, mobile back button.
+
+What changes is everything visual and the real-time behavior inside the ChatThread component.
+
+**Define these color constants at the top of the file:**
+```
+SENT_BG = "#007AFF"     (iMessage blue — advisor outgoing bubbles)
+SENT_TEXT = "#FFFFFF"
+RECEIVED_BG = "#E9E9EB" (iMessage gray — client incoming bubbles)
+RECEIVED_TEXT = "#000000"
+```
+
+**Message grouping:** Write a helper function that takes the messages array and adds two boolean fields to each message: `isFirstInGroup` and `isLastInGroup`. A "group" is consecutive messages from the same sender with less than 60 seconds between them. The first message in a group has `isFirstInGroup: true`. The last message in a group has `isLastInGroup: true`. A solo message (only one from that sender before a gap) has both set to true.
+
+**Timestamp separators:** Write a helper function that checks whether a timestamp divider should appear before a given message. Show a divider if it is the first message, OR if more than 5 minutes have passed since the previous message. Format the divider text as: "Today 2:34 PM", "Yesterday 9:15 AM", or "Mon Dec 14, 11:00 AM" for older dates.
+
+**Inside ChatThread, make these changes:**
+
+Remove `refetchInterval: 5000` from the messages query. Instead, use a `useEffect` to open a WebSocket connection to `/ws/chat` with query parameters `conversationId`, `userType=advisor`, and `userId` (get the current user's ID from however this app accesses the authenticated user — check how other pages do it). Use `wss://` protocol when on HTTPS, `ws://` when on HTTP. Detect this with `window.location.protocol === "https:" ? "wss:" : "ws:"`.
+
+When the WebSocket receives a message:
+- `type: "new_message"` — add it to the local messages list (check for duplicates by ID first). Invalidate the conversations query so the sidebar updates. If the user is scrolled within 100px of the bottom, smooth-scroll to the bottom.
+- `type: "typing"` — update a `typingState` state variable with `{ advisorTyping, clientTyping }` from the event
+- `type: "seen"` — update a `seenAt` state variable with the timestamp from the event
+- `type: "reaction_update"` — find the message with that ID in the local list and replace its reactions array
+
+If the WebSocket closes unexpectedly, reconnect with exponential backoff (wait 2s, then 4s, then 8s, etc., up to 5 attempts max).
+
+Keep a ref to track whether the user is scrolled near the bottom. Update it on the scroll container's scroll event. Only auto-scroll to bottom when new messages arrive if the user is already near the bottom. Always scroll to bottom when the conversation first loads, and always scroll to bottom when the current advisor sends a message.
+
+For typing: when the user types in the input, send `{ type: "typing", isTyping: true }` over WebSocket. After 2 seconds of no typing, send `{ type: "typing", isTyping: false }`. Use a timeout ref to implement this debounce.
+
+For optimistic sends: when the advisor hits send, immediately add a temporary message to the local list with a temp ID like `temp-${Date.now()}`. Clear the input. Then make the API call. On success, replace the temp message with the real one from the response. On error, remove the temp message and restore the input text.
+
+**Render bubbles like this:**
+
+For each message, first check if a timestamp divider is needed and render it as a centered gray pill if so.
+
+Render the message row as a flex container. Advisor messages use `justify-end` (push to right). Client messages use `justify-start` (push to left).
+
+For client messages only: show a small avatar (w-7 h-7) to the left of the bubble. On `isFirstInGroup`, show the real client avatar. On other messages in the group, show an invisible w-7 h-7 spacer so all bubbles in the group align.
+
+The bubble itself: use inline `style` for backgroundColor and color (not Tailwind color classes, since we need the exact hex values). Use `rounded-2xl` base. On the LAST message in a group: for sent (advisor) bubbles, make the bottom-right corner sharp: `borderBottomRightRadius: "4px"`. For received (client) bubbles, make the bottom-left corner sharp: `borderBottomLeftRadius: "4px"`. For messages that are NOT the last in their group, all corners stay fully rounded. Max width `max-w-[75%]`.
+
+When hovering over a bubble (use `onMouseEnter` / `onMouseLeave` with a state variable tracking which message ID is hovered), show a reaction picker above the bubble. The picker is a small white pill floating above the bubble with the 6 emoji options: ❤️ 👍 😂 😮 😢 👎. Each emoji is a button. Clicking it calls the toggle reaction logic. Position it with `position: absolute` at `-top-9`, anchored to the right side for sent bubbles and left side for received bubbles. Set `z-index: 10` so it floats above other bubbles.
+
+Reaction toggle logic: check if the current user already reacted with this emoji. If yes, call `DELETE /api/conversations/:id/messages/:messageId/reactions`. If no (or reacted with a different emoji), call `POST /api/conversations/:id/messages/:messageId/reactions` with `{ emoji }`. Update the local state optimistically.
+
+Below each bubble, if that message has reactions, show them as small pill buttons: emoji + count if more than 1. If the current user reacted with that emoji, highlight the pill with a blue border and light blue background. Clicking a reaction pill toggles it.
+
+After all messages, if the last advisor message exists and `seenAt` is set, show "Seen [time]" in small gray text below it, right-aligned.
+
+After all messages, if `typingState.clientTyping` is true, show the three-dot typing indicator as a bubble on the left side. Use RECEIVED_BG color. Three dots animated with `animate-bounce` and staggered `animationDelay` of 0ms, 150ms, 300ms.
+
+**Input bar:** Keep the existing textarea auto-resize behavior. Change its onChange handler so it calls the typing debounce logic. Make the send button turn iMessage blue (`#007AFF`) when there is text in the input, and gray when empty.
+
+---
+
+## STEP 7 — ADD MESSAGE BUTTON TO CLIENT DETAIL PAGE
+
+Open `client/src/pages/client-detail.tsx`.
+
+Add a "Message" button to the action buttons area near the top of the client detail view (wherever the existing invite/portal buttons are). Import `Sheet, SheetContent, SheetHeader, SheetTitle` from `@/components/ui/sheet` if not already imported. Add a state variable to track whether the message sheet is open.
+
+When the Message button is clicked, open a Sheet that slides in from the right. The sheet should be 480px wide on desktop (`sm:w-[480px]`), full screen on mobile. The sheet header shows the client's name.
+
+Inside the sheet, render a self-contained chat thread component. This component should: on mount, call `POST /api/conversations` with `{ clientId }` to get or create a conversation, then render the same ChatThread component from the messages page using that conversationId. While the conversation is being fetched, show a loading spinner. Pass the correct clientId, clientName, and clientAvatarUrl to the ChatThread.
+
+To make this work cleanly, export the `ChatThread` component from `messages.tsx` so it can be imported in `client-detail.tsx`. Or if that causes circular dependency issues, extract ChatThread into its own file at `client/src/components/chat-thread.tsx` and import it in both pages.
+
+---
+
+## STEP 8 — BUILD THE FLOATING CLIENT CHAT WIDGET
+
+Create a new file `client/src/components/client-chat-widget.tsx`.
+
+This is a floating chat button + expandable chat window that appears in the bottom-right corner of the client portal. It lets clients message their advisor without any login.
+
+The component accepts these props: `tripId` (string), `shareToken` (string), `tripTitle` (string).
+
+**What it does:**
+
+On mount, fetch `/api/chat-token?tripId=[tripId]&shareToken=[shareToken]`. Store the returned `chatToken`, `conversationId`, `clientId`, `advisorName`, and `advisorAvatar` in state. If this fetch fails (e.g. trip has no client), the component should render nothing.
+
+Once `conversationId` and `chatToken` are available, fetch the message history from `/api/conversations/[conversationId]/messages`. Store the messages in local state. Count how many advisor messages have no `seenAt` (those are unread) and store that as `unreadCount`.
+
+Open a WebSocket connection to `/ws/chat` with params `conversationId`, `userType=client`, `userId=clientId`. Handle the same message types as the advisor side: `new_message` (append to list, increment unread if widget is closed), `typing` (update typing state to show if advisor is typing). Use the same reconnection logic (exponential backoff, max 5 attempts).
+
+**Two visual states:**
+
+When collapsed: show a blue circle button (w-14 h-14, background `#007AFF`) with a chat icon. If `unreadCount > 0`, show a red badge with the count on the top-right corner of the button. Position it `fixed bottom-6 right-6 z-50`.
+
+When expanded: show a floating window 360px wide, 480px tall, above the button. White background, `rounded-2xl`, `shadow-2xl`, `border border-gray-100`. It should animate open with a smooth slide-up + fade-in (use CSS animation or a simple style transform).
+
+The expanded window has three sections:
+1. **Header:** Shows the advisor's avatar, advisor's name, and "Re: [tripTitle]" in smaller text below. A chevron-down button on the right to collapse.
+2. **Messages area:** Scrollable. Same iMessage-style bubbles as the advisor side — client's own messages are blue on the right, advisor messages are gray on the left. Same grouping, same bubble shapes. If no messages yet, show a friendly "Send a message to your advisor" empty state. Show the three-dot typing indicator when `advisorTyping` is true.
+3. **Input bar:** Same auto-resize textarea. Blue send button when there is text.
+
+**When the widget is opened:** Set `unreadCount` to 0. Call `POST /api/conversations/[conversationId]/read/client` with `{ chatToken }` to mark messages seen. Send `{ type: "seen" }` over WebSocket. Smooth-scroll to the bottom of the messages.
+
+**Sending messages:** Call `POST /api/conversations/[conversationId]/messages/client` with `{ content, chatToken }`. Use the same optimistic update pattern as the advisor side (add a temp message immediately, replace with real on success, restore on error). Enter key sends (unless shift is held). After sending, scroll to bottom.
+
+---
+
+## STEP 9 — WIRE THE WIDGET INTO THE TRIP VIEW PAGE
+
+Open `client/src/pages/trip-view.tsx`.
+
+Import `ClientChatWidget` from `@/components/client-chat-widget`.
+
+Find the return statement of `TripViewPage`. Near the very bottom of the JSX, just before the last closing tag, add the widget conditionally. Only show it when `token` is set (meaning a client is viewing via share link, not an advisor previewing) AND `data?.trip?.clientId` exists:
+
+```
+{token && data?.trip?.clientId && (
+  <ClientChatWidget
+    tripId={id}
+    shareToken={token}
+    tripTitle={data.trip.title || "Your Trip"}
+  />
+)}
+```
+
+---
+
+## STEP 10 — ADD CSS ANIMATION
+
+Open `tailwind.config.js` (or `tailwind.config.ts`). In the `theme.extend` section, add a keyframe animation for the widget slide-up. The animation should go from `translateY(12px) opacity 0` to `translateY(0) opacity 1` over 200ms with ease-out. Name it `slideUp`. Add a corresponding entry in the `animation` section so you can use `animate-slideUp` in className.
+
+---
+
+## VERIFY EVERYTHING WORKS
+
+After building, test these scenarios before marking anything as done:
+
+1. Open the Messages page. Open the same conversation in a second browser tab. Send a message in one tab — it must appear in the other tab within 1 second, no refresh needed.
+
+2. Start typing in the input. Within half a second, the other browser tab should show the three-dot typing animation. Stop typing — the dots should disappear within 2 seconds.
+
+3. Hover over a message bubble. The 6 emoji picker should appear above it. Click one — it should appear as a reaction below the bubble. Click it again — it should disappear.
+
+4. Visit `/trip/[any-trip-id]?token=[valid-share-token]` in a new incognito window (to simulate a client). A blue chat button should appear in the bottom-right corner.
+
+5. Click the chat button in the client window. The widget should expand. Type a message and send it. Switch to the advisor's Messages page — the message should appear in real time.
+
+6. Reply as the advisor. The reply should appear in the client widget in real time.
+
+7. Open a client profile page as the advisor. Click the "Message" button. A right-side sheet should open. Send a message in it. Close it, go to the Messages page — the message should be there.
+
+8. Scroll up in a long conversation. Receive a new message — the view should NOT jump to the bottom. Now scroll back to the bottom — new messages should appear.
+
+If any of these tests fail, debug and fix before finishing.

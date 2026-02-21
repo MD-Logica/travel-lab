@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { startFlightPolling } from "./flight-tracker";
+import { setupWebSocket } from "./websocket";
 
 const app = express();
 const httpServer = createServer(app);
@@ -69,6 +70,7 @@ if (!process.env.UNSPLASH_ACCESS_KEY) {
 
 (async () => {
   await registerRoutes(httpServer, app);
+  setupWebSocket(httpServer);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

@@ -267,6 +267,10 @@ export const messages = pgTable("messages", {
   senderName: text("sender_name").notNull(),
   content: text("content").notNull(),
   isRead: boolean("is_read").notNull().default(false),
+  seenAt: timestamp("seen_at"),
+  attachmentUrl: text("attachment_url"),
+  attachmentType: text("attachment_type"),
+  attachmentName: text("attachment_name"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -284,6 +288,32 @@ export type Conversation = typeof conversations.$inferSelect;
 export type InsertConversation = z.infer<typeof insertConversationSchema>;
 export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
+
+export const messageReactions = pgTable("message_reactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  messageId: varchar("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+  conversationId: varchar("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  reactorType: text("reactor_type").notNull(),
+  reactorId: varchar("reactor_id").notNull(),
+  reactorName: text("reactor_name").notNull(),
+  emoji: text("emoji").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type MessageReaction = typeof messageReactions.$inferSelect;
+
+export const clientChatTokens = pgTable("client_chat_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientId: varchar("client_id").notNull().references(() => clients.id, { onDelete: "cascade" }),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  tripId: varchar("trip_id").notNull(),
+  token: varchar("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type ClientChatToken = typeof clientChatTokens.$inferSelect;
 
 export const conversationsRelations = relations(conversations, ({ one, many }) => ({
   organization: one(organizations, {

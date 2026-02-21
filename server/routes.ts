@@ -12,6 +12,7 @@ import { checkSingleFlight } from "./flight-tracker";
 import { differenceInCalendarDays } from "date-fns";
 import { sendTeamInviteEmail, sendClientPortalInviteEmail, sendSelectionSubmittedEmail } from "./email";
 import { segmentVariants, tripSegments, trips, profiles, clients } from "@shared/schema";
+import { broadcastNewMessage, broadcastReactionUpdate, broadcastSeen } from "./websocket";
 import webpush from "web-push";
 
 const objectStorageService = new ObjectStorageService();
@@ -1975,6 +1976,7 @@ export async function registerRoutes(
         content: req.body.content,
         isRead: false,
       });
+      broadcastNewMessage(req.params.id, msg);
       sendPushToOrg(req._orgId, {
         title: `New message from ${profile?.fullName || "Advisor"}`,
         body: req.body.content?.substring(0, 100) || "New message",
@@ -2001,6 +2003,127 @@ export async function registerRoutes(
       res.json({ unreadCount });
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch unread count" });
+    }
+  });
+
+  // ── Chat token for client widget ──
+  app.get("/api/chat-token", async (req: any, res) => {
+    try {
+      const { tripId, shareToken } = req.query;
+      if (!tripId || !shareToken) return res.status(400).json({ message: "tripId and shareToken required" });
+
+      const data = await storage.getTripFullView(tripId as string);
+      if (!data) return res.status(404).json({ message: "Trip not found" });
+      if (!data.trip.shareEnabled || data.trip.shareToken !== shareToken) {
+        return res.status(403).json({ message: "Invalid share token" });
+      }
+      if (!data.trip.clientId) return res.status(400).json({ message: "Trip has no client" });
+
+      const convo = await storage.getOrCreateConversation(data.trip.orgId, data.trip.clientId);
+      const chatToken = await storage.createClientChatToken(data.trip.clientId, data.trip.orgId, tripId as string);
+
+      res.json({
+        chatToken,
+        conversationId: convo.id,
+        clientId: data.trip.clientId,
+        clientName: data.client?.fullName || "Client",
+        orgId: data.trip.orgId,
+        advisorName: data.advisor?.fullName || "Your Advisor",
+        advisorAvatar: data.advisor?.avatarUrl || null,
+      });
+    } catch (error) {
+      console.error("Chat token error:", error);
+      res.status(500).json({ message: "Failed to create chat token" });
+    }
+  });
+
+  app.post("/api/conversations/:id/messages/client", async (req: any, res) => {
+    try {
+      const { content, chatToken } = req.body;
+      if (!content || !chatToken) return res.status(400).json({ message: "content and chatToken required" });
+
+      const tokenData = await storage.validateClientChatToken(chatToken);
+      if (!tokenData) return res.status(401).json({ message: "Invalid or expired chat token" });
+
+      const convo = await storage.getConversationById(req.params.id);
+      if (!convo || convo.orgId !== tokenData.orgId || convo.clientId !== tokenData.clientId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const client = await storage.getClient(tokenData.clientId, tokenData.orgId);
+      const msg = await storage.createMessage({
+        conversationId: req.params.id,
+        orgId: tokenData.orgId,
+        senderType: "client",
+        senderId: tokenData.clientId,
+        senderName: client?.fullName || "Client",
+        content,
+        isRead: false,
+      });
+      broadcastNewMessage(req.params.id, msg);
+      sendPushToOrg(tokenData.orgId, {
+        title: `New message from ${client?.fullName || "Client"}`,
+        body: content.substring(0, 100),
+        url: `/dashboard/messages?id=${req.params.id}`,
+      }).catch(() => {});
+      res.json(msg);
+    } catch (error) {
+      console.error("Client message error:", error);
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
+  app.post("/api/conversations/:id/read/client", async (req: any, res) => {
+    try {
+      const { chatToken } = req.body;
+      if (!chatToken) return res.status(400).json({ message: "chatToken required" });
+
+      const tokenData = await storage.validateClientChatToken(chatToken);
+      if (!tokenData) return res.status(401).json({ message: "Invalid or expired token" });
+
+      const convo = await storage.getConversationById(req.params.id);
+      if (!convo || convo.orgId !== tokenData.orgId || convo.clientId !== tokenData.clientId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      await storage.markConversationSeenByClient(req.params.id);
+      broadcastSeen(req.params.id, new Date().toISOString());
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Client read error:", error);
+      res.status(500).json({ message: "Failed to mark as read" });
+    }
+  });
+
+  app.post("/api/conversations/:id/messages/:messageId/reactions", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { emoji } = req.body;
+      const validEmoji = ["❤️", "👍", "😂", "😮", "😢", "👎"];
+      if (!emoji || !validEmoji.includes(emoji)) return res.status(400).json({ message: "Invalid emoji" });
+
+      const profile = await storage.getProfile(req._userId);
+      const reaction = await storage.addReaction(
+        req.params.messageId, req.params.id, req._orgId,
+        "advisor", req._userId, profile?.fullName || "Advisor", emoji
+      );
+      const reactions = await storage.getReactionsForMessage(req.params.messageId);
+      broadcastReactionUpdate(req.params.id, req.params.messageId, reactions);
+      res.json(reactions);
+    } catch (error) {
+      console.error("Add reaction error:", error);
+      res.status(500).json({ message: "Failed to add reaction" });
+    }
+  });
+
+  app.delete("/api/conversations/:id/messages/:messageId/reactions", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      await storage.removeReaction(req.params.messageId, req._userId, "advisor");
+      const reactions = await storage.getReactionsForMessage(req.params.messageId);
+      broadcastReactionUpdate(req.params.id, req.params.messageId, reactions);
+      res.json(reactions);
+    } catch (error) {
+      console.error("Remove reaction error:", error);
+      res.status(500).json({ message: "Failed to remove reaction" });
     }
   });
 

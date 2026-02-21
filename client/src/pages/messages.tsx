@@ -1,25 +1,20 @@
-import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation, Link } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  ArrowLeft,
   Search,
-  Send,
   MessageCircle,
-  Plane,
   Bell,
   X,
 } from "lucide-react";
-import type { Conversation, Message, Trip } from "@shared/schema";
+import type { Conversation } from "@shared/schema";
 import { format, isToday, isYesterday } from "date-fns";
+import { ChatThread } from "@/components/chat-thread";
 
 type ConversationWithClient = Conversation & {
   clientName: string;
@@ -37,11 +32,6 @@ function formatTime(date: string | Date | null): string {
   if (isToday(d)) return format(d, "h:mm a");
   if (isYesterday(d)) return "Yesterday";
   return format(d, "MMM d");
-}
-
-function formatMessageTime(date: string | Date | null): string {
-  if (!date) return "";
-  return format(new Date(date), "h:mm a");
 }
 
 function ConversationList({
@@ -152,219 +142,6 @@ function ConversationList({
             <p className="text-sm text-muted-foreground/40">No results for "{searchQuery}"</p>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function TripBanner({ clientId }: { clientId: string }) {
-  const { data: trips } = useQuery<Trip[]>({
-    queryKey: ["/api/clients", clientId, "trips"],
-    queryFn: async () => {
-      const res = await fetch(`/api/clients/${clientId}/trips`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
-
-  const activeTrip = trips?.find(
-    (t) => t.status === "planning" || t.status === "confirmed" || t.status === "in_progress"
-  );
-
-  if (!activeTrip) return null;
-
-  return (
-    <Link href={`/trips/${activeTrip.id}/edit`}>
-      <div
-        className="flex items-center gap-2 px-4 py-2 bg-primary/5 border-b border-border/30 text-xs hover-elevate cursor-pointer"
-        data-testid="banner-active-trip"
-      >
-        <Plane className="w-3.5 h-3.5 text-primary shrink-0" strokeWidth={1.5} />
-        <span className="truncate">
-          <span className="font-medium">{activeTrip.title}</span>
-          {activeTrip.startDate && (
-            <span className="text-muted-foreground ml-1.5">
-              {format(new Date(activeTrip.startDate), "MMM d")}
-              {activeTrip.endDate && ` – ${format(new Date(activeTrip.endDate), "MMM d")}`}
-            </span>
-          )}
-        </span>
-      </div>
-    </Link>
-  );
-}
-
-function ChatThread({
-  conversationId,
-  clientName,
-  clientAvatarUrl,
-  clientId,
-  onBack,
-  showBack,
-}: {
-  conversationId: string;
-  clientName: string;
-  clientAvatarUrl: string | null;
-  clientId: string;
-  onBack: () => void;
-  showBack: boolean;
-}) {
-  const [input, setInput] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const { data: msgs, isLoading } = useQuery<Message[]>({
-    queryKey: ["/api/conversations", conversationId, "messages"],
-    queryFn: async () => {
-      const res = await fetch(`/api/conversations/${conversationId}/messages`, {
-        credentials: "include",
-      });
-      if (!res.ok) return [];
-      return res.json();
-    },
-    refetchInterval: 5000,
-  });
-
-  const markReadMutation = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/conversations/${conversationId}/read`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/messages/unread-count"] });
-    },
-  });
-
-  const sendMutation = useMutation({
-    mutationFn: async (content: string) => {
-      const res = await apiRequest("POST", `/api/conversations/${conversationId}/messages`, {
-        content,
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/conversations", conversationId, "messages"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
-    },
-  });
-
-  useEffect(() => {
-    if (conversationId) markReadMutation.mutate();
-  }, [conversationId]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [msgs]);
-
-  const handleSend = () => {
-    const text = input.trim();
-    if (!text || sendMutation.isPending) return;
-    sendMutation.mutate(text);
-    setInput("");
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 shrink-0 bg-background">
-        {showBack && (
-          <Button variant="ghost" size="icon" onClick={onBack} data-testid="button-back-messages">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        )}
-        <Avatar className="w-8 h-8 shrink-0">
-          <AvatarImage src={clientAvatarUrl || undefined} />
-          <AvatarFallback className="text-[10px] bg-primary/10 text-primary">
-            {getInitials(clientName)}
-          </AvatarFallback>
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium truncate" data-testid="text-thread-client-name">{clientName}</p>
-        </div>
-      </div>
-
-      <TripBanner clientId={clientId} />
-
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3" data-testid="messages-thread">
-        {isLoading ? (
-          <div className="space-y-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className={`flex ${i % 2 ? "justify-start" : "justify-end"}`}>
-                <Skeleton className="h-10 w-48 rounded-xl" />
-              </div>
-            ))}
-          </div>
-        ) : msgs && msgs.length > 0 ? (
-          msgs.map((msg) => {
-            const isAdvisor = msg.senderType === "advisor";
-            return (
-              <div
-                key={msg.id}
-                className={`flex ${isAdvisor ? "justify-end" : "justify-start"}`}
-                data-testid={`message-${msg.id}`}
-              >
-                <div
-                  className={`max-w-[80%] md:max-w-[65%] rounded-2xl px-4 py-2.5 ${
-                    isAdvisor
-                      ? "bg-primary text-primary-foreground rounded-br-md"
-                      : "bg-muted rounded-bl-md"
-                  }`}
-                >
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
-                  <p
-                    className={`text-[10px] mt-1 ${
-                      isAdvisor ? "text-primary-foreground/60" : "text-muted-foreground/60"
-                    }`}
-                  >
-                    {formatMessageTime(msg.createdAt)}
-                  </p>
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <MessageCircle className="w-8 h-8 text-muted-foreground/15 mb-3" strokeWidth={1} />
-            <p className="text-sm text-muted-foreground/30">
-              Start a conversation with {clientName}
-            </p>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div className="shrink-0 border-t border-border/50 px-3 py-2.5 bg-background" data-testid="message-input-area">
-        <div className="flex items-end gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message..."
-            rows={1}
-            className="flex-1 resize-none bg-muted/50 rounded-xl px-4 py-2.5 text-sm border-0 focus:outline-none focus:ring-1 focus:ring-primary/30 max-h-32 min-h-[40px]"
-            style={{ height: "auto", overflow: "hidden" }}
-            onInput={(e) => {
-              const el = e.currentTarget;
-              el.style.height = "auto";
-              el.style.height = Math.min(el.scrollHeight, 128) + "px";
-            }}
-            data-testid="textarea-message-input"
-          />
-          <Button
-            size="icon"
-            onClick={handleSend}
-            disabled={!input.trim() || sendMutation.isPending}
-            className="shrink-0 rounded-full"
-            data-testid="button-send-message"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
-        </div>
       </div>
     </div>
   );
