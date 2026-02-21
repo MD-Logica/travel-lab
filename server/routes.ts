@@ -672,7 +672,9 @@ export async function registerRoutes(
     try {
       const { segmentId, variantId } = req.params;
       const token = req.query.token as string;
-      if (!token) return res.status(401).json({ message: "Token required" });
+      const orgId = req._orgId;
+
+      if (!token && !orgId) return res.status(401).json({ message: "Authentication required" });
 
       const { db } = await import("./db");
       const { eq } = await import("drizzle-orm");
@@ -680,10 +682,22 @@ export async function registerRoutes(
         .from(tripSegments).where(eq(tripSegments.id, segmentId));
       if (!seg) return res.status(404).json({ message: "Segment not found" });
 
-      const [trip] = await db.select({ shareToken: trips.shareToken, shareEnabled: trips.shareEnabled })
-        .from(trips).where(eq(trips.id, seg.tripId));
-      if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+      if (token) {
+        const [trip] = await db.select({ shareToken: trips.shareToken, shareEnabled: trips.shareEnabled })
+          .from(trips).where(eq(trips.id, seg.tripId));
+        if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+      } else if (orgId !== seg.orgId) {
         return res.status(403).json({ message: "Access denied" });
+      }
+
+      if (variantId === "none" || variantId === "") {
+        await db.update(segmentVariants).set({ isSelected: false })
+          .where(eq(segmentVariants.segmentId, segmentId));
+        const allVariants = await db.select().from(segmentVariants)
+          .where(eq(segmentVariants.segmentId, segmentId));
+        return res.json(allVariants);
       }
 
       const variants = await storage.selectVariant(segmentId, variantId);

@@ -1,0 +1,44 @@
+Two fixes for transport segments. Change only the specified files.
+
+---
+
+**Issue A — Transport fields must change dynamically based on type selected**
+
+File: `client/src/components/segment-editor.tsx` — `TransportFields` component
+
+Currently all transport types show the same fields. Make the fields conditional on `metadata.transportType`. Use this field layout by type:
+
+**car / transfer / other** (keep existing fields):
+Provider, Vehicle Details, Pickup Location + Date/Time, Drop-off Location + Date/Time, Driver Name, Driver Phone, Confirmation Number
+
+**train**:
+Operator (e.g. Trenitalia, Eurostar), Train/Service Number (`metadata.trainNumber`), Departure Station (`metadata.departureStation`) + Date/Time (`metadata.departureTime`), Arrival Station (`metadata.arrivalStation`) + Arrival Time (`metadata.arrivalTime`), Coach/Car (`metadata.coachNumber`), Seat Number (`metadata.seatNumber`), Booking Reference (`metadata.confirmationNumber`)
+
+**bus**:
+Operator, Route Number/Name (`metadata.routeNumber`), Departure Terminal/Stop (`metadata.departureStop`) + Date/Time, Arrival Terminal/Stop (`metadata.arrivalStop`) + Arrival Time, Seat Number (`metadata.seatNumber`), Booking Reference (`metadata.confirmationNumber`)
+
+**ferry**:
+Operator, Vessel/Ferry Name (`metadata.vesselName`), Departure Port (`metadata.departurePort`) + Date/Time, Arrival Port (`metadata.arrivalPort`) + Arrival Time, Cabin/Deck class (`metadata.cabinClass`), Booking Reference (`metadata.confirmationNumber`)
+
+When the user switches transport type (clicks a different type button), clear only the type-specific fields — keep provider and confirmation number as they are universal.
+
+---
+
+**Issue B — Transport shows nothing in the client preview**
+
+File: `client/src/pages/trip-view.tsx`
+
+There is no `case "transport"` in the `SegmentView` switch statement — transport segments render nothing.
+
+Create a `TransportViewCard` component and add `case "transport": return <TransportViewCard segment={segment} timeFormat={timeFormat} />` to the switch.
+
+`TransportViewCard` should display, based on `meta.transportType`:
+
+- **Header**: transport type icon (Car, Train, Bus, Anchor for ferry) + type label + provider name
+- **car/transfer/other**: pickup location → drop-off location, pickup time, driver name + phone, vehicle details, confirmation number
+- **train**: departure station → arrival station, train number, departure/arrival times, coach + seat, booking ref
+- **bus**: departure stop → arrival stop, route number, times, seat, booking ref  
+- **ferry**: departure port → arrival port, vessel name, times, cabin class, booking ref
+- If `showPricing` is true and `segment.cost > 0`, show the cost
+
+Style it consistently with the other segment cards (rounded border, colored left bar, type icon in colored circle in top-left).

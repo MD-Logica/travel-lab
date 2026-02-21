@@ -17,7 +17,7 @@ import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   Clock, MapPin, Hash, ChevronDown, Calendar, Download, Star,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Users,
-  ArrowRight, FileDown, CalendarPlus, Diamond, CheckCircle, Send,
+  ArrowRight, FileDown, CalendarPlus, Diamond, CheckCircle, Send, Lock,
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
@@ -448,7 +448,7 @@ function GenericCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, localSelections, onSelectVariant }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h"; variantMap?: Record<string, any[]>; localSelections?: Record<string, string>; onSelectVariant?: (segmentId: string, variantId: string) => void }) {
+function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, localSelections, onSelectVariant, lockedSegments }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h"; variantMap?: Record<string, any[]>; localSelections?: Record<string, string>; onSelectVariant?: (segmentId: string, variantId: string) => void; lockedSegments?: Set<string> }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
   const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
@@ -616,6 +616,7 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, lo
                 variants={variants}
                 selectedVariantId={localSelections?.[primaryLeg.id]}
                 onSelect={onSelectVariant}
+                locked={lockedSegments?.has(primaryLeg.id)}
               />
             </div>
           );
@@ -824,32 +825,52 @@ function VariantCards({
   variants,
   selectedVariantId,
   onSelect,
+  locked,
 }: {
   segment: TripSegment;
   variants: any[];
   selectedVariantId?: string;
   onSelect: (segmentId: string, variantId: string) => void;
+  locked?: boolean;
 }) {
+  const noSelection = !selectedVariantId;
   return (
     <div className="ml-4 pl-4 border-l-2 border-primary/20 space-y-2" data-testid={`variant-list-${segment.id}`}>
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">Choose an option</p>
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+        {locked ? "Selected option" : "Choose an option"}
+      </p>
+      {!locked && (
+        <button
+          type="button"
+          onClick={() => onSelect(segment.id, "")}
+          className={`w-full text-left rounded-md border p-3 transition-all relative ${
+            noSelection
+              ? "bg-primary/5 ring-1 ring-primary border-primary/30"
+              : "bg-card border-border/60 hover:border-primary/40"
+          }`}
+          data-testid={`variant-card-no-preference-${segment.id}`}
+        >
+          <p className="text-sm text-muted-foreground italic">No preference</p>
+        </button>
+      )}
       {variants.map((v: any) => {
         const isSelected = selectedVariantId === v.id;
+        if (locked && !isSelected) return null;
         return (
           <button
             key={v.id}
             type="button"
-            onClick={() => onSelect(segment.id, v.id)}
+            onClick={locked ? undefined : () => onSelect(segment.id, v.id)}
             className={`w-full text-left rounded-md border p-3 transition-all relative ${
               isSelected
                 ? "bg-primary/5 ring-1 ring-primary border-primary/30"
                 : "bg-card border-border/60 hover:border-primary/40"
-            }`}
+            } ${locked ? "cursor-default" : ""}`}
             data-testid={`variant-card-${v.id}`}
           >
             {isSelected && (
               <div className="absolute top-2 right-2">
-                <CheckCircle className="w-4 h-4 text-primary" />
+                {locked ? <Lock className="w-4 h-4 text-muted-foreground" /> : <CheckCircle className="w-4 h-4 text-primary" />}
               </div>
             )}
             <p className="text-sm font-medium pr-6">{v.label}</p>
@@ -894,6 +915,7 @@ function DayAccordion({
   variantMap,
   localSelections,
   onSelectVariant,
+  lockedSegments,
 }: {
   dayNumber: number;
   segments: TripSegment[];
@@ -905,6 +927,7 @@ function DayAccordion({
   variantMap?: Record<string, any[]>;
   localSelections?: Record<string, string>;
   onSelectVariant?: (segmentId: string, variantId: string) => void;
+  lockedSegments?: Set<string>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -936,7 +959,7 @@ function DayAccordion({
             <div className="pb-6 space-y-3">
               {buildViewDayRenderItems(segments).map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} localSelections={localSelections} onSelectVariant={onSelectVariant} />;
+                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} localSelections={localSelections} onSelectVariant={onSelectVariant} lockedSegments={lockedSegments} />;
                 }
                 if (item.kind === "propertyGroup") {
                   return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
@@ -953,6 +976,7 @@ function DayAccordion({
                           variants={variants}
                           selectedVariantId={localSelections?.[seg.id]}
                           onSelect={onSelectVariant}
+                          locked={lockedSegments?.has(seg.id)}
                         />
                       </div>
                     )}
@@ -1032,11 +1056,20 @@ export default function TripViewPage() {
   }, [data, token]);
 
   const selectVariant = useCallback(async (segmentId: string, variantId: string) => {
-    setLocalSelections(prev => ({ ...prev, [segmentId]: variantId }));
+    setLocalSelections(prev => {
+      const next = { ...prev };
+      if (variantId) {
+        next[segmentId] = variantId;
+      } else {
+        delete next[segmentId];
+      }
+      return next;
+    });
     try {
+      const vid = variantId || "none";
       const url = token
-        ? `/api/segments/${segmentId}/variants/${variantId}/select?token=${token}`
-        : `/api/segments/${segmentId}/variants/${variantId}/select`;
+        ? `/api/segments/${segmentId}/variants/${vid}/select?token=${token}`
+        : `/api/segments/${segmentId}/variants/${vid}/select`;
       await fetch(url, { method: "POST", credentials: "include" });
     } catch {}
   }, [token]);
@@ -1057,6 +1090,19 @@ export default function TripViewPage() {
     if (selectedVersionId) return data.versions.find(v => v.id === selectedVersionId) || null;
     return data.versions.find(v => v.isPrimary) || data.versions[0] || null;
   }, [data, selectedVersionId]);
+
+  const lockedSegments = useMemo(() => {
+    const locked = new Set<string>();
+    if (submitSuccess) {
+      Object.keys(localSelections).forEach(segId => locked.add(segId));
+    }
+    Object.entries(variantMap).forEach(([segId, variants]) => {
+      if (variants.some((v: any) => v.isSubmitted)) {
+        locked.add(segId);
+      }
+    });
+    return locked;
+  }, [variantMap, submitSuccess, localSelections]);
 
   const dayGroups = useMemo(() => {
     if (!activeVersion) return [];
@@ -1288,6 +1334,7 @@ export default function TripViewPage() {
                 variantMap={variantMap}
                 localSelections={localSelections}
                 onSelectVariant={selectVariant}
+                lockedSegments={lockedSegments}
               />
             ))
           )}
@@ -1372,7 +1419,8 @@ export default function TripViewPage() {
         const totalVariantSegments = variantSegments.length;
         if (totalVariantSegments === 0) return null;
         const selectedCount = variantSegments.filter(s => localSelections[s.id]).length;
-        if (selectedCount === 0 && !trip.selectionsSubmittedAt) return null;
+        const allLocked = variantSegments.every(s => lockedSegments.has(s.id));
+        if (selectedCount === 0 && !trip.selectionsSubmittedAt && !submitSuccess) return null;
 
         return (
           <>
@@ -1385,25 +1433,37 @@ export default function TripViewPage() {
                 className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
                 data-testid="variant-submit-bar"
               >
-                <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
-                  <span className="text-sm font-medium">
-                    {selectedCount} of {totalVariantSegments} selected
-                  </span>
-                  {trip.selectionsSubmittedAt ? (
-                    <span className="text-xs opacity-70">
-                      Last submitted {format(new Date(trip.selectionsSubmittedAt), "d MMM")}
+                {allLocked || submitSuccess ? (
+                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-emerald-600 text-white shadow-2xl">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">Selections submitted</span>
+                    {trip.selectionsSubmittedAt && (
+                      <span className="text-xs opacity-80">
+                        {format(new Date(trip.selectionsSubmittedAt), "d MMM")}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
+                    <span className="text-sm font-medium">
+                      {selectedCount} of {totalVariantSegments} selected
                     </span>
-                  ) : null}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="rounded-full"
-                    onClick={() => { setSubmitSuccess(false); setSubmitSheetOpen(true); }}
-                    data-testid="button-review-submit"
-                  >
-                    Review & Submit <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                  </Button>
-                </div>
+                    {trip.selectionsSubmittedAt ? (
+                      <span className="text-xs opacity-70">
+                        Last submitted {format(new Date(trip.selectionsSubmittedAt), "d MMM")}
+                      </span>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="rounded-full"
+                      onClick={() => { setSubmitSuccess(false); setSubmitSheetOpen(true); }}
+                      data-testid="button-review-submit"
+                    >
+                      Review & Submit <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                    </Button>
+                  </div>
+                )}
               </motion.div>
             </AnimatePresence>
 

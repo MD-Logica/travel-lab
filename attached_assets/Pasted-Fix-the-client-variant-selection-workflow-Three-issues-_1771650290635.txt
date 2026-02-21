@@ -1,0 +1,39 @@
+Fix the client variant selection workflow. Three issues to address — change only the specified files.
+
+---
+
+**Issue A — Can't clear/revert a selection (`client/src/pages/trip-view.tsx`)**
+
+In `VariantCards`, add a `"No preference"` row at the top of the variant list. When clicked, it calls `onSelectVariant(segment.id, "")` (empty string). This should visually deselect all variants for that segment (none highlighted).
+
+In `server/routes.ts`, in the `POST /api/segments/:segmentId/variants/:variantId/select` route — handle `variantId === "none"` or an empty string as a signal to unselect all variants for that segment (set `isSelected = false` on all of them) without selecting any new one.
+
+---
+
+**Issue B — Submission state persists incorrectly; submit loop (`client/src/pages/trip-view.tsx`)**
+
+After a successful `POST /api/trips/:tripId/submit-selections`, the page must enter a locked confirmed state:
+
+1. Set a local state `isSubmitted = true`
+2. Initialize `isSubmitted` from `trip.selectionsSubmittedAt` — if it exists when the page loads, start in confirmed state immediately
+3. When `isSubmitted === true`:
+   - Replace the bottom sticky bar with: `"✓ Preferences sent to [advisor name] on [formatted date]"` in a green/emerald bar
+   - Make all variant cards non-interactive (show selected option highlighted, remove click handlers, show a lock icon)
+   - Hide the "Review & Submit" button entirely
+
+---
+
+**Issue C — Advisor gets no in-app notification (`server/routes.ts` and `client/src/pages/trip-edit.tsx`)**
+
+**Server**: In `POST /api/trips/:tripId/submit-selections`, after calling `storage.submitVariantsForTrip(tripId)`, also update the trip record:
+```typescript
+await storage.updateTrip(tripId, trip.orgId, { selectionsSubmittedAt: new Date() } as any);
+```
+
+**Client**: In `trip-edit.tsx`, in the trip header area (near the status badge), check `trip.selectionsSubmittedAt`. If it's set, show a prominent amber notification banner directly below the version tab bar:
+
+```
+🔔 Client submitted their preferences on [date] — review options below
+```
+
+Style it as a full-width amber/yellow banner with a dismiss button (sets a local `selectionBannerDismissed` state). This makes it impossible to miss when the advisor opens the builder.

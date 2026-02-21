@@ -40,7 +40,7 @@ import {
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
   ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
-  Link2, ExternalLink, RotateCcw, Users,
+  Link2, ExternalLink, RotateCcw, Users, CheckCircle,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -2521,6 +2521,20 @@ export default function TripEditPage() {
           </div>
         </div>
       </div>
+
+      {trip.selectionsSubmittedAt && (
+        <div className="mx-4 md:mx-6 mt-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 flex items-start gap-3" data-testid="banner-client-selections">
+          <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-emerald-900 dark:text-emerald-200">
+              Client submitted their selections
+            </p>
+            <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-0.5">
+              Received {format(new Date(trip.selectionsSubmittedAt), "d MMM yyyy 'at' h:mm a")}
+            </p>
+          </div>
+        </div>
+      )}
 
       {(() => {
         const budgetAmount = Number(trip.budget || 0);
