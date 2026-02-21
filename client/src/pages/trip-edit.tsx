@@ -39,7 +39,7 @@ import {
   StickyNote, Clock, DollarSign, Hash, MoreVertical, Pencil, Trash2,
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
-  ChevronDown, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
+  ChevronDown, ChevronUp, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
   Link2, ExternalLink, RotateCcw, Users, CheckCircle,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1285,6 +1285,9 @@ function EditTripSheet({ trip, open, onOpenChange }: {
   const [coverImageUrl, setCoverImageUrl] = useState(trip.coverImageUrl || "");
   const [clientSearch, setClientSearch] = useState("");
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
+  const [companionIds, setCompanionIds] = useState<string[]>((trip.additionalClientIds as string[]) || []);
+  const [companionPopover, setCompanionPopover] = useState(false);
+  const [companionSearch, setCompanionSearch] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -1298,6 +1301,8 @@ function EditTripSheet({ trip, open, onOpenChange }: {
       setCurrency(trip.currency || "USD");
       setCoverImageUrl(trip.coverImageUrl || "");
       setClientSearch("");
+      setCompanionIds((trip.additionalClientIds as string[]) || []);
+      setCompanionSearch("");
     }
   }, [open, trip]);
 
@@ -1335,6 +1340,7 @@ function EditTripSheet({ trip, open, onOpenChange }: {
         budget: budget ? parseInt(budget) : null,
         currency,
         coverImageUrl: coverImageUrl || null,
+        additionalClientIds: companionIds,
       };
       const res = await apiRequest("PATCH", `/api/trips/${trip.id}`, payload);
       return res.json();
@@ -1552,6 +1558,102 @@ function EditTripSheet({ trip, open, onOpenChange }: {
                   className="w-full h-full object-cover"
                   onError={(e) => { e.currentTarget.style.display = "none"; }}
                 />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <Label className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
+              <Users className="w-3 h-3" strokeWidth={1.5} />
+              Travel Companions
+            </Label>
+            <Popover open={companionPopover} onOpenChange={setCompanionPopover}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start font-normal"
+                  data-testid="button-edit-trip-companions"
+                >
+                  {companionIds.length > 0 ? (
+                    <span className="flex items-center gap-2">
+                      <Users className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.5} />
+                      {companionIds.length} companion{companionIds.length !== 1 ? "s" : ""} selected
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">Add travel companions</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-0" align="start">
+                <div className="p-2 border-b border-border/50">
+                  <Input
+                    placeholder="Search clients..."
+                    value={companionSearch}
+                    onChange={(e) => setCompanionSearch(e.target.value)}
+                    className="h-8 text-sm"
+                    data-testid="input-edit-companion-search"
+                  />
+                </div>
+                <div className="max-h-48 overflow-y-auto p-1">
+                  {clientsLoading ? (
+                    <div className="p-3 space-y-2">
+                      <Skeleton className="h-4 w-full" />
+                      <Skeleton className="h-4 w-3/4" />
+                    </div>
+                  ) : (clients || [])
+                    .filter((c) => c.id !== clientId)
+                    .filter((c) => {
+                      if (!companionSearch.trim()) return true;
+                      const q = companionSearch.toLowerCase();
+                      return c.fullName.toLowerCase().includes(q) || c.email?.toLowerCase().includes(q);
+                    })
+                    .slice(0, 20)
+                    .map((c) => {
+                      const isSelected = companionIds.includes(c.id);
+                      return (
+                        <label key={c.id} className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md hover:bg-muted/50 cursor-pointer">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => {
+                              setCompanionIds((prev) =>
+                                isSelected ? prev.filter((id) => id !== c.id) : [...prev, c.id]
+                              );
+                            }}
+                            data-testid={`checkbox-edit-companion-${c.id}`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm truncate">{c.fullName}</p>
+                            {c.email && <p className="text-xs text-muted-foreground truncate">{c.email}</p>}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  {(clients || []).filter((c) => c.id !== clientId).length === 0 && (
+                    <p className="px-2.5 py-2 text-sm text-muted-foreground text-center">No clients found</p>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+            {companionIds.length > 0 && clients && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {companionIds.map((cid) => {
+                  const c = clients.find((cl) => cl.id === cid);
+                  if (!c) return null;
+                  return (
+                    <Badge key={cid} variant="secondary" className="text-xs gap-1">
+                      {c.fullName}
+                      <button
+                        type="button"
+                        onClick={() => setCompanionIds((prev) => prev.filter((id) => id !== cid))}
+                        className="hover:text-foreground"
+                        data-testid={`button-remove-companion-${cid}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </Badge>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1995,6 +2097,7 @@ export default function TripEditPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", id, "full"] });
       toast({ title: "Discount saved" });
+      setShowDiscountEditor(false);
     },
     onError: (e: Error) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -2314,10 +2417,12 @@ export default function TripEditPage() {
                     <button className="flex items-center gap-1 hover:text-foreground transition-colors group" data-testid="button-edit-companions">
                       <Users className="w-3 h-3" strokeWidth={1.5} />
                       {companionNames.length > 0
-                        ? <>Traveling with: {companionNames.join(", ")}</>
-                        : <span className="text-muted-foreground">Add companions</span>
+                        ? <>
+                            <span>Traveling with: {companionNames.join(", ")}</span>
+                            <Pencil className="w-2.5 h-2.5 opacity-40 ml-0.5" />
+                          </>
+                        : <span className="text-muted-foreground underline underline-offset-2 decoration-dotted">Add travel companions</span>
                       }
-                      <Pencil className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60 transition-opacity ml-0.5" />
                     </button>
                   </PopoverTrigger>
                   <PopoverContent className="w-72 p-0" align="start">
@@ -2668,10 +2773,16 @@ export default function TripEditPage() {
               <div className="flex-1" />
               <button
                 onClick={() => setShowDiscountEditor(!showDiscountEditor)}
-                className="whitespace-nowrap hover:text-foreground transition-colors flex-shrink-0"
+                className="whitespace-nowrap hover:text-foreground transition-colors flex-shrink-0 flex items-center gap-1 text-[11px]"
                 data-testid="button-add-discount"
               >
-                {discountValue > 0 ? <Pencil className="h-3 w-3" /> : "+ Discount"}
+                {discountValue > 0 ? (
+                  showDiscountEditor
+                    ? <><ChevronUp className="h-3 w-3" /> Close</>
+                    : <><Pencil className="h-3 w-3" /> Edit discount</>
+                ) : (
+                  "+ Discount"
+                )}
               </button>
             </div>
             {showDiscountEditor && (
