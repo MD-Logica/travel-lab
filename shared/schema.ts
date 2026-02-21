@@ -54,6 +54,8 @@ export const profiles = pgTable("profiles", {
   phone: text("phone"),
   avatarUrl: text("avatar_url"),
   invitedBy: varchar("invited_by"),
+  website: text("website"),
+  timeFormat: text("time_format").notNull().default("24h"),
   canViewAllClients: boolean("can_view_all_clients").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

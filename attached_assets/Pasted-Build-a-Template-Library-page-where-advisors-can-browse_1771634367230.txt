@@ -1,0 +1,151 @@
+Build a Template Library page where advisors can browse,
+search, and manage saved segment templates. The save-as-template
+checkbox already works in the segment editor — this prompt
+adds the missing UI to access and use saved templates.
+
+─── PART 1: TEMPLATE LIBRARY PAGE ──────────────────────────────────────────
+
+Create: client/src/pages/templates.tsx
+
+This is a full page accessible from the main navigation.
+Add it to the nav as "Templates" with a Bookmark icon,
+between Clients and Settings.
+
+Page layout:
+  Header: "Template Library" with subtitle
+    "Reusable segments for hotels, flights, and activities"
+  Search input: filters by template label
+  Filter tabs: All | Flights | Hotels | Activities |
+               Restaurants | Transport
+
+TEMPLATE CARD:
+  Each saved template renders as a card showing:
+    - Type icon (same colored icons as segment editor)
+    - Label (template name)
+    - Key details from data field:
+        Flight: airline + route (dep → arr)
+        Hotel: hotel name + location
+        Activity: activity name
+        Restaurant: restaurant name
+    - "Used [n] times" in muted text
+    - Created by [advisor name] if org has multiple members
+    - Two action buttons:
+        [Use in trip ↗] [⋯ more]
+    - More menu: Edit label | Delete
+
+"Use in trip" button opens a small popover/dialog:
+  "Which trip?" — searchable dropdown of active trips
+  "Which day?" — number input or dropdown of days in that trip
+  Confirm button: creates the segment from template data
+  On success: navigate to that trip's editor
+
+─── PART 2: TEMPLATE TAGS / DESTINATION ────────────────────────────────────
+
+Add a tags column to segment_templates:
+
+  ALTER TABLE segment_templates
+    ADD COLUMN IF NOT EXISTS tags text[] DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS destination text;
+
+  destination: optional freetext e.g. "Rome", "Amalfi Coast"
+  tags: array e.g. ["luxury", "beach", "business"]
+
+Add to shared/schema.ts.
+
+In the segment editor's save-as-template section, add optional
+fields below the label input:
+
+  <Input
+    value={templateDestination}
+    onChange={(e) => setTemplateDestination(e.target.value)}
+    placeholder="Destination (optional, e.g. Santorini)"
+    className="h-7 text-xs mt-1.5"
+    data-testid="input-template-destination"
+  />
+
+On the template library page, add a destination filter:
+  A searchable dropdown populated from distinct destination
+  values across all org templates.
+
+─── PART 3: EDIT TEMPLATE ───────────────────────────────────────────────────
+
+In the template card's more menu, "Edit label" opens an
+inline edit on the card — the label becomes an input,
+with Save and Cancel buttons.
+
+On save: PATCH /api/segment-templates/:id
+  Body: { label, destination, tags }
+
+Do not allow editing the segment data itself from the
+library — to update a template's data, advisors save a
+new template from the segment editor.
+
+─── PART 4: TEMPLATE USAGE STATS ───────────────────────────────────────────
+
+The useCount field already exists on segment_templates.
+Currently it is never incremented. Update the segment
+creation flow:
+
+In the POST /api/trips/:tripId/versions/:versionId/segments
+route, if the request body includes a templateId field:
+
+  if (req.body.templateId) {
+    await storage.incrementTemplateUseCount(req.body.templateId,
+      req._orgId);
+  }
+
+Add storage.incrementTemplateUseCount(id, orgId):
+  UPDATE segment_templates
+  SET use_count = use_count + 1
+  WHERE id = $1 AND org_id = $2
+
+Display use_count on template cards as "Used X times"
+Sort templates by use_count DESC by default (most-used first).
+Add a sort option: "Most used" | "Recently added"
+
+─── PART 5: QUICK-USE FROM SEGMENT EDITOR ───────────────────────────────────
+
+The segment editor already has a Templates section in the
+add-segment menu (trip-edit.tsx lines ~1484-1507). This shows
+templates filtered by type.
+
+Improve this by:
+  1. Showing destination tag if set, below the template label
+  2. Showing use count as small muted text
+  3. Adding a search input above the template list in the
+     dropdown when there are more than 5 templates
+
+This makes the existing add-from-template flow more useful
+without rebuilding it.
+
+─── PART 6: NAVIGATION ──────────────────────────────────────────────────────
+
+Add Templates to the main navigation in the sidebar/nav
+component. Find where Clients and Settings nav items are
+defined and add between them:
+
+  {
+    path: "/templates",
+    label: "Templates",
+    icon: Bookmark,
+    testId: "nav-templates"
+  }
+
+Add the route in App.tsx or the router config:
+  <Route path="/templates" element={<Templates />} />
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+1. In segment editor, save a hotel segment as template
+   "Cipriani Venice" with destination "Venice"
+2. Navigate to Templates in sidebar — template appears
+3. Filter by Hotels tab — only hotel templates shown
+4. Search "Cipriani" — template appears
+5. Filter by destination "Venice" — template appears
+6. Click "Use in trip" → select a trip and day → segment
+   created in that trip's editor
+7. Use count increments from 0 to 1
+8. Sort by "Most used" — most-used templates float to top
+9. Edit label inline — saves correctly
+10. Delete template — removed from library and from the
+    add-segment dropdown in the editor
