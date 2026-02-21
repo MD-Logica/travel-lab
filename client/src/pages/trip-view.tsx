@@ -1996,37 +1996,138 @@ export default function TripViewPage() {
                       </p>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    By approving, you confirm that this itinerary version meets your expectations.
-                    Your advisor will proceed with bookings and finalise the arrangements.
-                  </p>
-                  <Button
-                    className="w-full"
-                    disabled={approvalPending}
-                    onClick={async () => {
-                      setApprovalPending(true);
-                      try {
-                        const res = await fetch(
-                          `/api/trips/${trip.id}/approve-version?token=${token}`,
-                          {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ versionId: activeVersion.id }),
+
+                  {(() => {
+                    const variantSegs = (activeVersion?.segments || []).filter((s: any) => s.hasVariants);
+                    if (variantSegs.length === 0) return null;
+
+                    const selectedCount = variantSegs.filter((s: any) => localSelections[s.id]).length;
+                    const totalCount = variantSegs.length;
+                    const allSelected = selectedCount === totalCount;
+
+                    return (
+                      <div className={`rounded-lg border p-3 space-y-2 ${
+                        allSelected
+                          ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800"
+                          : "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800"
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          {allSelected
+                            ? <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            : <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
                           }
-                        );
-                        if (res.ok) {
-                          setApprovalSuccess(true);
-                          setTimeout(() => setApproveSheetOpen(false), 2500);
+                          <p className={`text-xs font-medium ${
+                            allSelected
+                              ? "text-emerald-800 dark:text-emerald-300"
+                              : "text-amber-800 dark:text-amber-300"
+                          }`}>
+                            {allSelected
+                              ? `All ${totalCount} option${totalCount !== 1 ? "s" : ""} selected`
+                              : `${selectedCount} of ${totalCount} options selected`
+                            }
+                          </p>
+                        </div>
+
+                        <div className="space-y-1">
+                          {variantSegs.map((seg: any) => {
+                            const hasSelection = !!localSelections[seg.id];
+                            const selectedVariant = (variantMap[seg.id] || []).find((v: any) => v.id === localSelections[seg.id]);
+                            return (
+                              <div key={seg.id} className="flex items-center gap-2 text-xs">
+                                {hasSelection
+                                  ? <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                                  : <div className="w-3 h-3 rounded-full border-2 border-amber-400 shrink-0" />
+                                }
+                                <span className="text-foreground/70">{seg.title}</span>
+                                {hasSelection && selectedVariant && (
+                                  <span className="text-muted-foreground">· {selectedVariant.label}</span>
+                                )}
+                                {!hasSelection && (
+                                  <span className="text-amber-600 dark:text-amber-400 text-[10px]">Not yet selected</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {!allSelected && (
+                          <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed mt-1">
+                            You can still approve now and return to submit your remaining preferences — your advisor will be notified either way.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  <p className="text-sm text-muted-foreground">
+                    By approving, you confirm this itinerary meets your expectations. Your advisor will begin finalising arrangements.
+                  </p>
+
+                  {(() => {
+                    const variantSegs = (activeVersion?.segments || []).filter((s: any) => s.hasVariants);
+                    const selectedCount = variantSegs.filter((s: any) => localSelections[s.id]).length;
+                    const allSelected = variantSegs.length === 0 || selectedCount === variantSegs.length;
+
+                    return (
+                      <Button
+                        className="w-full"
+                        disabled={approvalPending}
+                        variant={allSelected ? "default" : "outline"}
+                        onClick={async () => {
+                          setApprovalPending(true);
+                          try {
+                            const res = await fetch(
+                              `/api/trips/${trip.id}/approve-version?token=${token}`,
+                              {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ versionId: activeVersion.id }),
+                              }
+                            );
+                            if (res.ok) {
+                              setApprovalSuccess(true);
+                              setTimeout(() => setApproveSheetOpen(false), 2500);
+                            }
+                          } catch {} finally {
+                            setApprovalPending(false);
+                          }
+                        }}
+                        data-testid="button-confirm-approve"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                        {approvalPending
+                          ? "Approving..."
+                          : allSelected
+                          ? `Approve ${activeVersion.name}`
+                          : `Approve ${activeVersion.name} anyway`
                         }
-                      } catch {} finally {
-                        setApprovalPending(false);
-                      }
-                    }}
-                    data-testid="button-confirm-approve"
-                  >
-                    <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
-                    {approvalPending ? "Approving..." : `Approve ${activeVersion.name}`}
-                  </Button>
+                      </Button>
+                    );
+                  })()}
+
+                  {(() => {
+                    const variantSegs = (activeVersion?.segments || []).filter((s: any) => s.hasVariants);
+                    const selectedCount = variantSegs.filter((s: any) => localSelections[s.id]).length;
+                    if (variantSegs.length === 0 || selectedCount === variantSegs.length) return null;
+
+                    return (
+                      <button
+                        type="button"
+                        className="w-full text-center text-xs text-primary hover:underline"
+                        onClick={() => {
+                          setApproveSheetOpen(false);
+                          const firstUnselected = variantSegs.find((s: any) => !localSelections[s.id]);
+                          if (firstUnselected) {
+                            document.querySelector(`[data-testid="variant-list-${firstUnselected.id}"]`)
+                              ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                          }
+                        }}
+                        data-testid="link-select-remaining"
+                      >
+                        Select remaining options first →
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </SheetContent>

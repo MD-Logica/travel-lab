@@ -759,7 +759,7 @@ function JourneyCard({
           </div>
         </div>
 
-        <div className="space-y-0 pl-4 border-l-2 border-sky-200/60 dark:border-sky-800/40 ml-4">
+        <div className={`space-y-0 border-l-2 border-sky-200/60 dark:border-sky-800/40 ${positionInDay != null ? "pl-[88px]" : "pl-[52px]"}`}>
           {legs.map((leg, i) => {
             const meta = (leg.metadata || {}) as Record<string, any>;
             const depIata = meta.departure?.iata || meta.departureAirport || "";
@@ -936,7 +936,7 @@ function PropertyGroupCard({
           </div>
         </div>
 
-        <div className="space-y-0 pl-4 border-l-2 border-amber-200/60 dark:border-amber-800/40 ml-4">
+        <div className="space-y-0 border-l-2 border-amber-200/60 dark:border-amber-800/40 pl-[52px]">
           {rooms.map((room) => {
             const meta = (room.metadata || {}) as Record<string, any>;
             const roomType = meta.roomType || room.title || "Room";

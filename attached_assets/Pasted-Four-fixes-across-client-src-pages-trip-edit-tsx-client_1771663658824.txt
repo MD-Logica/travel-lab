@@ -1,0 +1,389 @@
+Four fixes across `client/src/pages/trip-edit.tsx`, `client/src/components/segment-editor.tsx`, and `client/src/pages/trip-view.tsx`. No schema or server changes.
+
+---
+
+## Fix 1 — Journey card: legs aligned with header content, not card edge (`client/src/pages/trip-edit.tsx`)
+
+**Root cause:** The legs section uses `pl-4 border-l-2 ml-4`, which indents from the card's left edge. But the header content starts after: position badge (24px) + gap (8px) + plane icon (36px) + gap (8px) = ~76px from the card edge. The result is legs sitting far to the left of the content they're describing.
+
+**Fix:** Remove the outer indent from the legs container and instead align the left border with the plane icon. The plane icon is the visual anchor — the legs should feel like they belong under it.
+
+Find:
+```tsx
+<div className="space-y-0 pl-4 border-l-2 border-sky-200/60 dark:border-sky-800/40 ml-4">
+```
+
+The exact offset needed depends on whether `positionInDay` is present (adds 24px + 8px gap). Use CSS to align dynamically by wrapping the entire card content in a consistent grid. The simplest fix: remove the `ml-4` and `pl-4`, and instead add left padding equal to the header indent — position badge width (0 if absent, 32px if present) + icon width (36px) + gaps:
+
+Replace the legs section wrapper with:
+```tsx
+<div className="space-y-0 pl-[52px] border-l-2 border-sky-200/60 dark:border-sky-800/40">
+```
+
+Where `52px` = icon width (36px) + left gap (8px) + a small visual offset (8px) that aligns the border line with the left edge of the icon. If `positionInDay` is present, the content area shifts right — account for this:
+
+```tsx
+<div className={`space-y-0 border-l-2 border-sky-200/60 dark:border-sky-800/40 ${positionInDay != null ? "pl-[88px]" : "pl-[52px]"}`}>
+```
+
+Where `88px` = position badge (24px) + gap (8px) + icon (36px) + gap (8px) + offset (12px).
+
+This visually lines up the border with the plane icon and makes the leg rows read as a natural continuation of the header content.
+
+---
+
+## Fix 2 — Replace native date inputs with shadcn Calendar picker (`client/src/components/segment-editor.tsx`)
+
+**Currently:** Flight date fields use `<Input type="date">` and hotel check-in/out uses `<Input type="datetime-local">` — both are browser-native, inconsistent, and ugly.
+
+**Target:** Use the same `CalendarComponent` + `Popover` pattern already used in `trip-new.tsx`.
+
+**Step A — Imports.** At the top of `segment-editor.tsx`, add:
+```typescript
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { format as dateFnsFormat, parse as dateFnsParse, isValid } from "date-fns";
+```
+
+**Step B — Create a reusable `DatePickerField` component** inside the file, above the segment field components:
+
+```tsx
+function DatePickerField({
+  label,
+  value,
+  onChange,
+  testId,
+  placeholder = "Pick a date",
+}: {
+  label?: string;
+  value: string; // "yyyy-MM-dd" format
+  onChange: (val: string) => void;
+  testId?: string;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const parsed = value ? dateFnsParse(value, "yyyy-MM-dd", new Date()) : undefined;
+  const selected = parsed && isValid(parsed) ? parsed : undefined;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full flex items-center gap-2 h-9 rounded-md border border-input bg-background px-3 py-1 text-sm text-left hover:bg-accent/50 transition-colors"
+          data-testid={testId}
+        >
+          <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className={selected ? "text-foreground" : "text-muted-foreground"}>
+            {selected ? dateFnsFormat(selected, "MMM d, yyyy") : placeholder}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <CalendarComponent
+          mode="single"
+          selected={selected}
+          onSelect={(date) => {
+            onChange(date ? dateFnsFormat(date, "yyyy-MM-dd") : "");
+            setOpen(false);
+          }}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+```
+
+Make sure `CalendarIcon` is imported from lucide-react (it's likely already imported as `Calendar` — rename the import to avoid collision with the CalendarComponent: `import { Calendar as CalendarIcon } from "lucide-react"` or use whichever icon is already imported).
+
+**Step C — Replace flight date inputs.**
+
+Find the departure date field:
+```tsx
+<Input type="date" value={metadata.departureDate || ""} onChange={(e) => set("departureDate", e.target.value)} data-testid={`input-departure-date${suffix}`} />
+```
+Replace with:
+```tsx
+<DatePickerField
+  value={metadata.departureDate || ""}
+  onChange={(v) => set("departureDate", v)}
+  testId={`input-departure-date${suffix}`}
+/>
+```
+
+Find the arrival date field:
+```tsx
+<Input type="date" value={metadata.arrivalDate || ""} onChange={(e) => set("arrivalDate", e.target.value)} data-testid={`input-arrival-date${suffix}`} />
+```
+Replace with:
+```tsx
+<DatePickerField
+  value={metadata.arrivalDate || ""}
+  onChange={(v) => set("arrivalDate", v)}
+  testId={`input-arrival-date${suffix}`}
+/>
+```
+
+Apply the same replacement to the charter flight departure and arrival date fields (same pattern, `data-testid="input-charter-departure-date"` and `data-testid="input-charter-arrival-date"`).
+
+Also replace the flight search date input at the top of the flight search UI:
+```tsx
+<Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} data-testid={...} />
+```
+Replace with:
+```tsx
+<DatePickerField
+  value={searchDate}
+  onChange={setSearchDate}
+  testId={`input-flight-search-date${suffix}`}
+/>
+```
+
+**Step D — Hotel: split datetime-local into separate date + time fields.**
+
+Find the hotel Stay section:
+```tsx
+<FieldRow>
+  <div>
+    <FieldLabel>Check-in Date + Time</FieldLabel>
+    <Input type="datetime-local" value={metadata.checkInDateTime || ""} onChange={(e) => set("checkInDateTime", e.target.value)} data-testid="input-checkin-datetime" />
+  </div>
+  <div>
+    <FieldLabel>Check-out Date + Time</FieldLabel>
+    <Input type="datetime-local" value={metadata.checkOutDateTime || ""} onChange={(e) => set("checkOutDateTime", e.target.value)} data-testid="input-checkout-datetime" />
+  </div>
+</FieldRow>
+```
+
+Replace with two separate rows — one for dates (using the Calendar picker), one for times (using a clean time input):
+
+```tsx
+{/* Row 1: Check-in and check-out dates */}
+<FieldRow>
+  <div>
+    <FieldLabel>Check-in Date</FieldLabel>
+    <DatePickerField
+      value={metadata.checkInDate || (metadata.checkInDateTime ? metadata.checkInDateTime.split("T")[0] : "")}
+      onChange={(v) => {
+        const time = metadata.checkInTime || metadata.checkInDateTime?.split("T")[1]?.slice(0, 5) || "14:00";
+        set("checkInDate", v);
+        set("checkInDateTime", v && time ? `${v}T${time}` : v);
+      }}
+      testId="input-checkin-date"
+      placeholder="Check-in date"
+    />
+  </div>
+  <div>
+    <FieldLabel>Check-out Date</FieldLabel>
+    <DatePickerField
+      value={metadata.checkOutDate || (metadata.checkOutDateTime ? metadata.checkOutDateTime.split("T")[0] : "")}
+      onChange={(v) => {
+        const time = metadata.checkOutTime || metadata.checkOutDateTime?.split("T")[1]?.slice(0, 5) || "11:00";
+        set("checkOutDate", v);
+        set("checkOutDateTime", v && time ? `${v}T${time}` : v);
+      }}
+      testId="input-checkout-date"
+      placeholder="Check-out date"
+    />
+  </div>
+</FieldRow>
+
+{/* Row 2: Check-in and check-out times */}
+<FieldRow>
+  <div>
+    <FieldLabel>Check-in Time</FieldLabel>
+    <Input
+      type="time"
+      value={metadata.checkInTime || metadata.checkInDateTime?.split("T")[1]?.slice(0, 5) || ""}
+      onChange={(e) => {
+        const date = metadata.checkInDate || metadata.checkInDateTime?.split("T")[0] || "";
+        set("checkInTime", e.target.value);
+        set("checkInDateTime", date && e.target.value ? `${date}T${e.target.value}` : date);
+      }}
+      data-testid="input-checkin-time"
+    />
+  </div>
+  <div>
+    <FieldLabel>Check-out Time</FieldLabel>
+    <Input
+      type="time"
+      value={metadata.checkOutTime || metadata.checkOutDateTime?.split("T")[1]?.slice(0, 5) || ""}
+      onChange={(e) => {
+        const date = metadata.checkOutDate || metadata.checkOutDateTime?.split("T")[0] || "";
+        set("checkOutTime", e.target.value);
+        set("checkOutDateTime", date && e.target.value ? `${date}T${e.target.value}` : date);
+      }}
+      data-testid="input-checkout-time"
+    />
+  </div>
+</FieldRow>
+```
+
+This preserves backward compatibility — `checkInDateTime` / `checkOutDateTime` are still stored in the same field so existing data doesn't break, but the inputs are now split across two rows and the date uses the calendar picker.
+
+---
+
+## Fix 3 — Approval sheet shows options checklist and smart button state (`client/src/pages/trip-view.tsx`)
+
+**Design principle:** Never block approval — but always show the client exactly what they have and haven't decided yet. If everything is selected, great. If not, show what's missing, let them approve anyway, and confirm they can still come back to submit remaining preferences.
+
+**Find the approval sheet content** (the `<div className="mt-4 space-y-4">` block inside `approveSheetOpen`). Replace the existing content with:
+
+```tsx
+<div className="mt-4 space-y-4">
+  {/* Trip summary */}
+  <div className="p-4 rounded-lg bg-muted/50 border border-border/30">
+    <p className="text-sm font-medium">{activeVersion.name}</p>
+    <p className="text-xs text-muted-foreground mt-1">{trip.title}</p>
+    {trip.startDate && (
+      <p className="text-xs text-muted-foreground mt-0.5">
+        {formatDateRange(trip.startDate, trip.endDate)}
+      </p>
+    )}
+  </div>
+
+  {/* Options checklist — only shown if there are variant segments */}
+  {(() => {
+    const variantSegs = (activeVersion?.segments || []).filter(s => s.hasVariants);
+    if (variantSegs.length === 0) return null;
+
+    const selectedCount = variantSegs.filter(s => localSelections[s.id]).length;
+    const totalCount = variantSegs.length;
+    const allSelected = selectedCount === totalCount;
+
+    return (
+      <div className={`rounded-lg border p-3 space-y-2 ${
+        allSelected
+          ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800"
+          : "bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-800"
+      }`}>
+        <div className="flex items-center gap-2">
+          {allSelected
+            ? <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            : <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+          }
+          <p className={`text-xs font-medium ${
+            allSelected
+              ? "text-emerald-800 dark:text-emerald-300"
+              : "text-amber-800 dark:text-amber-300"
+          }`}>
+            {allSelected
+              ? `All ${totalCount} option${totalCount !== 1 ? "s" : ""} selected`
+              : `${selectedCount} of ${totalCount} options selected`
+            }
+          </p>
+        </div>
+
+        <div className="space-y-1">
+          {variantSegs.map((seg) => {
+            const hasSelection = !!localSelections[seg.id];
+            const selectedVariant = (variantMap[seg.id] || []).find((v: any) => v.id === localSelections[seg.id]);
+            return (
+              <div key={seg.id} className="flex items-center gap-2 text-xs">
+                {hasSelection
+                  ? <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                  : <div className="w-3 h-3 rounded-full border-2 border-amber-400 shrink-0" />
+                }
+                <span className="text-foreground/70">{seg.title}</span>
+                {hasSelection && selectedVariant && (
+                  <span className="text-muted-foreground">· {selectedVariant.label}</span>
+                )}
+                {!hasSelection && (
+                  <span className="text-amber-600 dark:text-amber-400 text-[10px]">Not yet selected</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {!allSelected && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed mt-1">
+            You can still approve now and return to submit your remaining preferences — your advisor will be notified either way.
+          </p>
+        )}
+      </div>
+    );
+  })()}
+
+  {/* Confirmation text */}
+  <p className="text-sm text-muted-foreground">
+    By approving, you confirm this itinerary meets your expectations. Your advisor will begin finalising arrangements.
+  </p>
+
+  {/* Approve button — always enabled, label changes based on options state */}
+  {(() => {
+    const variantSegs = (activeVersion?.segments || []).filter(s => s.hasVariants);
+    const selectedCount = variantSegs.filter(s => localSelections[s.id]).length;
+    const allSelected = variantSegs.length === 0 || selectedCount === variantSegs.length;
+
+    return (
+      <Button
+        className="w-full"
+        disabled={approvalPending}
+        variant={allSelected ? "default" : "outline"}
+        onClick={async () => {
+          setApprovalPending(true);
+          try {
+            const res = await fetch(
+              `/api/trips/${trip.id}/approve-version?token=${token}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ versionId: activeVersion.id }),
+              }
+            );
+            if (res.ok) {
+              setApprovalSuccess(true);
+              setTimeout(() => setApproveSheetOpen(false), 2500);
+            }
+          } catch {} finally {
+            setApprovalPending(false);
+          }
+        }}
+        data-testid="button-confirm-approve"
+      >
+        <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+        {approvalPending
+          ? "Approving..."
+          : allSelected
+          ? `Approve ${activeVersion.name}`
+          : `Approve ${activeVersion.name} anyway`
+        }
+      </Button>
+    );
+  })()}
+
+  {/* Secondary action: go select options first */}
+  {(() => {
+    const variantSegs = (activeVersion?.segments || []).filter(s => s.hasVariants);
+    const selectedCount = variantSegs.filter(s => localSelections[s.id]).length;
+    if (variantSegs.length === 0 || selectedCount === variantSegs.length) return null;
+
+    return (
+      <button
+        type="button"
+        className="w-full text-center text-xs text-primary hover:underline"
+        onClick={() => {
+          setApproveSheetOpen(false);
+          // Scroll to first unselected variant segment
+          const firstUnselected = variantSegs.find(s => !localSelections[s.id]);
+          if (firstUnselected) {
+            document.querySelector(`[data-testid="variant-list-${firstUnselected.id}"]`)
+              ?.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }}
+      >
+        Select remaining options first →
+      </button>
+    );
+  })()}
+</div>
+```
+
+This gives the client:
+1. A clear green/amber status panel showing exactly which options are done and which aren't
+2. An always-enabled approve button (never blocked)
+3. The button label softens to "Approve anyway" when options are pending — a gentle signal without a hard block
+4. A secondary "Select remaining options first →" link that closes the sheet and scrolls to the first unselected option
+5. A reassurance note that they can come back to submit preferences after approval

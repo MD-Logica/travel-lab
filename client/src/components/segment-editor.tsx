@@ -12,20 +12,67 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   X, Plus, ImageIcon, DollarSign, Star, Clock, MapPin, Phone,
   Globe, Hash, User, Truck, Train, Bus, Anchor,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Landmark, Palette,
   Dumbbell, Sparkles, Ticket, Search, Bookmark, Loader2, Check, Diamond,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Calendar as CalendarIcon,
 } from "lucide-react";
+import { format as dateFnsFormat, parse as dateFnsParse, isValid } from "date-fns";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PlacesAutocomplete, getPhotoUrl } from "@/components/places-autocomplete";
 import { PhoneInput } from "@/components/phone-input";
 import { CurrencyInput } from "@/components/currency-input";
 import type { TripSegment } from "@shared/schema";
+
+function DatePickerField({
+  value,
+  onChange,
+  testId,
+  placeholder = "Pick a date",
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  testId?: string;
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const parsed = value ? dateFnsParse(value, "yyyy-MM-dd", new Date()) : undefined;
+  const selected = parsed && isValid(parsed) ? parsed : undefined;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="w-full flex items-center gap-2 h-9 rounded-md border border-input bg-background px-3 py-1 text-sm text-left hover:bg-accent/50 transition-colors"
+          data-testid={testId}
+        >
+          <CalendarIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className={selected ? "text-foreground" : "text-muted-foreground"}>
+            {selected ? dateFnsFormat(selected, "MMM d, yyyy") : placeholder}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <CalendarComponent
+          mode="single"
+          selected={selected}
+          onSelect={(date) => {
+            onChange(date ? dateFnsFormat(date, "yyyy-MM-dd") : "");
+            setOpen(false);
+          }}
+          initialFocus
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 function deriveTitle(type: string, metadata: Record<string, any>): string {
   switch (type) {
@@ -237,7 +284,11 @@ function FlightSearchPanel({
         </div>
         <div className="flex-1 min-w-[120px]">
           <FieldLabel>Date (optional)</FieldLabel>
-          <Input type="date" value={searchDate} onChange={(e) => setSearchDate(e.target.value)} data-testid={`input-flight-search-date${suffix}`} />
+          <DatePickerField
+            value={searchDate}
+            onChange={setSearchDate}
+            testId={`input-flight-search-date${suffix}`}
+          />
         </div>
         <Button variant="default" size="default" onClick={handleSearch} disabled={isSearching || !searchNumber.trim()} data-testid={`button-search-flight${suffix}`}>
           {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4 mr-1.5" />}
@@ -351,7 +402,11 @@ function FlightSearchPanel({
       <FieldRow>
         <div>
           <FieldLabel>Date</FieldLabel>
-          <Input type="date" value={metadata.departureDate || ""} onChange={(e) => set("departureDate", e.target.value)} data-testid={`input-departure-date${suffix}`} />
+          <DatePickerField
+            value={metadata.departureDate || ""}
+            onChange={(v) => set("departureDate", v)}
+            testId={`input-departure-date${suffix}`}
+          />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
@@ -367,7 +422,11 @@ function FlightSearchPanel({
       <FieldRow>
         <div>
           <FieldLabel>Date</FieldLabel>
-          <Input type="date" value={metadata.arrivalDate || ""} onChange={(e) => set("arrivalDate", e.target.value)} data-testid={`input-arrival-date${suffix}`} />
+          <DatePickerField
+            value={metadata.arrivalDate || ""}
+            onChange={(v) => set("arrivalDate", v)}
+            testId={`input-arrival-date${suffix}`}
+          />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
@@ -525,7 +584,11 @@ function CharterFlightFields({ metadata, onChange }: { metadata: Record<string, 
       <FieldRow>
         <div>
           <FieldLabel>Date</FieldLabel>
-          <Input type="date" value={metadata.departureDate || ""} onChange={(e) => set("departureDate", e.target.value)} data-testid="input-charter-departure-date" />
+          <DatePickerField
+            value={metadata.departureDate || ""}
+            onChange={(v) => set("departureDate", v)}
+            testId="input-charter-departure-date"
+          />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
@@ -541,7 +604,11 @@ function CharterFlightFields({ metadata, onChange }: { metadata: Record<string, 
       <FieldRow>
         <div>
           <FieldLabel>Date</FieldLabel>
-          <Input type="date" value={metadata.arrivalDate || ""} onChange={(e) => set("arrivalDate", e.target.value)} data-testid="input-charter-arrival-date" />
+          <DatePickerField
+            value={metadata.arrivalDate || ""}
+            onChange={(v) => set("arrivalDate", v)}
+            testId="input-charter-arrival-date"
+          />
         </div>
         <div>
           <FieldLabel>Time</FieldLabel>
@@ -646,12 +713,58 @@ function HotelFields({ metadata, onChange }: { metadata: Record<string, any>; on
       <SectionHeading>Stay</SectionHeading>
       <FieldRow>
         <div>
-          <FieldLabel>Check-in Date + Time</FieldLabel>
-          <Input type="datetime-local" value={metadata.checkInDateTime || ""} onChange={(e) => set("checkInDateTime", e.target.value)} data-testid="input-checkin-datetime" />
+          <FieldLabel>Check-in Date</FieldLabel>
+          <DatePickerField
+            value={metadata.checkInDate || (metadata.checkInDateTime ? metadata.checkInDateTime.split("T")[0] : "")}
+            onChange={(v) => {
+              const time = metadata.checkInTime || metadata.checkInDateTime?.split("T")[1]?.slice(0, 5) || "14:00";
+              set("checkInDate", v);
+              set("checkInDateTime", v && time ? `${v}T${time}` : v);
+            }}
+            testId="input-checkin-date"
+            placeholder="Check-in date"
+          />
         </div>
         <div>
-          <FieldLabel>Check-out Date + Time</FieldLabel>
-          <Input type="datetime-local" value={metadata.checkOutDateTime || ""} onChange={(e) => set("checkOutDateTime", e.target.value)} data-testid="input-checkout-datetime" />
+          <FieldLabel>Check-out Date</FieldLabel>
+          <DatePickerField
+            value={metadata.checkOutDate || (metadata.checkOutDateTime ? metadata.checkOutDateTime.split("T")[0] : "")}
+            onChange={(v) => {
+              const time = metadata.checkOutTime || metadata.checkOutDateTime?.split("T")[1]?.slice(0, 5) || "11:00";
+              set("checkOutDate", v);
+              set("checkOutDateTime", v && time ? `${v}T${time}` : v);
+            }}
+            testId="input-checkout-date"
+            placeholder="Check-out date"
+          />
+        </div>
+      </FieldRow>
+      <FieldRow>
+        <div>
+          <FieldLabel>Check-in Time</FieldLabel>
+          <Input
+            type="time"
+            value={metadata.checkInTime || metadata.checkInDateTime?.split("T")[1]?.slice(0, 5) || ""}
+            onChange={(e) => {
+              const date = metadata.checkInDate || metadata.checkInDateTime?.split("T")[0] || "";
+              set("checkInTime", e.target.value);
+              set("checkInDateTime", date && e.target.value ? `${date}T${e.target.value}` : date);
+            }}
+            data-testid="input-checkin-time"
+          />
+        </div>
+        <div>
+          <FieldLabel>Check-out Time</FieldLabel>
+          <Input
+            type="time"
+            value={metadata.checkOutTime || metadata.checkOutDateTime?.split("T")[1]?.slice(0, 5) || ""}
+            onChange={(e) => {
+              const date = metadata.checkOutDate || metadata.checkOutDateTime?.split("T")[0] || "";
+              set("checkOutTime", e.target.value);
+              set("checkOutDateTime", date && e.target.value ? `${date}T${e.target.value}` : date);
+            }}
+            data-testid="input-checkout-time"
+          />
         </div>
       </FieldRow>
       <FieldRow>
@@ -1626,11 +1739,11 @@ export function SegmentEditor({
               {(metadata.refundability === "fully_refundable" || metadata.refundability === "partially_refundable") && (
                 <div>
                   <FieldLabel>Refund Deadline</FieldLabel>
-                  <Input
-                    type="date"
+                  <DatePickerField
                     value={metadata.refundDeadline || ""}
-                    onChange={(e) => setMetadata({ ...metadata, refundDeadline: e.target.value })}
-                    data-testid="input-refund-deadline"
+                    onChange={(v) => setMetadata({ ...metadata, refundDeadline: v })}
+                    testId="input-refund-deadline"
+                    placeholder="Refund deadline"
                   />
                 </div>
               )}
