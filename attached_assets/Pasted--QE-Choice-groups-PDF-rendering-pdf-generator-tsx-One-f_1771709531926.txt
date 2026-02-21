@@ -1,0 +1,277 @@
+# QE — Choice groups: PDF rendering (pdf-generator.tsx)
+
+One file changes: `server/pdf-generator.tsx`. This adds the `choiceGroup` kind to `buildPdfDayItems`, renders both options with an "OR" rule between them when pre-approval, and collapses to a single card when approved.
+
+---
+
+## Change 1: `PdfDayRenderItem` type and `buildPdfDayItems`
+
+Find:
+```typescript
+type PdfDayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+```
+
+Replace with:
+```typescript
+type PdfDayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] }
+  | { kind: "choiceGroup"; choiceGroupId: string; options: TripSegment[] };
+```
+
+In `buildPdfDayItems`, add choice group collection alongside journeys. The function currently collects journey groups; add choice groups in the same pass:
+
+```typescript
+function buildPdfDayItems(daySegments: TripSegment[]): PdfDayRenderItem[] {
+  const items: PdfDayRenderItem[] = [];
+  const seenJourneyIds = new Set<string>();
+  const seenChoiceGroupIds = new Set<string>();
+  const journeyGroups = new Map<string, TripSegment[]>();
+  const choiceGroups = new Map<string, TripSegment[]>();
+
+  for (const seg of daySegments) {
+    if (seg.journeyId) {
+      if (!journeyGroups.has(seg.journeyId)) journeyGroups.set(seg.journeyId, []);
+      journeyGroups.get(seg.journeyId)!.push(seg);
+    }
+    if (seg.choiceGroupId) {
+      if (!choiceGroups.has(seg.choiceGroupId)) choiceGroups.set(seg.choiceGroupId, []);
+      choiceGroups.get(seg.choiceGroupId)!.push(seg);
+    }
+  }
+
+  for (const seg of daySegments) {
+    if (seg.journeyId && (journeyGroups.get(seg.journeyId)?.length ?? 0) > 1) {
+      if (!seenJourneyIds.has(seg.journeyId)) {
+        seenJourneyIds.add(seg.journeyId);
+        const legs = journeyGroups.get(seg.journeyId)!;
+        legs.sort((a, b) => ((a.metadata as any)?.legNumber || 0) - ((b.metadata as any)?.legNumber || 0));
+        items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+        seenChoiceGroupIds.add(seg.choiceGroupId);
+        const options = choiceGroups.get(seg.choiceGroupId)!;
+        options.sort((a, b) => a.sortOrder - b.sortOrder);
+        items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
+      }
+      // In approved mode, the caller handles filtering — see Change 3
+    } else {
+      items.push({ kind: "segment", segment: seg });
+    }
+  }
+  return items;
+}
+```
+
+---
+
+## Change 2: Add styles for OR separator and choice group wrapper
+
+In the `StyleSheet.create({...})` block, add two new styles after the existing `variantBox` style:
+
+```typescript
+choiceGroupWrapper: {
+  marginBottom: 8,
+  borderWidth: 1,
+  borderColor: "#fcd34d",   // amber-300
+  borderStyle: "dashed" as const,
+  borderRadius: 4,
+  padding: 6,
+  backgroundColor: "#fffbeb", // amber-50
+},
+choiceGroupLabel: {
+  fontSize: 7,
+  fontWeight: 600,
+  letterSpacing: 1.5,
+  textTransform: "uppercase" as const,
+  color: "#d97706",           // amber-600
+  marginBottom: 6,
+},
+orDivider: {
+  flexDirection: "row" as const,
+  alignItems: "center" as const,
+  marginVertical: 6,
+},
+orDividerLine: {
+  flex: 1,
+  borderBottomWidth: 0.5,
+  borderBottomColor: "#fcd34d",
+},
+orDividerText: {
+  fontSize: 7,
+  fontWeight: 700,
+  color: "#f59e0b",           // amber-500
+  paddingHorizontal: 6,
+  letterSpacing: 1.5,
+},
+```
+
+---
+
+## Change 3: Render `choiceGroup` items in `TripPdfDocument`
+
+In `TripPdfDocument`, the day rendering loop currently handles `journey` and `segment` kinds. Add `choiceGroup` handling.
+
+Find the `renderItems.map((item) => { ... })` block inside the `dayNumbers.map(...)` loop. Currently:
+
+```typescript
+return renderItems.map((item) => {
+  if (item.kind === "journey") {
+    return <JourneyPdfView ... />;
+  }
+  const seg = item.segment;
+  // ... property group logic ...
+  return <SegmentView ... />;
+});
+```
+
+Add the `choiceGroup` case after the `journey` case:
+
+```typescript
+return renderItems.map((item) => {
+  if (item.kind === "journey") {
+    return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} isApproved={isApproved} />;
+  }
+
+  // ADD:
+  if (item.kind === "choiceGroup") {
+    if (isApproved) {
+      // Approved: only render the chosen option as a plain segment
+      const chosen = item.options.find(o => o.isChoiceSelected) || item.options[0];
+      return (
+        <SegmentView
+          key={`choice-approved-${chosen.id}`}
+          segment={chosen}
+          photos={photoMap.get(chosen.id)}
+          showPricing={showPricing}
+          timeFormat={timeFormat}
+          variants={variantMap.get(chosen.id)}
+          isApproved={isApproved}
+        />
+      );
+    }
+
+    // Pre-approval: both options with OR separator inside amber dashed wrapper
+    return (
+      <View key={`choice-${item.choiceGroupId}`} style={s.choiceGroupWrapper}>
+        <Text style={s.choiceGroupLabel}>Choose one option</Text>
+        {item.options.map((option, idx) => {
+          const choiceSegVariants = variantMap.get(option.id);
+          return (
+            <View key={option.id}>
+              {idx > 0 && (
+                <View style={s.orDivider}>
+                  <View style={s.orDividerLine} />
+                  <Text style={s.orDividerText}>OR</Text>
+                  <View style={s.orDividerLine} />
+                </View>
+              )}
+              <SegmentView
+                segment={option}
+                photos={photoMap.get(option.id)}
+                showPricing={showPricing}
+                timeFormat={timeFormat}
+                variants={choiceSegVariants}
+                isApproved={false}
+              />
+            </View>
+          );
+        })}
+      </View>
+    );
+  }
+
+  // existing segment/propertyGroup logic unchanged...
+});
+```
+
+---
+
+## Change 4: Update trip total to exclude unchosen segments
+
+In `TripPdfDocument`, the subtotal calculation currently sums all segment costs:
+
+```typescript
+const subtotal = segments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
+```
+
+In both the approved and non-approved cases, unchosen choice group segments should be excluded. Replace with:
+
+```typescript
+const subtotal = isApproved
+  ? segments.reduce((sum, seg) => {
+      // Skip unchosen choice group segments in approved mode
+      if (seg.choiceGroupId && !seg.isChoiceSelected) return sum;
+      // Use selected variant cost where available
+      if (seg.hasVariants) {
+        const segVariants = variantMap.get(seg.id);
+        const sel = segVariants?.find(v => v.isSelected);
+        if (sel && sel.cost != null) return sum + sel.cost;
+      }
+      return sum + (seg.cost || 0);
+    }, 0)
+  : segments.reduce((sum, seg) => {
+      // In pre-approval, still exclude unchosen options from total
+      // (avoids double-counting when both options have costs)
+      if (seg.choiceGroupId && !seg.isChoiceSelected) {
+        // Only exclude if another segment in the group IS selected
+        const groupHasSelection = segments.some(
+          s => s.choiceGroupId === seg.choiceGroupId && s.isChoiceSelected
+        );
+        if (groupHasSelection) return sum;
+      }
+      return sum + (seg.cost || 0);
+    }, 0);
+```
+
+---
+
+## What the PDF looks like
+
+**Pre-approval with two hotel options:**
+```
+Day 1 - February 21, 2026
+
+CONNECTING FLIGHT · 1 STOP          [flight card as normal]
+
+╔══ CHOOSE ONE OPTION ══════════════════════════════════╗
+║                                                        ║
+║  HOTEL                               $7,000            ║
+║  The Beverly Hills Hotel             Partial refund    ║
+║  Grand Suite · ★★★★★ · 2 rooms      [photos]          ║
+║  9641 Sunset Blvd...                                   ║
+║                                                        ║
+║  ─────────────── OR ───────────────                   ║
+║                                                        ║
+║  HOTEL                               $8,400            ║
+║  The Peninsula Beverly Hills         Non-refundable    ║
+║  Grand Deluxe · ★★★★★ · 2 rooms     [photos]          ║
+║  9882 S Santa Monica Blvd...                           ║
+║                                                        ║
+╚════════════════════════════════════════════════════════╝
+```
+
+**Approved — only the chosen hotel, no bracket:**
+```
+Day 1 - February 21, 2026
+
+CONNECTING FLIGHT · 1 STOP          [flight card as normal]
+
+HOTEL                                 $8,400
+The Peninsula Beverly Hills           Non-refundable
+Grand Deluxe · ★★★★★ · 2 rooms       [photos]
+9882 S Santa Monica Blvd...
+```
+
+---
+
+## No changes needed to
+
+- `resolveSegmentPhotos` — already iterates all segments, picks up choice group segments automatically
+- `resolveVariants` — same, iterates all segments with `hasVariants = true`
+- `JourneyPdfView`, `SegmentView`, `VariantDisplay` — unchanged by this prompt
+- `PropertyGroupView` — unchanged, property groups and choice groups are separate concepts
+- `generateTripPdf` — unchanged

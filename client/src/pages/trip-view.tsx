@@ -17,7 +17,7 @@ import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   Clock, MapPin, Hash, ChevronDown, Calendar, Download, Star,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Users,
-  ArrowRight, FileDown, CalendarPlus, Diamond, CheckCircle, Send, Lock,
+  ArrowRight, FileDown, CalendarPlus, Diamond, CheckCircle, Send, Lock, Check,
   Train, Bus, Anchor, Truck, Phone, User,
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
@@ -775,49 +775,61 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, lo
 type ViewDayRenderItem =
   | { kind: "segment"; segment: TripSegment }
   | { kind: "journey"; journeyId: string; legs: TripSegment[] }
-  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] };
+  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] }
+  | { kind: "choiceGroup"; choiceGroupId: string; options: TripSegment[] };
 
-function buildViewDayRenderItems(daySegments: TripSegment[]): ViewDayRenderItem[] {
+function buildViewDayRenderItems(daySegments: TripSegment[], isApproved?: boolean): ViewDayRenderItem[] {
   const items: ViewDayRenderItem[] = [];
   const seenJourneyIds = new Set<string>();
   const seenPropertyGroupIds = new Set<string>();
+  const seenChoiceGroupIds = new Set<string>();
   const journeyGroups = new Map<string, TripSegment[]>();
   const propertyGroups = new Map<string, TripSegment[]>();
+  const choiceGroups = new Map<string, TripSegment[]>();
 
   for (const seg of daySegments) {
     if (seg.journeyId) {
-      if (!journeyGroups.has(seg.journeyId)) {
-        journeyGroups.set(seg.journeyId, []);
-      }
+      if (!journeyGroups.has(seg.journeyId)) journeyGroups.set(seg.journeyId, []);
       journeyGroups.get(seg.journeyId)!.push(seg);
     }
     if (seg.propertyGroupId && seg.type === "hotel") {
-      if (!propertyGroups.has(seg.propertyGroupId)) {
-        propertyGroups.set(seg.propertyGroupId, []);
-      }
+      if (!propertyGroups.has(seg.propertyGroupId)) propertyGroups.set(seg.propertyGroupId, []);
       propertyGroups.get(seg.propertyGroupId)!.push(seg);
+    }
+    if (seg.choiceGroupId) {
+      if (!choiceGroups.has(seg.choiceGroupId)) choiceGroups.set(seg.choiceGroupId, []);
+      choiceGroups.get(seg.choiceGroupId)!.push(seg);
     }
   }
 
   for (const seg of daySegments) {
-    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+    if (seg.journeyId && (journeyGroups.get(seg.journeyId)?.length ?? 0) > 1) {
       if (!seenJourneyIds.has(seg.journeyId)) {
         seenJourneyIds.add(seg.journeyId);
         const legs = journeyGroups.get(seg.journeyId)!;
-        legs.sort((a, b) => {
-          const aLeg = (a.metadata as any)?.legNumber || 0;
-          const bLeg = (b.metadata as any)?.legNumber || 0;
-          return aLeg - bLeg;
-        });
+        legs.sort((a, b) => ((a.metadata as any)?.legNumber || 0) - ((b.metadata as any)?.legNumber || 0));
         items.push({ kind: "journey", journeyId: seg.journeyId, legs });
       }
-    } else if (seg.propertyGroupId && seg.type === "hotel" && propertyGroups.get(seg.propertyGroupId)!.length > 1) {
+    } else if (seg.propertyGroupId && seg.type === "hotel" && (propertyGroups.get(seg.propertyGroupId)?.length ?? 0) > 1) {
       if (!seenPropertyGroupIds.has(seg.propertyGroupId)) {
         seenPropertyGroupIds.add(seg.propertyGroupId);
-        const rooms = propertyGroups.get(seg.propertyGroupId)!;
-        items.push({ kind: "propertyGroup", propertyGroupId: seg.propertyGroupId, rooms });
+        items.push({ kind: "propertyGroup", propertyGroupId: seg.propertyGroupId, rooms: propertyGroups.get(seg.propertyGroupId)! });
+      }
+    } else if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+        seenChoiceGroupIds.add(seg.choiceGroupId);
+        const options = choiceGroups.get(seg.choiceGroupId)!;
+        options.sort((a, b) => a.sortOrder - b.sortOrder);
+
+        if (isApproved) {
+          const chosen = options.find(o => o.isChoiceSelected) || options[0];
+          items.push({ kind: "segment", segment: chosen });
+        } else {
+          items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
+        }
       }
     } else {
+      if (isApproved && seg.choiceGroupId && !seg.isChoiceSelected) continue;
       items.push({ kind: "segment", segment: seg });
     }
   }
@@ -925,6 +937,120 @@ function PropertyGroupViewCard({ rooms, showPricing, timeFormat = "24h" }: { roo
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ChoiceGroupViewCard({
+  options,
+  showPricing,
+  timeFormat = "24h",
+  localChoices,
+  onSelectChoice,
+  lockedChoices,
+  token,
+  isApproved,
+}: {
+  options: TripSegment[];
+  showPricing?: boolean;
+  timeFormat?: "12h" | "24h";
+  localChoices?: Record<string, string>;
+  onSelectChoice?: (choiceGroupId: string, segmentId: string) => void;
+  lockedChoices?: Set<string>;
+  token?: string | null;
+  isApproved?: boolean;
+}) {
+  const choiceGroupId = options[0]?.choiceGroupId || "";
+  const locallyChosenId = localChoices?.[choiceGroupId];
+  const serverChosenId = options.find(o => o.isChoiceSelected)?.id;
+  const chosenId = locallyChosenId || serverChosenId;
+  const isLocked = lockedChoices?.has(choiceGroupId);
+  const hasChosen = !!chosenId;
+
+  return (
+    <div
+      className="rounded-lg border-2 border-dashed border-amber-300/50 dark:border-amber-700/30 overflow-hidden bg-amber-50/20 dark:bg-amber-950/5"
+      data-testid={`view-choice-group-${choiceGroupId}`}
+    >
+      <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+        <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600 dark:text-amber-400">
+          Choose one option
+        </span>
+        {hasChosen && (
+          <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-600 dark:text-emerald-400 ml-auto">
+            {isLocked ? "Choice submitted" : "Option selected"}
+          </Badge>
+        )}
+      </div>
+
+      <div className="px-3 pb-3 space-y-0">
+        {options.map((option, idx) => {
+          const isChosen = chosenId === option.id;
+          const isOtherChosen = hasChosen && !isChosen;
+
+          return (
+            <div key={option.id}>
+              {idx > 0 && (
+                <div className="flex items-center gap-2 my-2.5">
+                  <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30" />
+                  <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400 tracking-widest px-1">OR</span>
+                  <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30" />
+                </div>
+              )}
+
+              <div
+                className={`transition-all duration-300 ${isOtherChosen ? "opacity-40 pointer-events-none" : ""}`}
+                data-testid={`view-choice-option-${option.id}`}
+              >
+                <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
+
+                {token && !isApproved && onSelectChoice && (
+                  <div className="flex justify-end mt-1.5 mb-0.5">
+                    {isChosen ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" />
+                          {isLocked ? "Your choice" : "Selected"}
+                        </span>
+                        {!isLocked && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-[10px] text-muted-foreground ml-2"
+                            onClick={() => onSelectChoice(choiceGroupId, "")}
+                          >
+                            Change
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs border-amber-300/60 hover:border-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/20"
+                        onClick={() => onSelectChoice(choiceGroupId, option.id)}
+                        disabled={isLocked}
+                        data-testid={`button-choose-option-${option.id}`}
+                      >
+                        Choose this option
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {!token && isChosen && (
+                  <div className="flex justify-end mt-1">
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                      <Check className="w-3 h-3" />
+                      Client's choice
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1235,6 +1361,10 @@ function DayAccordion({
   localSelections,
   onSelectVariant,
   lockedSegments,
+  localChoices,
+  onSelectChoice,
+  lockedChoices,
+  isApproved,
 }: {
   dayNumber: number;
   segments: TripSegment[];
@@ -1247,6 +1377,10 @@ function DayAccordion({
   localSelections?: Record<string, string>;
   onSelectVariant?: (segmentId: string, variantId: string) => void;
   lockedSegments?: Set<string>;
+  localChoices?: Record<string, string>;
+  onSelectChoice?: (choiceGroupId: string, segmentId: string) => void;
+  lockedChoices?: Set<string>;
+  isApproved?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -1276,12 +1410,27 @@ function DayAccordion({
             className="overflow-hidden"
           >
             <div className="pb-6 space-y-3">
-              {buildViewDayRenderItems(segments).map((item) => {
+              {buildViewDayRenderItems(segments, isApproved).map((item) => {
                 if (item.kind === "journey") {
                   return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} localSelections={localSelections} onSelectVariant={onSelectVariant} lockedSegments={lockedSegments} token={token} />;
                 }
                 if (item.kind === "propertyGroup") {
                   return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
+                }
+                if (item.kind === "choiceGroup") {
+                  return (
+                    <ChoiceGroupViewCard
+                      key={`choice-${item.choiceGroupId}`}
+                      options={item.options}
+                      showPricing={showPricing}
+                      timeFormat={timeFormat}
+                      localChoices={localChoices}
+                      onSelectChoice={onSelectChoice}
+                      lockedChoices={lockedChoices}
+                      token={token}
+                      isApproved={isApproved}
+                    />
+                  );
                 }
                 const seg = item.segment;
                 const variants = seg.hasVariants ? variantMap?.[seg.id] : undefined;
@@ -1322,6 +1471,8 @@ export default function TripViewPage() {
   const [localSelections, setLocalSelections] = useState<Record<string, string>>({});
   const [submitSheetOpen, setSubmitSheetOpen] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [localChoices, setLocalChoices] = useState<Record<string, string>>({});
+  const [lockedChoices, setLockedChoices] = useState<Set<string>>(new Set());
   const [approveSheetOpen, setApproveSheetOpen] = useState(false);
   const [approvalSuccess, setApprovalSuccess] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
@@ -1383,6 +1534,57 @@ export default function TripViewPage() {
     fetchVariants();
   }, [data, token]);
 
+  useEffect(() => {
+    if (!data) return;
+    const allSegs = data.versions.flatMap(v => v.segments);
+    const choiceGroupMap = new Map<string, TripSegment[]>();
+    for (const seg of allSegs) {
+      if (seg.choiceGroupId) {
+        if (!choiceGroupMap.has(seg.choiceGroupId)) choiceGroupMap.set(seg.choiceGroupId, []);
+        choiceGroupMap.get(seg.choiceGroupId)!.push(seg);
+      }
+    }
+    const seedChoices: Record<string, string> = {};
+    choiceGroupMap.forEach((segs, cgId) => {
+      const chosen = segs.find((s: TripSegment) => s.isChoiceSelected);
+      if (chosen) seedChoices[cgId] = chosen.id;
+    });
+    if (Object.keys(seedChoices).length > 0) {
+      setLocalChoices(prev => ({ ...seedChoices, ...prev }));
+    }
+    if (data.trip.selectionsSubmittedAt) {
+      const submittedCgIds = new Set<string>(Object.keys(seedChoices));
+      if (submittedCgIds.size > 0) setLockedChoices(submittedCgIds);
+    }
+  }, [data]);
+
+  const selectChoice = useCallback(async (choiceGroupId: string, segmentId: string) => {
+    setLocalChoices(prev => {
+      const next = { ...prev };
+      if (segmentId) {
+        next[choiceGroupId] = segmentId;
+      } else {
+        delete next[choiceGroupId];
+      }
+      return next;
+    });
+
+    try {
+      if (segmentId) {
+        const url = token
+          ? `/api/trips/${id}/segments/${segmentId}/choose?token=${token}`
+          : `/api/trips/${id}/segments/${segmentId}/choose`;
+        await fetch(url, { method: "POST", credentials: "include" });
+      }
+    } catch {
+      setLocalChoices(prev => {
+        const next = { ...prev };
+        delete next[choiceGroupId];
+        return next;
+      });
+    }
+  }, [token, id]);
+
   const selectVariant = useCallback(async (segmentId: string, variantId: string) => {
     setLocalSelections(prev => {
       const next = { ...prev };
@@ -1419,6 +1621,8 @@ export default function TripViewPage() {
     return data.versions.find(v => v.isPrimary) || data.versions[0] || null;
   }, [data, selectedVersionId]);
 
+  const isApproved = !!(data?.trip?.approvedVersionId && activeVersion && data.trip.approvedVersionId === activeVersion.id);
+
   const lockedSegments = useMemo(() => {
     const locked = new Set<string>();
     if (submitSuccess) {
@@ -1431,6 +1635,16 @@ export default function TripViewPage() {
     });
     return locked;
   }, [variantMap, submitSuccess, localSelections]);
+
+  useEffect(() => {
+    if (submitSuccess) {
+      setLockedChoices(prev => {
+        const next = new Set<string>(Array.from(prev));
+        Object.keys(localChoices).forEach(k => next.add(k));
+        return next;
+      });
+    }
+  }, [submitSuccess]);
 
   const dayGroups = useMemo(() => {
     if (!activeVersion) return [];
@@ -1727,6 +1941,10 @@ export default function TripViewPage() {
                 localSelections={localSelections}
                 onSelectVariant={selectVariant}
                 lockedSegments={lockedSegments}
+                localChoices={localChoices}
+                onSelectChoice={selectChoice}
+                lockedChoices={lockedChoices}
+                isApproved={isApproved}
               />
             ))
           )}
@@ -1734,7 +1952,11 @@ export default function TripViewPage() {
 
         {activeVersion?.showPricing && (() => {
           const allSegments = activeVersion.segments || [];
-          const subtotal = allSegments.reduce((sum, s) => sum + (s.cost || 0), 0);
+          const subtotal = allSegments.reduce((sum, s) => {
+            if (isApproved && s.choiceGroupId && !s.isChoiceSelected) return sum;
+            if (s.choiceGroupId && localChoices[s.choiceGroupId] && localChoices[s.choiceGroupId] !== s.id) return sum;
+            return sum + (s.cost || 0);
+          }, 0);
           if (subtotal <= 0) return null;
           const currency = allSegments.find(s => s.currency)?.currency || trip.currency || "USD";
           const vDiscount = (activeVersion as any).discount || 0;
