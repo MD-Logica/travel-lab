@@ -1,0 +1,397 @@
+# PZ — PDF: variant pricing states (TBD / options list / selected)
+
+One file changes: `server/pdf-generator.tsx`. Only `VariantDisplay`, `SegmentView`, and `JourneyPdfView` change. Everything else — fonts, colors, stylesheet, helper functions, `TripPdfDocument`, `PropertyGroupView`, `resolveVariants`, `generateTripPdf` — is untouched.
+
+---
+
+## The three states a segment with variants can be in
+
+The `SegmentVariant` schema has two boolean fields: `isSubmitted` (client submitted their preference via share link) and `isSelected` (advisor has confirmed/locked a choice). This gives three meaningful states:
+
+**State A — Unresolved:** No variant has `isSelected = true` and no variant has `isSubmitted = true`.
+- Card right-side price → show **"TBD"** in muted italic instead of a cost figure
+- Options box header → "Options" 
+- Each option row → label on left, **price + refundability** on right (inline, small font after cost)
+
+**State B — Client submitted, advisor not yet confirmed:** At least one variant has `isSubmitted = true`, but no variant has `isSelected = true`.
+- Card right-side price → show **"TBD"** still (cost not confirmed)
+- Options box header → "Options (client preference indicated)"
+- The submitted variant row → label on left, right side shows **"Requested"** in primary color instead of price
+- Other variant rows → label on left, price + refundability on right as normal
+- The primary (included) option row → price + refundability as normal
+
+**State C — Advisor selected:** At least one variant has `isSelected = true`.
+- Card right-side price → show **the selected option's cost** (not the base segment cost)
+- Options box header → "Selected Option"
+- The selected variant row → label on left, right side shows **"✓ Selected"** in emerald green, no price
+- All other variant rows → **hidden** (don't render them)
+- The primary (included) option row → also hidden if a variant is selected, shown if primary (`isSelected` but on segment itself — handle as: if the selected variant is the "primary", show it with "✓ Selected", hide others)
+
+---
+
+## Changes to `VariantDisplay`
+
+Replace the entire `VariantDisplay` function body. The signature stays the same:
+
+```typescript
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs, primaryCost }: {
+  variants: SegmentVariant[];
+  showPricing: boolean;
+  primarySegment?: TripSegment;
+  journeyLegs?: TripSegment[];
+  primaryCost?: number;
+}) {
+  if (!variants || variants.length === 0) return null;
+
+  const selectedVariant = variants.find(v => v.isSelected);
+  const submittedVariant = !selectedVariant ? variants.find(v => v.isSubmitted) : null;
+  // State C: advisor selected. State B: client submitted. State A: neither.
+
+  // --- Label builders (unchanged from current code) ---
+
+  function buildVariantRowLabel(v: SegmentVariant): string {
+    const isUpgrade = !v.variantType || v.variantType === "upgrade";
+    if (isUpgrade && primarySegment) {
+      if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+        const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+        const variantCabin = bookingClassLabelsPdf[(v as any).bookingClass] || bookingClassLabelsPdf[(v as any).cabin] || v.label || "";
+        const vQty = v.quantity || segMeta.quantity || 1;
+        if (journeyLegs && journeyLegs.length > 1) {
+          const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+          const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+          const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+          const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+          const stops = journeyLegs.length - 1;
+          const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+          const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+          const extras: string[] = [stopsPart];
+          if (variantCabin) extras.push(variantCabin);
+          if (vQty > 1) extras.push(`${vQty} pax`);
+          return `${routePart} (${extras.join(", ")})`;
+        }
+        const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+        const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+        const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+        const extras: string[] = [];
+        if (variantCabin) extras.push(variantCabin);
+        if (vQty > 1) extras.push(`${vQty} pax`);
+        return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+      }
+      if (primarySegment.type === "hotel") {
+        const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+        const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
+        const parts = [hotelName, v.label].filter(Boolean);
+        if (vQty > 1) parts.push(`${vQty} rooms`);
+        return parts.join(" — ");
+      }
+      const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+      return ctx ? `${ctx} — ${v.label}` : v.label;
+    }
+    return v.label;
+  }
+
+  function buildPrimaryRowLabel(): string {
+    return buildPrimaryLabelForPdf(primarySegment!, journeyLegs);
+  }
+
+  function renderVariantPrice(v: SegmentVariant) {
+    if (!showPricing || v.cost == null || v.cost <= 0) return null;
+    const currency = v.currency || primarySegment?.currency || "USD";
+    const qty = v.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+    const ppu = v.pricePerUnit && v.pricePerUnit > 0
+      ? v.pricePerUnit
+      : (qty > 1 && v.cost > 0 ? v.cost / qty : null);
+    const unitWord = primarySegment?.type === "hotel" ? "room" : "pax";
+    return (
+      <View style={{ alignItems: "flex-end" as const }}>
+        <Text style={s.variantDetail}>{formatCurrency(v.cost, currency)}</Text>
+        {qty > 1 && ppu && (
+          <Text style={[s.variantDetail, { fontSize: 7 }]}>
+            {formatCurrency(ppu, currency)}/{unitWord}
+          </Text>
+        )}
+      </View>
+    );
+  }
+
+  function renderRefund(refundText: string | null) {
+    if (!refundText) return null;
+    return (
+      <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
+        {refundText}
+      </Text>
+    );
+  }
+
+  // --- STATE C: Advisor has selected a variant ---
+  if (selectedVariant) {
+    const refundText = formatRefundability(selectedVariant.refundability, selectedVariant.refundDeadline);
+    const label = buildVariantRowLabel(selectedVariant);
+    return (
+      <View style={[s.variantBox, { marginTop: 8 }]}>
+        <Text style={s.variantHeader}>Selected Option</Text>
+        <View style={s.variantRowLast}>
+          <Text style={s.variantLabel}>{label}</Text>
+          <View style={{ alignItems: "flex-end" as const, flexShrink: 0 }}>
+            <Text style={{ fontSize: 8, fontWeight: 600, color: "#059669" }}>✓ Selected</Text>
+            {refundText && renderRefund(refundText)}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  // --- STATES A & B: No advisor selection yet — show full options list ---
+
+  // Build primary option pricing
+  const primaryMeta = (primarySegment?.metadata || {}) as Record<string, any>;
+  const primaryCostVal = primaryCost ?? primarySegment?.cost;
+  const primaryQty = primaryMeta.quantity || 1;
+  const primaryPpu = primaryMeta.pricePerUnit && primaryMeta.pricePerUnit > 0
+    ? primaryMeta.pricePerUnit
+    : (primaryQty > 1 && (primaryCostVal || 0) > 0 ? primaryCostVal! / primaryQty : null);
+  const primaryCurrency = primarySegment?.currency || "USD";
+  const primaryUnitWord = primarySegment?.type === "hotel" ? "room" : "pax";
+  const primaryRefund = formatRefundability(primaryMeta.refundability || primarySegment?.refundability, primaryMeta.refundDeadline);
+
+  const headerLabel = submittedVariant ? "Options (preference indicated)" : "Options";
+
+  return (
+    <View style={[s.variantBox, { marginTop: 8 }]}>
+      <Text style={s.variantHeader}>{headerLabel}</Text>
+
+      {/* Primary / included option row */}
+      {primarySegment && (
+        <View style={s.variantRow}>
+          <Text style={[s.variantLabel, { color: colors.primary }]}>
+            {buildPrimaryRowLabel()}
+          </Text>
+          <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "45%" }}>
+            {showPricing && primaryCostVal != null && primaryCostVal > 0 && (
+              <>
+                <Text style={s.variantDetail}>{formatCurrency(primaryCostVal, primaryCurrency)}</Text>
+                {primaryQty > 1 && primaryPpu && (
+                  <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                    {formatCurrency(primaryPpu, primaryCurrency)}/{primaryUnitWord}
+                  </Text>
+                )}
+              </>
+            )}
+            {renderRefund(primaryRefund)}
+          </View>
+        </View>
+      )}
+
+      {/* Variant option rows */}
+      {variants.map((v, vi) => {
+        const isLast = vi === variants.length - 1;
+        const rowStyle = isLast ? s.variantRowLast : s.variantRow;
+        const refundText = formatRefundability(v.refundability, v.refundDeadline);
+        const isThisSubmitted = v.isSubmitted;
+
+        return (
+          <View key={v.id} style={rowStyle}>
+            <Text style={s.variantLabel}>{buildVariantRowLabel(v)}</Text>
+            <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "45%" }}>
+              {isThisSubmitted ? (
+                // State B: client indicated preference for this option
+                <Text style={{ fontSize: 8, fontWeight: 600, color: colors.primary }}>Requested</Text>
+              ) : (
+                // State A or B (for non-submitted variants): show price
+                renderVariantPrice(v)
+              )}
+              {renderRefund(refundText)}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+```
+
+---
+
+## Changes to `SegmentView` — card right-side price when variants exist
+
+The card right-side currently always shows `segment.cost`. When a segment has variants and no option is selected yet, that base cost is misleading — it's the cost of one specific option but the final cost depends on what's chosen. We need to reflect the three states.
+
+Find the cost/confirmation/refund block inside `SegmentView`. Currently:
+
+```typescript
+{(confNum || (showPricing && segment.cost != null && segment.cost > 0)) && (
+  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+    {confNum ? (
+      <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+    ) : <Text />}
+    {showPricing && segment.cost != null && segment.cost > 0 ? (
+      <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+        {formatCurrency(segment.cost, segment.currency || "USD")}
+      </Text>
+    ) : null}
+  </View>
+)}
+```
+
+Replace with:
+
+```typescript
+{(() => {
+  // Determine what cost to show based on variant state
+  let displayCost: number | null = segment.cost ?? null;
+  let costLabel: string | null = null; // null = show number, "TBD" = show TBD, "selected" = show selected variant cost
+
+  if (segment.hasVariants && variants && variants.length > 0) {
+    const selVariant = variants.find(v => v.isSelected);
+    const anySubmitted = variants.some(v => v.isSubmitted);
+    if (selVariant) {
+      // State C: show selected variant cost
+      displayCost = selVariant.cost ?? null;
+    } else {
+      // States A & B: cost is TBD
+      costLabel = "TBD";
+      displayCost = null;
+    }
+  }
+
+  const showCostRow = confNum || (showPricing && (displayCost != null && displayCost > 0 || costLabel));
+  if (!showCostRow) return null;
+
+  return (
+    <View style={{ flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, marginTop: 4 }}>
+      {confNum ? (
+        <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+      ) : <Text />}
+      {showPricing && (
+        costLabel === "TBD" ? (
+          <Text style={{ fontSize: 9, color: colors.muted, fontStyle: "italic" as const }}>TBD</Text>
+        ) : displayCost != null && displayCost > 0 ? (
+          <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+            {formatCurrency(displayCost, segment.currency || "USD")}
+          </Text>
+        ) : null
+      )}
+    </View>
+  );
+})()}
+```
+
+Note: the `variants` variable needs to be in scope at this point. Currently `SegmentView` receives `variants` as a prop but the cost/confirmation block runs before the `VariantDisplay` call. Make sure the `variants` prop destructuring is available — it already is since it's a function parameter.
+
+---
+
+## Changes to `JourneyPdfView` — card-level cost when variants exist
+
+The journey total cost is currently calculated and always shown in the variant display. But the journey card itself doesn't show a top-level cost. The journey card should behave the same way:
+
+After calculating `journeyTotalCost` and `firstLegVariants`, add this logic to determine the display cost:
+
+Find:
+```typescript
+const firstLegVariants = variantMap?.get(legs[0].id);
+```
+
+After this line add:
+```typescript
+// Determine journey display cost based on variant state
+let journeyDisplayCost: number | null = null;
+let journeyIsTbd = false;
+if (firstLegVariants && firstLegVariants.length > 0) {
+  const selVariant = firstLegVariants.find(v => v.isSelected);
+  if (selVariant) {
+    journeyDisplayCost = selVariant.cost ?? null;
+  } else {
+    journeyIsTbd = true;
+  }
+} else {
+  journeyDisplayCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0) || null;
+  if (journeyDisplayCost === 0) journeyDisplayCost = null;
+}
+```
+
+Then find the confirmation/cost row in the `JourneyPdfView` JSX. Currently there is no explicit cost row in `JourneyPdfView` — the cost only appears via `VariantDisplay`. Add a cost row after the last leg, before the `VariantDisplay` call:
+
+Find (just before the variants block at the end of the journey card JSX):
+```typescript
+{legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (() => {
+```
+
+Before that block, add:
+```typescript
+{showPricing && (journeyIsTbd || (journeyDisplayCost != null && journeyDisplayCost > 0)) && (
+  <View style={{ flexDirection: "row" as const, justifyContent: "flex-end" as const, marginTop: 4 }}>
+    {journeyIsTbd ? (
+      <Text style={{ fontSize: 9, color: colors.muted, fontStyle: "italic" as const }}>TBD</Text>
+    ) : (
+      <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+        {formatCurrency(journeyDisplayCost!, legs[0].currency || "USD")}
+      </Text>
+    )}
+  </View>
+)}
+```
+
+---
+
+## How the three states render end-to-end
+
+**State A — No selection, no submission (e.g. brand new itinerary sent to client):**
+```
+CONNECTING FLIGHT · 1 STOP
+EWR → LAX
+  AA 1700 · EWR→DFW · 12:47–15:55 · First
+  ⟳ 50m layover  
+  AA 1759 · DFW→LAX · 16:45–18:15
+                                          TBD   ← right-aligned, muted italic
+
+OPTIONS
+  EWR → LAX (1 stop, First, 2 pax)    $5,600
+  EWR → LAX (1 stop, Premium Economy) $4,100   Non-refundable
+```
+
+**State B — Client submitted preference:**
+```
+                                          TBD
+
+OPTIONS (preference indicated)
+  EWR → LAX (1 stop, First, 2 pax)    $5,600
+  EWR → LAX (1 stop, Premium Economy)   Requested   Non-refundable
+```
+
+**State C — Advisor confirmed selection:**
+```
+                                       $5,600   ← selected variant cost
+
+SELECTED OPTION
+  EWR → LAX (1 stop, First, 2 pax)   ✓ Selected
+```
+
+**Hotel unselected:**
+```
+HOTEL
+The Beverly Hills Hotel                   TBD
+Grand Suite · ★★★★★ · 2 rooms
+...
+
+OPTIONS
+  The Beverly Hills Hotel — Grand Suite — 2 rooms       $7,000   $3,500/room
+  The Beverly Hills Hotel — Presidential Suite — 2 rooms $9,000   Non-refundable
+```
+
+**Hotel with selection:**
+```
+HOTEL
+The Beverly Hills Hotel               $9,000
+...
+
+SELECTED OPTION
+  The Beverly Hills Hotel — Presidential Suite — 2 rooms   ✓ Selected
+```
+
+---
+
+## Page total / trip total
+
+The total at the bottom of the itinerary page uses `segments.reduce((sum, seg) => sum + (seg.cost || 0), 0)`. This is already the base segment cost and does **not** reflect selected variants — that is a pre-existing limitation and is **not** addressed in this prompt. Only the per-card display and the options box change here.
+
+Do not change the total/discount block in `TripPdfDocument`.

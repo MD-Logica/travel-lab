@@ -224,197 +224,157 @@ function buildPrimaryLabelForPdf(segment: TripSegment, journeyLegs?: TripSegment
   return segment.title || "Primary option";
 }
 
-function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs, primaryCost }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[]; primaryCost?: number }) {
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs, primaryCost, isApproved }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[]; primaryCost?: number; isApproved?: boolean }) {
   if (!variants || variants.length === 0) return null;
-  const submittedVariant = variants.find(v => v.isSubmitted);
+  if (isApproved) return null;
 
-  if (submittedVariant) {
-    const refundText = formatRefundability(submittedVariant.refundability, submittedVariant.refundDeadline);
-    const labelText = (() => {
-      const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
-      if (isUpgrade && primarySegment) {
-        if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
-          const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
-          const variantCabin = bookingClassLabelsPdf[(submittedVariant as any).bookingClass] || bookingClassLabelsPdf[(submittedVariant as any).cabin] || submittedVariant.label || "";
-          const vQty = submittedVariant.quantity || segMeta.quantity || 1;
-          if (journeyLegs && journeyLegs.length > 1) {
-            const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
-            const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
-            const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
-            const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
-            const stops = journeyLegs.length - 1;
-            const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
-            const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
-            const extras: string[] = [stopsPart];
-            if (variantCabin) extras.push(variantCabin);
-            if (vQty > 1) extras.push(`${vQty} pax`);
-            return `${routePart} (${extras.join(", ")})`;
-          }
-          const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
-          const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
-          const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
-          const extras: string[] = [];
+  const selectedVariant = variants.find(v => v.isSelected);
+  const submittedVariant = !selectedVariant ? variants.find(v => v.isSubmitted) : null;
+
+  function buildVariantRowLabel(v: SegmentVariant): string {
+    const isUpgrade = !v.variantType || v.variantType === "upgrade";
+    if (isUpgrade && primarySegment) {
+      if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+        const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+        const variantCabin = bookingClassLabelsPdf[(v as any).bookingClass] || bookingClassLabelsPdf[(v as any).cabin] || v.label || "";
+        const vQty = v.quantity || segMeta.quantity || 1;
+        if (journeyLegs && journeyLegs.length > 1) {
+          const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+          const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+          const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+          const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+          const stops = journeyLegs.length - 1;
+          const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+          const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+          const extras: string[] = [stopsPart];
           if (variantCabin) extras.push(variantCabin);
           if (vQty > 1) extras.push(`${vQty} pax`);
-          return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+          return `${routePart} (${extras.join(", ")})`;
         }
-        if (primarySegment.type === "hotel") {
-          const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
-          const vQty = submittedVariant.quantity || (primarySegment.metadata as any)?.quantity || 1;
-          const parts = [hotelName, submittedVariant.label].filter(Boolean);
-          if (vQty > 1) parts.push(`${vQty} rooms`);
-          return parts.join(" — ");
-        }
-        const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
-        return ctx ? `${ctx} — ${submittedVariant.label}` : submittedVariant.label;
+        const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+        const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+        const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+        const extras: string[] = [];
+        if (variantCabin) extras.push(variantCabin);
+        if (vQty > 1) extras.push(`${vQty} pax`);
+        return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
       }
-      return submittedVariant.label;
-    })();
+      if (primarySegment.type === "hotel") {
+        const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+        const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
+        const parts = [hotelName, v.label].filter(Boolean);
+        if (vQty > 1) parts.push(`${vQty} rooms`);
+        return parts.join(" — ");
+      }
+      const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+      return ctx ? `${ctx} — ${v.label}` : v.label;
+    }
+    return v.label;
+  }
 
+  function buildPrimaryRowLabel(): string {
+    return buildPrimaryLabelForPdf(primarySegment!, journeyLegs);
+  }
+
+  function renderVariantPrice(v: SegmentVariant) {
+    if (!showPricing || v.cost == null || v.cost <= 0) return null;
+    const currency = v.currency || primarySegment?.currency || "USD";
+    const qty = v.quantity || (primarySegment?.metadata as any)?.quantity || 1;
+    const ppu = v.pricePerUnit && v.pricePerUnit > 0
+      ? v.pricePerUnit
+      : (qty > 1 && v.cost > 0 ? v.cost / qty : null);
+    const unitWord = primarySegment?.type === "hotel" ? "room" : "pax";
     return (
-      <View style={s.variantBox}>
-        <Text style={s.variantHeader}>Selected:</Text>
+      <View style={{ alignItems: "flex-end" as const }}>
+        <Text style={s.variantDetail}>{formatCurrency(v.cost, currency)}</Text>
+        {qty > 1 && ppu && (
+          <Text style={[s.variantDetail, { fontSize: 7 }]}>
+            {formatCurrency(ppu, currency)}/{unitWord}
+          </Text>
+        )}
+      </View>
+    );
+  }
+
+  function renderRefund(refundText: string | null) {
+    if (!refundText) return null;
+    return (
+      <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
+        {refundText}
+      </Text>
+    );
+  }
+
+  if (selectedVariant) {
+    const refundText = formatRefundability(selectedVariant.refundability, selectedVariant.refundDeadline);
+    const label = buildVariantRowLabel(selectedVariant);
+    return (
+      <View style={[s.variantBox, { marginTop: 8 }]}>
+        <Text style={s.variantHeader}>Selected Option</Text>
         <View style={s.variantRowLast}>
-          <Text style={s.variantLabel}>{labelText}</Text>
-          <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "40%" }}>
-            {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (() => {
-              const currency = submittedVariant.currency || primarySegment?.currency || "USD";
-              const qty = submittedVariant.quantity || (primarySegment?.metadata as any)?.quantity || 1;
-              const ppu = submittedVariant.pricePerUnit && submittedVariant.pricePerUnit > 0
-                ? submittedVariant.pricePerUnit
-                : (qty > 1 && submittedVariant.cost > 0 ? submittedVariant.cost / qty : null);
-              const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
-              return (
-                <>
-                  <Text style={s.variantDetail}>{formatCurrency(submittedVariant.cost, currency)}</Text>
-                  {qty > 1 && ppu && (
-                    <Text style={[s.variantDetail, { fontSize: 7 }]}>
-                      {formatCurrency(ppu, currency)} per {unitWord}
-                    </Text>
-                  )}
-                </>
-              );
-            })()}
-            {refundText && (
-              <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
-                {refundText}
-              </Text>
-            )}
+          <Text style={s.variantLabel}>{label}</Text>
+          <View style={{ alignItems: "flex-end" as const, flexShrink: 0 }}>
+            <Text style={{ fontSize: 8, fontWeight: 600, color: "#059669" }}>✓ Selected</Text>
+            {renderRefund(refundText)}
           </View>
         </View>
       </View>
     );
   }
 
+  const primaryMeta = (primarySegment?.metadata || {}) as Record<string, any>;
+  const primaryCostVal = primaryCost ?? primarySegment?.cost;
+  const primaryQty = primaryMeta.quantity || 1;
+  const primaryPpu = primaryMeta.pricePerUnit && primaryMeta.pricePerUnit > 0
+    ? primaryMeta.pricePerUnit
+    : (primaryQty > 1 && (primaryCostVal || 0) > 0 ? primaryCostVal! / primaryQty : null);
+  const primaryCurrency = primarySegment?.currency || "USD";
+  const primaryUnitWord = primarySegment?.type === "hotel" ? "room" : "pax";
+  const primaryRefund = formatRefundability(primaryMeta.refundability || primarySegment?.refundability, primaryMeta.refundDeadline);
+
+  const headerLabel = submittedVariant ? "Options (preference indicated)" : "Options";
+
   return (
     <View style={[s.variantBox, { marginTop: 8 }]}>
-      <Text style={s.variantHeader}>Options:</Text>
+      <Text style={s.variantHeader}>{headerLabel}</Text>
 
       {primarySegment && (
         <View style={s.variantRow}>
           <Text style={[s.variantLabel, { color: colors.primary }]}>
-            {buildPrimaryLabelForPdf(primarySegment, journeyLegs)}
+            {buildPrimaryRowLabel()}
           </Text>
-          <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "40%" }}>
-            {showPricing && (() => {
-              const cost = primaryCost ?? primarySegment.cost;
-              const currency = primarySegment.currency || "USD";
-              if (cost == null || cost <= 0) return null;
-              const qty = (primarySegment.metadata as any)?.quantity || 1;
-              const ppu = (primarySegment.metadata as any)?.pricePerUnit;
-              const effectivePpu = ppu && ppu > 0 ? ppu : (qty > 1 && cost > 0 ? cost / qty : null);
-              const unitWord = primarySegment.type === "hotel" ? "room" : "passenger";
-              return (
-                <>
-                  <Text style={s.variantDetail}>{formatCurrency(cost, currency)}</Text>
-                  {qty > 1 && effectivePpu && (
-                    <Text style={[s.variantDetail, { fontSize: 7 }]}>
-                      {formatCurrency(effectivePpu, currency)} per {unitWord}
-                    </Text>
-                  )}
-                </>
-              );
-            })()}
-            {(() => {
-              const meta = (primarySegment.metadata || {}) as Record<string, any>;
-              const refText = formatRefundability(meta.refundability || primarySegment.refundability, meta.refundDeadline);
-              return refText ? <Text style={[s.variantDetail, { fontSize: 7, color: refText.includes("Non") ? "#dc2626" : colors.muted }]}>{refText}</Text> : null;
-            })()}
+          <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "45%" }}>
+            {showPricing && primaryCostVal != null && primaryCostVal > 0 && (
+              <>
+                <Text style={s.variantDetail}>{formatCurrency(primaryCostVal, primaryCurrency)}</Text>
+                {primaryQty > 1 && primaryPpu && (
+                  <Text style={[s.variantDetail, { fontSize: 7 }]}>
+                    {formatCurrency(primaryPpu, primaryCurrency)}/{primaryUnitWord}
+                  </Text>
+                )}
+              </>
+            )}
+            {renderRefund(primaryRefund)}
           </View>
         </View>
       )}
 
       {variants.map((v, vi) => {
-        const refundText = formatRefundability(v.refundability, v.refundDeadline);
         const isLast = vi === variants.length - 1;
+        const rowStyle = isLast ? s.variantRowLast : s.variantRow;
+        const refundText = formatRefundability(v.refundability, v.refundDeadline);
+        const isThisSubmitted = v.isSubmitted;
+
         return (
-          <View key={v.id} style={isLast ? s.variantRowLast : s.variantRow}>
-            <Text style={s.variantLabel}>
-              {(() => {
-                const isUpgrade = !v.variantType || v.variantType === "upgrade";
-                if (isUpgrade && primarySegment) {
-                  if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
-                    const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
-                    const variantCabin = bookingClassLabelsPdf[(v as any).bookingClass] || bookingClassLabelsPdf[(v as any).cabin] || v.label || "";
-                    const vQty = v.quantity || segMeta.quantity || 1;
-                    if (journeyLegs && journeyLegs.length > 1) {
-                      const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
-                      const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
-                      const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
-                      const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
-                      const stops = journeyLegs.length - 1;
-                      const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
-                      const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
-                      const extras: string[] = [stopsPart];
-                      if (variantCabin) extras.push(variantCabin);
-                      if (vQty > 1) extras.push(`${vQty} pax`);
-                      return `${routePart} (${extras.join(", ")})`;
-                    }
-                    const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
-                    const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
-                    const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
-                    const extras: string[] = [];
-                    if (variantCabin) extras.push(variantCabin);
-                    if (vQty > 1) extras.push(`${vQty} pax`);
-                    return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
-                  }
-                  if (primarySegment.type === "hotel") {
-                    const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
-                    const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
-                    const parts = [hotelName, v.label].filter(Boolean);
-                    if (vQty > 1) parts.push(`${vQty} rooms`);
-                    return parts.join(" — ");
-                  }
-                  const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
-                  return ctx ? `${ctx} — ${v.label}` : v.label;
-                }
-                return v.label;
-              })()}
-            </Text>
-            <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "40%" }}>
-              {showPricing && v.cost != null && v.cost > 0 && (() => {
-                const currency = v.currency || primarySegment?.currency || "USD";
-                const qty = v.quantity || (primarySegment?.metadata as any)?.quantity || 1;
-                const ppu = v.pricePerUnit && v.pricePerUnit > 0
-                  ? v.pricePerUnit
-                  : (qty > 1 && v.cost > 0 ? v.cost / qty : null);
-                const unitWord = primarySegment?.type === "hotel" ? "room" : "passenger";
-                return (
-                  <>
-                    <Text style={s.variantDetail}>{formatCurrency(v.cost, currency)}</Text>
-                    {qty > 1 && ppu && (
-                      <Text style={[s.variantDetail, { fontSize: 7 }]}>
-                        {formatCurrency(ppu, currency)} per {unitWord}
-                      </Text>
-                    )}
-                  </>
-                );
-              })()}
-              {refundText && (
-                <Text style={[s.variantDetail, { fontSize: 7, color: refundText.includes("Non") ? "#dc2626" : colors.muted }]}>
-                  {refundText}
-                </Text>
+          <View key={v.id} style={rowStyle}>
+            <Text style={s.variantLabel}>{buildVariantRowLabel(v)}</Text>
+            <View style={{ alignItems: "flex-end" as const, flexShrink: 0, maxWidth: "45%" }}>
+              {isThisSubmitted ? (
+                <Text style={{ fontSize: 8, fontWeight: 600, color: colors.primary }}>Requested</Text>
+              ) : (
+                renderVariantPrice(v)
               )}
+              {renderRefund(refundText)}
             </View>
           </View>
         );
@@ -423,7 +383,7 @@ function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs, pr
   );
 }
 
-function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", variants }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean; timeFormat?: string; variants?: SegmentVariant[] }) {
+function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", variants, isApproved }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean; timeFormat?: string; variants?: SegmentVariant[]; isApproved?: boolean }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const typeColor = getSegmentColor(segment.type);
   const details: string[] = [];
@@ -442,7 +402,14 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
       if (depTime) details.push(`Departs: ${fmtTime(depTime, timeFormat)} local`);
       const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
       if (arrTime) details.push(`Arrives: ${fmtTime(arrTime, timeFormat)} local`);
-      if (meta.bookingClass) details.push(`Class: ${bookingClassLabels[meta.bookingClass] || meta.bookingClass}`);
+      const _selectedCabin = isApproved && variants
+        ? (() => {
+            const sel = variants.find(v => v.isSelected);
+            return sel ? (bookingClassLabelsPdf[(sel as any).bookingClass] || bookingClassLabelsPdf[(sel as any).cabin] || null) : null;
+          })()
+        : null;
+      const _cabinDisplay = _selectedCabin || (meta.bookingClass ? (bookingClassLabels[meta.bookingClass] || meta.bookingClass) : null);
+      if (_cabinDisplay) details.push(`Class: ${_cabinDisplay}`);
       if (meta.status && meta.status !== "Scheduled") details.push(`Status: ${meta.status}`);
       if (meta.aircraft) details.push(`Aircraft: ${meta.aircraft}`);
       const fQty = meta.quantity || 1;
@@ -461,8 +428,15 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
       details.push("Charter");
     } else if (segment.type === "hotel") {
       title = meta.hotelName || segment.title || "Hotel";
+      const _selectedRoomLabel = isApproved && variants
+        ? (() => {
+            const sel = variants.find(v => v.isSelected);
+            return sel?.label || null;
+          })()
+        : null;
       if (meta.checkIn && meta.checkOut) details.push(`${meta.checkIn} > ${meta.checkOut}`);
-      if (meta.roomType) details.push(`Room: ${meta.roomType}`);
+      const roomDisplay = _selectedRoomLabel || meta.roomType || "";
+      if (roomDisplay) details.push(`Room: ${roomDisplay}`);
       if (meta.address) details.push(meta.address);
       if (meta.starRating && Number(meta.starRating) > 0) {
         const starWords: Record<number, string> = { 1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five" };
@@ -514,18 +488,44 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
       {details.map((d, i) => (
         <Text key={i} style={s.segmentDetail}>{d}</Text>
       ))}
-      {(confNum || (showPricing && segment.cost != null && segment.cost > 0)) && (
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-          {confNum ? (
-            <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
-          ) : <Text />}
-          {showPricing && segment.cost != null && segment.cost > 0 ? (
-            <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
-              {formatCurrency(segment.cost, segment.currency || "USD")}
-            </Text>
-          ) : null}
-        </View>
-      )}
+      {(() => {
+        let displayCost: number | null = segment.cost ?? null;
+        let costLabel: string | null = null;
+
+        if (segment.hasVariants && variants && variants.length > 0) {
+          const selVariant = variants.find(v => v.isSelected);
+          if (selVariant) {
+            displayCost = selVariant.cost ?? null;
+          } else {
+            if (isApproved) {
+              displayCost = segment.cost ?? null;
+            } else {
+              costLabel = "TBD";
+              displayCost = null;
+            }
+          }
+        }
+
+        const showCostRow = confNum || (showPricing && (displayCost != null && displayCost > 0 || costLabel));
+        if (!showCostRow) return null;
+
+        return (
+          <View style={{ flexDirection: "row" as const, justifyContent: "space-between" as const, alignItems: "center" as const, marginTop: 4 }}>
+            {confNum ? (
+              <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
+            ) : <Text />}
+            {showPricing && (
+              costLabel === "TBD" ? (
+                <Text style={{ fontSize: 9, color: colors.muted, fontStyle: "italic" as const }}>TBD</Text>
+              ) : displayCost != null && displayCost > 0 ? (
+                <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+                  {formatCurrency(displayCost, segment.currency || "USD")}
+                </Text>
+              ) : null
+            )}
+          </View>
+        );
+      })()}
       {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
       {(() => {
         const refundText = formatRefundability(
@@ -542,7 +542,7 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
         </View>
       ) : null}
       {segment.hasVariants && variants && variants.length > 0 ? (
-        <VariantDisplay variants={variants} showPricing={showPricing} primarySegment={segment} />
+        <VariantDisplay variants={variants} showPricing={showPricing} primarySegment={segment} isApproved={isApproved} />
       ) : null}
     </View>
   );
@@ -561,13 +561,29 @@ function pdfLayoverDisplay(leg1Meta: Record<string, any>, leg2Meta: Record<strin
   } catch { return null; }
 }
 
-function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantMap }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: string; variantMap?: Map<string, SegmentVariant[]> }) {
+function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantMap, isApproved }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: string; variantMap?: Map<string, SegmentVariant[]>; isApproved?: boolean }) {
   const firstMeta = (legs[0].metadata || {}) as Record<string, any>;
   const lastMeta = (legs[legs.length - 1].metadata || {}) as Record<string, any>;
   const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
   const destIata = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
   const stopsCount = legs.length - 1;
   const firstLegVariants = variantMap?.get(legs[0].id);
+
+  let journeyDisplayCost: number | null = null;
+  let journeyIsTbd = false;
+  if (firstLegVariants && firstLegVariants.length > 0) {
+    const selVariant = firstLegVariants.find(v => v.isSelected);
+    if (selVariant) {
+      journeyDisplayCost = selVariant.cost ?? null;
+    } else if (isApproved) {
+      journeyDisplayCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0) || null;
+    } else {
+      journeyIsTbd = true;
+    }
+  } else {
+    journeyDisplayCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0) || null;
+    if (journeyDisplayCost === 0) journeyDisplayCost = null;
+  }
 
   return (
     <View style={[s.segmentCard, { borderLeftColor: colors.flight }]}>
@@ -582,7 +598,14 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantM
         const depTime = meta.departure?.scheduledTime || meta.departureTime || "";
         const arrTime = meta.arrival?.scheduledTime || meta.arrivalTime || "";
         const confNum = meta.confirmationNumber || leg.confirmationNumber || "";
-        const bClass = meta.bookingClass ? bookingClassLabels[meta.bookingClass] || meta.bookingClass : "";
+        let bClass = meta.bookingClass ? (bookingClassLabels[meta.bookingClass] || meta.bookingClass) : "";
+        if (isApproved && i === 0 && firstLegVariants) {
+          const selVariant = firstLegVariants.find(v => v.isSelected);
+          if (selVariant) {
+            const selCabin = bookingClassLabelsPdf[(selVariant as any).bookingClass] || bookingClassLabelsPdf[(selVariant as any).cabin];
+            if (selCabin) bClass = selCabin;
+          }
+        }
 
         const layoverDisplay = i > 0 ? pdfLayoverDisplay(
           (legs[i - 1].metadata || {}) as Record<string, any>, meta
@@ -610,6 +633,17 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantM
           </View>
         );
       })}
+      {showPricing && (journeyIsTbd || (journeyDisplayCost != null && journeyDisplayCost > 0)) && (
+        <View style={{ flexDirection: "row" as const, justifyContent: "flex-end" as const, marginTop: 4 }}>
+          {journeyIsTbd ? (
+            <Text style={{ fontSize: 9, color: colors.muted, fontStyle: "italic" as const }}>TBD</Text>
+          ) : (
+            <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text }}>
+              {formatCurrency(journeyDisplayCost!, legs[0].currency || "USD")}
+            </Text>
+          )}
+        </View>
+      )}
       {legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (() => {
         const journeyTotalCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0);
         return (
@@ -619,6 +653,7 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantM
             primarySegment={legs[0]}
             journeyLegs={legs}
             primaryCost={journeyTotalCost > 0 ? journeyTotalCost : undefined}
+            isApproved={isApproved}
           />
         );
       })()}
@@ -682,7 +717,7 @@ function fmtTime(t: string | null | undefined, tf: string): string {
   return `${h12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-function PropertyGroupView({ groupSegments, showPricing, timeFormat, photoMap, variantMap }: { groupSegments: TripSegment[]; showPricing: boolean; timeFormat: string; photoMap: Map<string, ResolvedPhoto[]>; variantMap: Map<string, SegmentVariant[]> }) {
+function PropertyGroupView({ groupSegments, showPricing, timeFormat, photoMap, variantMap, isApproved }: { groupSegments: TripSegment[]; showPricing: boolean; timeFormat: string; photoMap: Map<string, ResolvedPhoto[]>; variantMap: Map<string, SegmentVariant[]>; isApproved?: boolean }) {
   const firstMeta = (groupSegments[0].metadata || {}) as Record<string, any>;
   const hotelName = firstMeta.hotelName || groupSegments[0].title || "Hotel";
   const combinedTotal = groupSegments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
@@ -692,7 +727,7 @@ function PropertyGroupView({ groupSegments, showPricing, timeFormat, photoMap, v
     <View style={{ marginBottom: 8 }}>
       <Text style={s.propertyGroupHeader}>{hotelName}</Text>
       {groupSegments.map((seg) => (
-        <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} />
+        <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} isApproved={isApproved} />
       ))}
       {showPricing && combinedTotal > 0 && (
         <Text style={s.propertyGroupTotal}>Property Total: {formatCurrency(combinedTotal, currency)}</Text>
@@ -705,6 +740,7 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
   const { trip, organization, advisor, client, companions, version, segments } = data;
   const showPricing = version.showPricing ?? true;
   const timeFormat = advisor?.timeFormat || "24h";
+  const isApproved = !!(trip.approvedVersionId && trip.approvedVersionId === version.id);
 
   const dayNumbers = Array.from(new Set(segments.map(s => s.dayNumber))).sort((a, b) => a - b);
 
@@ -755,7 +791,7 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
                 const seenPropertyGroups = new Set<string>();
                 return renderItems.map((item) => {
                   if (item.kind === "journey") {
-                    return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} />;
+                    return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} isApproved={isApproved} />;
                   }
                   const seg = item.segment;
                   if (seg.propertyGroupId && seg.type === "hotel") {
@@ -763,10 +799,10 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
                     seenPropertyGroups.add(seg.propertyGroupId);
                     const groupSegs = daySegments.filter(ds => ds.propertyGroupId === seg.propertyGroupId);
                     if (groupSegs.length > 1) {
-                      return <PropertyGroupView key={`pg-${seg.propertyGroupId}`} groupSegments={groupSegs} showPricing={showPricing} timeFormat={timeFormat} photoMap={photoMap} variantMap={variantMap} />;
+                      return <PropertyGroupView key={`pg-${seg.propertyGroupId}`} groupSegments={groupSegs} showPricing={showPricing} timeFormat={timeFormat} photoMap={photoMap} variantMap={variantMap} isApproved={isApproved} />;
                     }
                   }
-                  return <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} />;
+                  return <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} isApproved={isApproved} />;
                 });
               })()}
             </View>
@@ -774,7 +810,16 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
         })}
 
         {showPricing && (() => {
-          const subtotal = segments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
+          const subtotal = isApproved
+            ? segments.reduce((sum, seg) => {
+                if (seg.hasVariants) {
+                  const segVariants = variantMap.get(seg.id);
+                  const sel = segVariants?.find(v => v.isSelected);
+                  if (sel && sel.cost != null) return sum + sel.cost;
+                }
+                return sum + (seg.cost || 0);
+              }, 0)
+            : segments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
           if (subtotal <= 0) return null;
           const currency = segments.find(seg => seg.currency)?.currency || trip.currency || "USD";
           const vDiscount = (version as any).discount || 0;

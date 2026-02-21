@@ -1,0 +1,265 @@
+# QA — PDF: approved itinerary mode (no options, finalized view)
+
+Two files change: `server/pdf-generator.tsx` (primary) and `server/routes.ts` (minor — pass approval state down).
+
+---
+
+## The approval condition
+
+`trip.approvedVersionId` is set to the version's ID when a client approves. The version being rendered is approved when:
+
+```typescript
+const isApproved = !!(data.trip.approvedVersionId && data.trip.approvedVersionId === data.version.id);
+```
+
+This boolean flows through every rendering component. No schema changes needed — `trip` is already in `PdfData`.
+
+---
+
+## What changes in approved mode
+
+**Options box:** Hidden entirely. No "Options", no "Selected Option" header, no alternative rows.
+
+**Card body:** The selected variant's distinguishing detail (room type for hotel, cabin class for flight) replaces or supplements the base segment detail — so the card reads as a clean, finalized record.
+
+**Card right-side cost:** Uses the selected variant's cost if one is `isSelected`, otherwise falls back to `segment.cost`.
+
+**Trip total at bottom:** Recalculates using selected variant costs where available, base segment costs otherwise.
+
+**Unresolved variants in approved mode:** If somehow a segment has variants but none is `isSelected` when the itinerary is approved (edge case), treat the base segment cost as confirmed and show no options box. Don't show "TBD".
+
+---
+
+## Change 1: Pass `isApproved` through the component tree
+
+`TripPdfDocument` already has access to `data.trip`. Compute `isApproved` once at the top of `TripPdfDocument` and pass it down to every component that renders segments.
+
+In `TripPdfDocument`, find the opening lines:
+```typescript
+const { trip, organization, advisor, client, companions, version, segments } = data;
+const showPricing = version.showPricing ?? true;
+const timeFormat = advisor?.timeFormat || "24h";
+```
+
+Add after:
+```typescript
+const isApproved = !!(trip.approvedVersionId && trip.approvedVersionId === version.id);
+```
+
+Then update every component call that renders segments to pass `isApproved`:
+
+**`JourneyPdfView` calls** — add `isApproved={isApproved}`:
+```tsx
+<JourneyPdfView key={...} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} isApproved={isApproved} />
+```
+
+**`SegmentView` calls** — add `isApproved={isApproved}`:
+```tsx
+<SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} isApproved={isApproved} />
+```
+
+**`PropertyGroupView` calls** — add `isApproved={isApproved}`:
+```tsx
+<PropertyGroupView key={...} groupSegments={groupSegs} showPricing={showPricing} timeFormat={timeFormat} photoMap={photoMap} variantMap={variantMap} isApproved={isApproved} />
+```
+
+Update `PropertyGroupView`'s signature and its internal `SegmentView` calls to forward `isApproved`.
+
+---
+
+## Change 2: Update component signatures
+
+Add `isApproved?: boolean` to the props of:
+- `SegmentView`
+- `JourneyPdfView`  
+- `PropertyGroupView`
+- `VariantDisplay`
+
+---
+
+## Change 3: `VariantDisplay` — suppress in approved mode
+
+At the very top of `VariantDisplay`, after the null check:
+
+```typescript
+if (!variants || variants.length === 0) return null;
+if (isApproved) return null; // Approved itineraries show no options box
+```
+
+That's it. The entire options section disappears for approved itineraries.
+
+---
+
+## Change 4: `SegmentView` — approved card body enhancements
+
+Two changes inside `SegmentView` when `isApproved` is true:
+
+**A. Cost display:** In approved mode, show the selected variant's cost (not TBD, not base cost). Find the cost determination logic (added in PZ):
+
+```typescript
+if (segment.hasVariants && variants && variants.length > 0) {
+  const selVariant = variants.find(v => v.isSelected);
+  if (selVariant) {
+    displayCost = selVariant.cost ?? null;
+  } else {
+    journeyIsTbd = true; // ← this branch
+    displayCost = null;
+  }
+}
+```
+
+In approved mode, the `else` branch (no selected variant) should NOT show TBD — it should just use the base `segment.cost`. Replace the else branch:
+
+```typescript
+} else {
+  if (isApproved) {
+    // Approved: treat base cost as confirmed, no TBD
+    displayCost = segment.cost ?? null;
+  } else {
+    costLabel = "TBD";
+    displayCost = null;
+  }
+}
+```
+
+**B. Variant detail in card body (hotel):** For hotels in approved mode, if a variant is selected and its label differs from the base room type, show the selected room type in the subtitle/detail area. This makes the card read as a complete record without needing the options box.
+
+Find the hotel section inside the `details[]` building block in `SegmentView`:
+```typescript
+} else if (segment.type === "hotel") {
+  title = meta.hotelName || segment.title || "Hotel";
+  if (meta.checkIn && meta.checkOut) details.push(`${meta.checkIn} > ${meta.checkOut}`);
+  if (meta.roomType) details.push(`Room: ${meta.roomType}`);
+  ...
+```
+
+After the `title` line and before the check-in line, add:
+```typescript
+// In approved mode, use selected variant room type if different from base
+const _selectedRoomLabel = isApproved && variants
+  ? (() => {
+      const sel = variants.find(v => v.isSelected);
+      return sel?.label || null;
+    })()
+  : null;
+```
+
+Then change `if (meta.roomType) details.push(`Room: ${meta.roomType}`);` to:
+```typescript
+const roomDisplay = _selectedRoomLabel || meta.roomType || "";
+if (roomDisplay) details.push(`Room: ${roomDisplay}`);
+```
+
+**C. Variant detail in card body (flight/journey):** For single-leg flights in approved mode with a cabin class variant selected, append the selected cabin to the class detail. Find inside the flight block:
+```typescript
+if (meta.bookingClass) details.push(`Class: ${bookingClassLabels[meta.bookingClass] || meta.bookingClass}`);
+```
+
+Replace with:
+```typescript
+const _selectedCabin = isApproved && variants
+  ? (() => {
+      const sel = variants.find(v => v.isSelected);
+      return sel ? (bookingClassLabelsPdf[(sel as any).bookingClass] || bookingClassLabelsPdf[(sel as any).cabin] || null) : null;
+    })()
+  : null;
+const _cabinDisplay = _selectedCabin || (meta.bookingClass ? (bookingClassLabels[meta.bookingClass] || meta.bookingClass) : null);
+if (_cabinDisplay) details.push(`Class: ${_cabinDisplay}`);
+```
+
+---
+
+## Change 5: `JourneyPdfView` — approved cost and no options
+
+**Cost:** In `JourneyPdfView`, the `journeyIsTbd` / `journeyDisplayCost` logic from PZ:
+
+```typescript
+if (firstLegVariants && firstLegVariants.length > 0) {
+  const selVariant = firstLegVariants.find(v => v.isSelected);
+  if (selVariant) {
+    journeyDisplayCost = selVariant.cost ?? null;
+  } else {
+    journeyIsTbd = true;
+  }
+} else {
+  ...
+}
+```
+
+In approved mode, the `else` branch (no selection) should not go TBD:
+```typescript
+if (firstLegVariants && firstLegVariants.length > 0) {
+  const selVariant = firstLegVariants.find(v => v.isSelected);
+  if (selVariant) {
+    journeyDisplayCost = selVariant.cost ?? null;
+  } else if (isApproved) {
+    journeyDisplayCost = legs.reduce((sum, leg) => sum + (leg.cost || 0), 0) || null;
+  } else {
+    journeyIsTbd = true;
+  }
+}
+```
+
+**Cabin class in leg lines:** In approved mode, if the selected variant has a different cabin class than the first leg's base class, show it. Inside the `legs.map(...)` block in `JourneyPdfView`, find where `bClass` is built:
+
+```typescript
+const bClass = meta.bookingClass ? (bookingClassLabels[meta.bookingClass] || meta.bookingClass) : "";
+```
+
+Replace with:
+```typescript
+let bClass = meta.bookingClass ? (bookingClassLabels[meta.bookingClass] || meta.bookingClass) : "";
+if (isApproved && i === 0 && firstLegVariants) {
+  const selVariant = firstLegVariants.find(v => v.isSelected);
+  if (selVariant) {
+    const selCabin = bookingClassLabelsPdf[(selVariant as any).bookingClass] || bookingClassLabelsPdf[(selVariant as any).cabin];
+    if (selCabin) bClass = selCabin;
+  }
+}
+```
+
+---
+
+## Change 6: Trip total in `TripPdfDocument` — use selected variant costs
+
+Currently:
+```typescript
+const subtotal = segments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
+```
+
+In approved mode, substitute selected variant costs. Replace with:
+
+```typescript
+const subtotal = isApproved
+  ? segments.reduce((sum, seg) => {
+      if (seg.hasVariants) {
+        const segVariants = variantMap.get(seg.id);
+        const sel = segVariants?.find(v => v.isSelected);
+        if (sel && sel.cost != null) return sum + sel.cost;
+      }
+      return sum + (seg.cost || 0);
+    }, 0)
+  : segments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
+```
+
+Note: `variantMap` is already in scope in `TripPdfDocument` as it's passed as a prop. This ensures the total at the bottom reflects exactly what was selected.
+
+---
+
+## No changes to `routes.ts`
+
+The route already passes `fullData.trip` which contains `approvedVersionId`. No route changes needed.
+
+---
+
+## Summary of the four itinerary states end-to-end
+
+| State | Card cost | Options box | Total |
+|-------|-----------|-------------|-------|
+| No variants | Segment cost | — | Sum of segment costs |
+| Variants, unresolved | TBD | Full options list with prices | Sum of base costs |
+| Variants, client submitted | TBD | Options with "Requested" on chosen row | Sum of base costs |
+| Variants, advisor selected (not yet approved) | Selected variant cost | "Selected Option" with ✓ | Selected variant costs |
+| **Approved** | Selected variant cost (or base) | **Hidden** | **Selected variant costs** |
+
+The approved state is a completely clean document — it reads as if the alternatives never existed, which is exactly the right presentation for a finalized itinerary that the client will travel with.
