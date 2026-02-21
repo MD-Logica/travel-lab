@@ -76,7 +76,7 @@ function ConversationList({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto bg-muted/40">
         {isLoading ? (
           <div className="space-y-1 p-2">
             {[0, 1, 2, 3].map((i) => (
@@ -231,7 +231,7 @@ export default function MessagesPage() {
 
   return (
     <div className="flex-1 flex h-full overflow-hidden">
-      <div className="w-80 lg:w-96 border-r border-border/50 flex flex-col shrink-0">
+      <div className="w-80 lg:w-96 border-r border-border/50 flex flex-col shrink-0 bg-muted/40">
         <PushBanner />
         <ConversationList
           conversations={conversations}
