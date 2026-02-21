@@ -46,9 +46,9 @@
   --chart-3: 200 60% 50%;
   --chart-4: 45 80% 55%;
   --chart-5: 340 55% 50%;
-  --font-sans: 'DM Sans', 'Inter', sans-serif;
-  --font-serif: 'Playfair Display', 'Georgia', serif;
-  --font-mono: 'Fira Code', monospace;
+  --font-sans: 'Geist', 'Inter', sans-serif;
+  --font-serif: 'Cormorant Garamond', 'Georgia', serif;
+  --font-mono: 'Geist Mono', monospace;
   --radius: .5rem;
   --shadow-2xs: 0px 2px 0px 0px hsl(221 83% 53% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(221 83% 53% / 0.00);
