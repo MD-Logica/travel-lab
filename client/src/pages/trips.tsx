@@ -376,7 +376,16 @@ export default function TripsPage() {
                               <span className="text-white/80 text-xs truncate">{formatDestinationsShort((trip as any).destinations, trip.destination)}</span>
                             </div>
                           </div>
-                          <div className="absolute top-3 right-3">
+                          <div className="absolute top-3 right-3 flex items-center gap-1.5">
+                            {(trip as any).approvedVersionId && (
+                              <Badge
+                                variant="secondary"
+                                className="text-[10px] uppercase tracking-wider bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400 no-default-hover-elevate no-default-active-elevate"
+                                data-testid={`badge-approved-${trip.id}`}
+                              >
+                                Client Approved
+                              </Badge>
+                            )}
                             <Badge
                               variant="secondary"
                               className={`text-[10px] uppercase tracking-wider ${cfg.className} no-default-hover-elevate no-default-active-elevate`}

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, Check, Plane, AlertTriangle, MapPin, ArrowRight } from "lucide-react";
+import { Bell, Check, Plane, AlertTriangle, MapPin, ArrowRight, CheckCircle } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Notification } from "@shared/schema";
 import { Link } from "wouter";
@@ -18,6 +18,7 @@ const changeTypeConfig: Record<string, { icon: typeof Plane; color: string }> = 
   flight_cancelled: { icon: AlertTriangle, color: "text-red-500" },
   flight_departed: { icon: Plane, color: "text-emerald-500" },
   flight_landed: { icon: Plane, color: "text-sky-500" },
+  itinerary_approved: { icon: CheckCircle, color: "text-emerald-600" },
 };
 
 function timeAgo(date: Date): string {

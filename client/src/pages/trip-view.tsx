@@ -1203,6 +1203,9 @@ export default function TripViewPage() {
   const [localSelections, setLocalSelections] = useState<Record<string, string>>({});
   const [submitSheetOpen, setSubmitSheetOpen] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [approveSheetOpen, setApproveSheetOpen] = useState(false);
+  const [approvalSuccess, setApprovalSuccess] = useState(false);
+  const [approvalPending, setApprovalPending] = useState(false);
 
   const token = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1753,6 +1756,119 @@ export default function TripViewPage() {
                         Submit {selectedCount} selection{selectedCount !== 1 ? "s" : ""}
                       </Button>
                     </div>
+                  </div>
+                )}
+              </SheetContent>
+            </Sheet>
+          </>
+        );
+      })()}
+      {(() => {
+        if (!token || !activeVersion) return null;
+        const isAlreadyApproved = !!(trip.approvedVersionId || approvalSuccess);
+        const approvedVersionName = isAlreadyApproved
+          ? (trip.approvedVersionId
+            ? data.versions.find(v => v.id === trip.approvedVersionId)?.name || "Version"
+            : activeVersion.name)
+          : null;
+
+        return (
+          <>
+            <AnimatePresence>
+              <motion.div
+                initial={{ y: 60, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 60, opacity: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut", delay: 0.1 }}
+                className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40"
+                data-testid="version-approve-bar"
+              >
+                {isAlreadyApproved ? (
+                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-emerald-600 text-white shadow-2xl">
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="text-sm font-medium">Itinerary approved</span>
+                    {trip.approvedAt && (
+                      <span className="text-xs opacity-80">
+                        {format(new Date(trip.approvedAt), "d MMM")}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-primary text-primary-foreground shadow-2xl">
+                    <span className="text-sm font-medium">
+                      Ready to approve {activeVersion.name}?
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="rounded-full"
+                      onClick={() => setApproveSheetOpen(true)}
+                      data-testid="button-open-approve"
+                    >
+                      Approve Itinerary <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                    </Button>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+
+            <Sheet open={approveSheetOpen} onOpenChange={setApproveSheetOpen}>
+              <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
+                <SheetHeader className="text-left">
+                  <SheetTitle>Approve Itinerary</SheetTitle>
+                  <SheetDescription>
+                    Confirm that you're happy with {activeVersion.name} of "{trip.title}"
+                  </SheetDescription>
+                </SheetHeader>
+
+                {approvalSuccess ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="approval-success">
+                    <CheckCircle className="w-10 h-10 text-emerald-500" />
+                    <p className="text-base font-medium">Itinerary approved!</p>
+                    <p className="text-sm text-muted-foreground">Your advisor has been notified and will begin finalising arrangements.</p>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-4">
+                    <div className="p-4 rounded-lg bg-muted/50 border border-border/30">
+                      <p className="text-sm font-medium">{activeVersion.name}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{trip.title}</p>
+                      {trip.startDate && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatDateRange(trip.startDate, trip.endDate)}
+                        </p>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      By approving, you confirm that this itinerary version meets your expectations.
+                      Your advisor will proceed with bookings and finalise the arrangements.
+                    </p>
+                    <Button
+                      className="w-full"
+                      disabled={approvalPending}
+                      onClick={async () => {
+                        setApprovalPending(true);
+                        try {
+                          const res = await fetch(
+                            `/api/trips/${trip.id}/approve-version?token=${token}`,
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ versionId: activeVersion.id }),
+                            }
+                          );
+                          if (res.ok) {
+                            setApprovalSuccess(true);
+                            setTimeout(() => setApproveSheetOpen(false), 2500);
+                          }
+                        } catch {} finally {
+                          setApprovalPending(false);
+                        }
+                      }}
+                      data-testid="button-confirm-approve"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5 mr-1.5" />
+                      {approvalPending ? "Approving..." : `Approve ${activeVersion.name}`}
+                    </Button>
                   </div>
                 )}
               </SheetContent>

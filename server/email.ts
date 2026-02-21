@@ -109,6 +109,46 @@ export async function sendSelectionSubmittedEmail({
   });
 }
 
+export async function sendItineraryApprovedEmail({
+  toEmail,
+  clientName,
+  tripTitle,
+  versionLabel,
+}: {
+  toEmail: string;
+  clientName: string;
+  tripTitle: string;
+  versionLabel: string;
+}) {
+  await getResend().emails.send({
+    from: "onboarding@resend.dev",
+    to: toEmail,
+    subject: `${clientName} approved the itinerary for ${tripTitle}`,
+    html: `
+      <div style="font-family: Georgia, serif; max-width: 560px;
+        margin: 0 auto; padding: 40px 24px; color: #1a1a1a;">
+        <h1 style="font-size: 24px; font-weight: normal;
+          margin-bottom: 8px;">
+          Itinerary Approved
+        </h1>
+        <p style="color: #555; margin-bottom: 24px;">
+          <strong>${clientName}</strong> has approved
+          <strong>${versionLabel}</strong> of
+          <strong>${tripTitle}</strong>.
+        </p>
+        <p style="color: #333; margin-bottom: 24px;">
+          The trip status has been updated to <strong>Confirmed</strong>.
+          You can now proceed with finalising bookings and arrangements.
+        </p>
+        <p style="color: #999; font-size: 12px; margin-top: 32px;
+          border-top: 1px solid #eee; padding-top: 16px;">
+          Travel Lab · Itinerary Management
+        </p>
+      </div>
+    `,
+  });
+}
+
 export async function sendClientPortalInviteEmail({
   toEmail,
   clientName,

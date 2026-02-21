@@ -2635,6 +2635,16 @@ export default function TripEditPage() {
           </div>
         </div>
 
+        {trip.approvedVersionId && (
+          <div className="mx-4 md:mx-6 mb-2 px-4 py-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex items-center gap-2" data-testid="banner-approved">
+            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="text-sm text-emerald-800 dark:text-emerald-300">
+              Client approved <strong>{versions.find(v => v.id === trip.approvedVersionId)?.name || "a version"}</strong>
+              {trip.approvedAt && <> on {new Date(trip.approvedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</>}
+            </span>
+          </div>
+        )}
+
         <div className="flex items-center gap-1.5 px-4 pb-2 md:px-6 overflow-x-auto">
           {versions.map((v) => (
             <div key={v.id} className="flex items-center gap-0.5 shrink-0">
@@ -2645,6 +2655,9 @@ export default function TripEditPage() {
                 data-testid={`button-version-tab-${v.id}`}
               >
                 {v.name}
+                {trip.approvedVersionId === v.id && (
+                  <CheckCircle className="w-3 h-3 ml-1 text-emerald-500" />
+                )}
                 {v.isPrimary && (
                   <Star className="w-3 h-3 ml-1 fill-current" />
                 )}

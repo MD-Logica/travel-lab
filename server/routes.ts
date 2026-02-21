@@ -10,8 +10,8 @@ import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
 import { checkSingleFlight } from "./flight-tracker";
 import { differenceInCalendarDays } from "date-fns";
-import { sendTeamInviteEmail, sendClientPortalInviteEmail, sendSelectionSubmittedEmail } from "./email";
-import { segmentVariants, tripSegments, trips, profiles, clients, clientCollaborators, pushSubscriptions } from "@shared/schema";
+import { sendTeamInviteEmail, sendClientPortalInviteEmail, sendSelectionSubmittedEmail, sendItineraryApprovedEmail } from "./email";
+import { segmentVariants, tripSegments, trips, tripVersions, profiles, clients, clientCollaborators, pushSubscriptions } from "@shared/schema";
 import { broadcastNewMessage, broadcastReactionUpdate, broadcastSeen } from "./websocket";
 import webpush from "web-push";
 import multer from "multer";
@@ -861,27 +861,74 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/trips/:tripId/approve", async (req: any, res) => {
+  app.post("/api/trips/:tripId/approve-version", async (req: any, res) => {
     try {
       const { tripId } = req.params;
       const token = req.query.token as string;
+      const { versionId } = req.body || {};
       if (!token) return res.status(401).json({ message: "Token required" });
+      if (!versionId) return res.status(400).json({ message: "versionId required" });
 
       const { db } = await import("./db");
-      const { eq } = await import("drizzle-orm");
+      const { eq, and } = await import("drizzle-orm");
 
       const [trip] = await db.select().from(trips).where(eq(trips.id, tripId));
       if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
         return res.status(403).json({ message: "Access denied" });
       }
 
+      if (trip.approvedVersionId) {
+        return res.status(400).json({ message: "This itinerary has already been approved" });
+      }
+
+      const [version] = await db.select().from(tripVersions)
+        .where(and(eq(tripVersions.id, versionId), eq(tripVersions.tripId, tripId)));
+      if (!version) {
+        return res.status(404).json({ message: "Version not found" });
+      }
+
+      await db.update(trips).set({
+        approvedVersionId: versionId,
+        approvedAt: new Date(),
+        status: "confirmed",
+      }).where(eq(trips.id, tripId));
+
+      let clientName = "Client";
+      if (trip.clientId) {
+        const [cl] = await db.select({ fullName: clients.fullName })
+          .from(clients).where(eq(clients.id, trip.clientId));
+        if (cl) clientName = cl.fullName;
+      }
+
+      try {
+        if (trip.advisorId) {
+          const [advisor] = await db.select().from(profiles).where(eq(profiles.userId, trip.advisorId));
+          if (advisor) {
+            await storage.createNotification({
+              orgId: trip.orgId,
+              profileId: advisor.userId,
+              type: "itinerary_approved",
+              title: "Itinerary Approved",
+              message: `${clientName} approved ${version.name} of "${trip.title}"`,
+              data: { tripId, versionId, versionName: version.name },
+            });
+
+            if (advisor.email) {
+              await sendItineraryApprovedEmail({
+                toEmail: advisor.email,
+                clientName,
+                tripTitle: trip.title,
+                versionLabel: version.name,
+              }).catch(e => console.error("Approval email failed:", e));
+            }
+          }
+        }
+      } catch (notifErr) {
+        console.error("Approval notification failed:", notifErr);
+      }
+
       try {
         if (trip.clientId) {
-          let clientName = "Client";
-          const [cl] = await db.select({ fullName: clients.fullName })
-            .from(clients).where(eq(clients.id, trip.clientId));
-          if (cl) clientName = cl.fullName;
-
           const convo = await storage.getOrCreateConversation(trip.orgId, trip.clientId);
           const msg = await storage.createMessage({
             conversationId: convo.id,
@@ -889,14 +936,14 @@ export async function registerRoutes(
             senderType: "system",
             senderId: "system",
             senderName: "System",
-            content: `${clientName} approved the itinerary for "${trip.title}"`,
+            content: `${clientName} approved ${version.name} of "${trip.title}"`,
             isRead: false,
             messageType: "event_itinerary_approved",
           });
           broadcastNewMessage(convo.id, msg);
           sendPushToAdvisorsForClient(trip.orgId, trip.clientId, {
             title: "Itinerary approved",
-            body: `${clientName} approved the itinerary for "${trip.title}"`,
+            body: `${clientName} approved ${version.name} of "${trip.title}"`,
             url: `/dashboard/messages?id=${convo.id}`,
           }).catch(() => {});
         }
@@ -904,9 +951,9 @@ export async function registerRoutes(
         console.error("System event message failed:", sysErr);
       }
 
-      res.json({ success: true });
+      res.json({ success: true, versionId, versionName: version.name });
     } catch (error) {
-      console.error("Approve error:", error);
+      console.error("Approve version error:", error);
       res.status(500).json({ message: "Failed to approve itinerary" });
     }
   });
