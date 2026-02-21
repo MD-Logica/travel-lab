@@ -1200,8 +1200,6 @@ function EditTripSheet({ trip, open, onOpenChange }: {
   const [coverImageUrl, setCoverImageUrl] = useState(trip.coverImageUrl || "");
   const [clientSearch, setClientSearch] = useState("");
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
-  const [companionPopoverOpen, setCompanionPopoverOpen] = useState(false);
-  const [companionSearch, setCompanionSearch] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -1697,6 +1695,8 @@ export default function TripEditPage() {
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [companionPopoverOpen, setCompanionPopoverOpen] = useState(false);
+  const [companionSearch, setCompanionSearch] = useState("");
   const [propertyGroupDialog, setPropertyGroupDialog] = useState<{
     open: boolean;
     newSegmentId: string;
