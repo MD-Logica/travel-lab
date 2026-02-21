@@ -57,6 +57,7 @@ function ProfileSection({ profile }: { profile: Profile }) {
   const [website, setWebsite] = useState((profile as any).website || "");
   const [timeFormat, setTimeFormat] = useState<"12h" | "24h">((profile as any).timeFormat || "24h");
   const [showWhatsApp, setShowWhatsApp] = useState<boolean>(!!((profile as any).preferences?.showWhatsAppButton));
+  const [showAllConversations, setShowAllConversations] = useState<boolean>(!!(profile as any).showAllConversations);
   const [dirty, setDirty] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
@@ -66,11 +67,12 @@ function ProfileSection({ profile }: { profile: Profile }) {
     setWebsite((profile as any).website || "");
     setTimeFormat((profile as any).timeFormat || "24h");
     setShowWhatsApp(!!((profile as any).preferences?.showWhatsAppButton));
+    setShowAllConversations(!!(profile as any).showAllConversations);
     setDirty(false);
   }, [profile]);
 
   const updateMutation = useMutation({
-    mutationFn: async (data: { fullName: string; phone: string | null; website: string | null; timeFormat: string; preferences?: Record<string, any> }) => {
+    mutationFn: async (data: { fullName: string; phone: string | null; website: string | null; timeFormat: string; preferences?: Record<string, any>; showAllConversations?: boolean }) => {
       const res = await apiRequest("PATCH", "/api/profile", data);
       return res.json();
     },
@@ -263,6 +265,20 @@ function ProfileSection({ profile }: { profile: Profile }) {
             />
           </div>
 
+          {profile.role === "owner" && (
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-xs uppercase tracking-wider text-muted-foreground">All Conversations</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">Show all client conversations in your inbox. When off, you only see conversations for clients assigned to you.</p>
+              </div>
+              <Switch
+                checked={showAllConversations}
+                onCheckedChange={(checked) => { setShowAllConversations(checked); setDirty(true); }}
+                data-testid="switch-show-all-conversations"
+              />
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wider text-muted-foreground">Role</Label>
             <div>
@@ -285,7 +301,7 @@ function ProfileSection({ profile }: { profile: Profile }) {
               <Button
                 size="sm"
                 disabled={updateMutation.isPending}
-                onClick={() => updateMutation.mutate({ fullName, phone: phone || null, website: website || null, timeFormat, preferences: { ...((profile as any).preferences || {}), showWhatsAppButton: showWhatsApp } })}
+                onClick={() => updateMutation.mutate({ fullName, phone: phone || null, website: website || null, timeFormat, preferences: { ...((profile as any).preferences || {}), showWhatsAppButton: showWhatsApp }, ...(profile.role === "owner" ? { showAllConversations } : {}) })}
                 data-testid="button-save-profile"
               >
                 {updateMutation.isPending ? "Saving..." : "Save changes"}

@@ -11,7 +11,7 @@ import { generateCalendar } from "./calendar-generator";
 import { checkSingleFlight } from "./flight-tracker";
 import { differenceInCalendarDays } from "date-fns";
 import { sendTeamInviteEmail, sendClientPortalInviteEmail, sendSelectionSubmittedEmail } from "./email";
-import { segmentVariants, tripSegments, trips, profiles, clients } from "@shared/schema";
+import { segmentVariants, tripSegments, trips, profiles, clients, clientCollaborators, pushSubscriptions } from "@shared/schema";
 import { broadcastNewMessage, broadcastReactionUpdate, broadcastSeen } from "./websocket";
 import webpush from "web-push";
 import multer from "multer";
@@ -68,6 +68,47 @@ async function sendPushToOrg(orgId: string, payload: { title: string; body: stri
           endpoint: sub.endpoint,
           keys: { p256dh: sub.p256dh, auth: sub.auth },
         }, payloadStr).catch(() => {})
+      )
+    );
+  } catch {}
+}
+
+async function sendPushToAdvisorsForClient(
+  orgId: string,
+  clientId: string,
+  payload: { title: string; body: string; url?: string }
+) {
+  try {
+    const { db } = await import("./db");
+    const { eq, and, inArray } = await import("drizzle-orm");
+
+    const [client] = await db.select({ assignedAdvisorId: clients.assignedAdvisorId })
+      .from(clients).where(and(eq(clients.id, clientId), eq(clients.orgId, orgId)));
+
+    const collabs = await db.select({ advisorId: clientCollaborators.advisorId })
+      .from(clientCollaborators)
+      .where(and(eq(clientCollaborators.clientId, clientId), eq(clientCollaborators.orgId, orgId)));
+
+    const targetIds = [
+      client?.assignedAdvisorId,
+      ...collabs.map(c => c.advisorId)
+    ].filter(Boolean) as string[];
+
+    if (targetIds.length === 0) return;
+
+    const subs = await db.select().from(pushSubscriptions)
+      .where(and(
+        eq(pushSubscriptions.orgId, orgId),
+        inArray(pushSubscriptions.profileId, targetIds)
+      ));
+
+    const payloadStr = JSON.stringify(payload);
+    await Promise.allSettled(
+      subs.map(sub =>
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          payloadStr
+        ).catch(() => {})
       )
     );
   } catch {}
@@ -381,6 +422,7 @@ export async function registerRoutes(
         timeFormat: z.enum(["12h", "24h"]).optional(),
         avatarUrl: z.string().optional().nullable(),
         preferences: z.record(z.any()).optional(),
+        showAllConversations: z.boolean().optional(),
       });
       const parsed = updateSchema.parse(req.body);
       const updateData: any = {};
@@ -390,6 +432,7 @@ export async function registerRoutes(
       if (parsed.timeFormat !== undefined) updateData.timeFormat = parsed.timeFormat;
       if (parsed.avatarUrl !== undefined) updateData.avatarUrl = parsed.avatarUrl;
       if (parsed.preferences !== undefined) updateData.preferences = parsed.preferences;
+      if (parsed.showAllConversations !== undefined) updateData.showAllConversations = parsed.showAllConversations;
       const profile = await storage.updateProfile(userId, updateData);
       if (!profile) return res.status(404).json({ message: "Profile not found" });
       res.json(profile);
@@ -797,6 +840,11 @@ export async function registerRoutes(
             messageType: "event_selections_submitted",
           });
           broadcastNewMessage(convo.id, msg);
+          sendPushToAdvisorsForClient(trip.orgId, trip.clientId, {
+            title: "Selections submitted",
+            body: `${clientName} submitted their option preferences for "${trip.title}"`,
+            url: `/dashboard/messages?id=${convo.id}`,
+          }).catch(() => {});
         }
       } catch (sysErr) {
         console.error("System event message failed:", sysErr);
@@ -842,6 +890,11 @@ export async function registerRoutes(
             messageType: "event_itinerary_approved",
           });
           broadcastNewMessage(convo.id, msg);
+          sendPushToAdvisorsForClient(trip.orgId, trip.clientId, {
+            title: "Itinerary approved",
+            body: `${clientName} approved the itinerary for "${trip.title}"`,
+            url: `/dashboard/messages?id=${convo.id}`,
+          }).catch(() => {});
         }
       } catch (sysErr) {
         console.error("System event message failed:", sysErr);
@@ -2074,7 +2127,11 @@ export async function registerRoutes(
   // ── Messaging routes ──
   app.get("/api/conversations", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const convos = await storage.getConversationsByOrg(req._orgId);
+      const profile = req._profile;
+      const showAll = profile.role === "owner" && profile.showAllConversations === true;
+      const convos = showAll
+        ? await storage.getConversationsByOrg(req._orgId)
+        : await storage.getConversationsForAdvisor(req._orgId, profile.id);
       res.json(convos);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch conversations" });
@@ -2142,7 +2199,11 @@ export async function registerRoutes(
 
   app.get("/api/messages/unread-count", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const unreadCount = await storage.getUnreadMessageCount(req._orgId);
+      const profile = req._profile;
+      const showAll = profile.role === "owner" && profile.showAllConversations === true;
+      const unreadCount = showAll
+        ? await storage.getUnreadMessageCount(req._orgId)
+        : await storage.getUnreadMessageCountForAdvisor(req._orgId, profile.id);
       res.json({ unreadCount });
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch unread count" });
@@ -2204,7 +2265,7 @@ export async function registerRoutes(
         isRead: false,
       });
       broadcastNewMessage(req.params.id, msg);
-      sendPushToOrg(tokenData.orgId, {
+      sendPushToAdvisorsForClient(tokenData.orgId, tokenData.clientId, {
         title: `New message from ${client?.fullName || "Client"}`,
         body: content.substring(0, 100),
         url: `/dashboard/messages?id=${req.params.id}`,

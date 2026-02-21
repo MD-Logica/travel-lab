@@ -115,6 +115,7 @@ export interface IStorage {
   deleteInvitation(id: string, orgId: string): Promise<boolean>;
 
   getConversationsByOrg(orgId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]>;
+  getConversationsForAdvisor(orgId: string, advisorId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]>;
   getOrCreateConversation(orgId: string, clientId: string): Promise<Conversation>;
   getConversation(id: string, orgId: string): Promise<Conversation | undefined>;
   getConversationById(id: string): Promise<Conversation | null>;
@@ -123,6 +124,7 @@ export interface IStorage {
   markMessagesRead(conversationId: string, orgId: string): Promise<void>;
   markConversationSeenByClient(conversationId: string): Promise<void>;
   getUnreadMessageCount(orgId: string): Promise<number>;
+  getUnreadMessageCountForAdvisor(orgId: string, advisorId: string): Promise<number>;
   createClientChatToken(clientId: string, orgId: string, tripId: string): Promise<string>;
   validateClientChatToken(token: string): Promise<{ clientId: string; orgId: string; tripId: string } | null>;
   addReaction(messageId: string, conversationId: string, orgId: string, reactorType: string, reactorId: string, reactorName: string, emoji: string): Promise<MessageReaction>;
@@ -980,6 +982,39 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
+  async getConversationsForAdvisor(orgId: string, advisorId: string): Promise<(Conversation & { clientName: string; clientAvatarUrl: string | null; unreadCount: number })[]> {
+    const rows = await db.execute(sql`
+      SELECT c.*,
+        cl.full_name AS client_name,
+        cl.avatar_url AS client_avatar_url,
+        COALESCE((SELECT COUNT(*)::int FROM messages m WHERE m.conversation_id = c.id AND m.is_read = false AND m.sender_type = 'client'), 0) AS unread_count
+      FROM conversations c
+      JOIN clients cl ON cl.id = c.client_id
+      WHERE c.org_id = ${orgId}
+      AND (
+        cl.assigned_advisor_id = ${advisorId}
+        OR EXISTS (
+          SELECT 1 FROM client_collaborators cc
+          WHERE cc.client_id = cl.id
+          AND cc.advisor_id = ${advisorId}
+          AND cc.org_id = ${orgId}
+        )
+      )
+      ORDER BY c.last_message_at DESC NULLS LAST
+    `);
+    return ((rows as any).rows || rows || []).map((r: any) => ({
+      id: r.id,
+      orgId: r.org_id,
+      clientId: r.client_id,
+      lastMessageAt: r.last_message_at,
+      lastMessagePreview: r.last_message_preview,
+      createdAt: r.created_at,
+      clientName: r.client_name,
+      clientAvatarUrl: r.client_avatar_url,
+      unreadCount: Number(r.unread_count),
+    }));
+  }
+
   async getOrCreateConversation(orgId: string, clientId: string): Promise<Conversation> {
     const [existing] = await db.select().from(conversations)
       .where(and(eq(conversations.orgId, orgId), eq(conversations.clientId, clientId)));
@@ -1041,6 +1076,29 @@ export class DatabaseStorage implements IStorage {
         eq(messages.isRead, false),
       ));
     return result[0]?.count || 0;
+  }
+
+  async getUnreadMessageCountForAdvisor(orgId: string, advisorId: string): Promise<number> {
+    const result = await db.execute(sql`
+      SELECT COUNT(*)::int AS cnt
+      FROM messages m
+      JOIN conversations c ON c.id = m.conversation_id
+      JOIN clients cl ON cl.id = c.client_id
+      WHERE m.org_id = ${orgId}
+      AND m.sender_type = 'client'
+      AND m.is_read = false
+      AND (
+        cl.assigned_advisor_id = ${advisorId}
+        OR EXISTS (
+          SELECT 1 FROM client_collaborators cc
+          WHERE cc.client_id = cl.id
+          AND cc.advisor_id = ${advisorId}
+          AND cc.org_id = ${orgId}
+        )
+      )
+    `);
+    const rows = (result as any).rows || result || [];
+    return Number(rows[0]?.cnt || 0);
   }
 
   async markConversationSeenByClient(conversationId: string): Promise<void> {
