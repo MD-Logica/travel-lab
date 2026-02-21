@@ -57,6 +57,7 @@ export const profiles = pgTable("profiles", {
   website: text("website"),
   timeFormat: text("time_format").notNull().default("24h"),
   canViewAllClients: boolean("can_view_all_clients").notNull().default(false),
+  preferences: jsonb("preferences").default({}),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -73,6 +74,7 @@ export const clients = pgTable("clients", {
   invited: text("invited").default("no"),
   invitedAt: timestamp("invited_at"),
   assignedAdvisorId: varchar("assigned_advisor_id"),
+  homeCities: jsonb("home_cities").default([]),
   preferences: jsonb("preferences"),
   preferencesUpdatedAt: timestamp("preferences_updated_at"),
   createdAt: timestamp("created_at").defaultNow(),

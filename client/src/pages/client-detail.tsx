@@ -51,6 +51,7 @@ import {
   Shield,
   Search,
   MessageCircle,
+  Home,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ChatThread } from "@/components/chat-thread";
@@ -1569,11 +1570,14 @@ export default function ClientDetailPage() {
     onError: () => toast({ title: "Failed to remove companion", variant: "destructive" }),
   });
 
+  const [editHomeCities, setEditHomeCities] = useState<{ city: string; countryCode: string }[]>([]);
+
   useEffect(() => {
     if (client && !isEditing) {
       setEditName(client.fullName);
       setEditEmail(client.email || "");
       setEditPhone(client.phone || "");
+      setEditHomeCities((client.homeCities as any[] || []).map((c: any) => ({ city: c.city || "", countryCode: c.countryCode || "" })));
     }
   }, [client, isEditing]);
 
@@ -1613,6 +1617,7 @@ export default function ClientDetailPage() {
     setEditName(client.fullName);
     setEditEmail(client.email || "");
     setEditPhone(client.phone || "");
+    setEditHomeCities((client.homeCities as any[] || []).map((c: any) => ({ city: c.city || "", countryCode: c.countryCode || "" })));
     setIsEditing(true);
   }
 
@@ -1622,10 +1627,12 @@ export default function ClientDetailPage() {
 
   function saveEdits() {
     if (!editName.trim()) return;
+    const validCities = editHomeCities.filter(c => c.city.trim());
     updateMutation.mutate({
       fullName: editName.trim(),
       email: editEmail.trim() || null,
       phone: editPhone.trim() || null,
+      homeCities: validCities.map(c => ({ city: c.city.trim(), countryCode: c.countryCode.trim().toUpperCase() })),
     });
   }
 
@@ -1784,6 +1791,54 @@ export default function ClientDetailPage() {
                           testId="input-edit-phone"
                         />
                       </div>
+                      <div className="space-y-1.5 mt-2">
+                        <span className="text-xs text-muted-foreground font-medium">Home Cities</span>
+                        {editHomeCities.map((hc, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <Input
+                              value={hc.city}
+                              onChange={(e) => {
+                                const updated = [...editHomeCities];
+                                updated[idx] = { ...updated[idx], city: e.target.value };
+                                setEditHomeCities(updated);
+                              }}
+                              placeholder="City"
+                              className="flex-1 h-8 text-sm"
+                              data-testid={`input-home-city-${idx}`}
+                            />
+                            <Input
+                              value={hc.countryCode}
+                              onChange={(e) => {
+                                const updated = [...editHomeCities];
+                                updated[idx] = { ...updated[idx], countryCode: e.target.value.toUpperCase().slice(0, 2) };
+                                setEditHomeCities(updated);
+                              }}
+                              placeholder="CC"
+                              className="w-16 h-8 text-sm text-center"
+                              maxLength={2}
+                              data-testid={`input-home-country-${idx}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditHomeCities(editHomeCities.filter((_, i) => i !== idx))}
+                              className="text-muted-foreground hover:text-foreground"
+                              data-testid={`button-remove-home-city-${idx}`}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                        {editHomeCities.length < 2 && (
+                          <button
+                            type="button"
+                            onClick={() => setEditHomeCities([...editHomeCities, { city: "", countryCode: "" }])}
+                            className="text-xs text-primary hover:underline"
+                            data-testid="button-add-home-city"
+                          >
+                            + Add {editHomeCities.length === 0 ? "home city" : "another"}
+                          </button>
+                        )}
+                      </div>
                     </>
                   ) : (
                     <>
@@ -1799,6 +1854,26 @@ export default function ClientDetailPage() {
                           {client.phone}
                         </span>
                       )}
+                      {(() => {
+                        const cities = (client.homeCities as any[] || []).filter((c: any) => c.city);
+                        if (cities.length === 0) return null;
+                        const flagEmoji = (code: string) => {
+                          if (!code || code.length !== 2) return "";
+                          return String.fromCodePoint(...code.toUpperCase().split("").map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+                        };
+                        return (
+                          <span className="flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="text-client-home-cities">
+                            <Home className="w-3.5 h-3.5" strokeWidth={1.5} />
+                            {cities.map((c: any, i: number) => (
+                              <span key={i}>
+                                {i > 0 && <span className="mx-1">·</span>}
+                                {c.countryCode && <span className="mr-0.5">{flagEmoji(c.countryCode)}</span>}
+                                {c.city}
+                              </span>
+                            ))}
+                          </span>
+                        );
+                      })()}
                     </>
                   )}
                 </div>
@@ -1858,6 +1933,21 @@ export default function ClientDetailPage() {
                       <MessageCircle className="w-3.5 h-3.5" />
                       Message
                     </Button>
+                    {(profile as any)?.preferences?.showWhatsAppButton && client.phone && (
+                      <a
+                        href={`https://wa.me/${client.phone.replace(/\D/g, "")}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Button variant="outline" size="sm" data-testid="button-whatsapp-client">
+                          <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 mr-1.5 fill-[#25D366]">
+                            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z" />
+                            <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.554 4.116 1.528 5.844L0 24l6.336-1.506A11.954 11.954 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.006-1.369l-.36-.213-3.728.886.919-3.626-.235-.373A9.773 9.773 0 012.182 12C2.182 6.58 6.58 2.182 12 2.182S21.818 6.58 21.818 12 17.42 21.818 12 21.818z" />
+                          </svg>
+                          WhatsApp
+                        </Button>
+                      </a>
+                    )}
                     {client.invited === "yes" ? (
                       <div className="flex items-center gap-2">
                         <Badge

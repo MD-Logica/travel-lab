@@ -56,6 +56,7 @@ function ProfileSection({ profile }: { profile: Profile }) {
   const [phone, setPhone] = useState(profile.phone || "");
   const [website, setWebsite] = useState((profile as any).website || "");
   const [timeFormat, setTimeFormat] = useState<"12h" | "24h">((profile as any).timeFormat || "24h");
+  const [showWhatsApp, setShowWhatsApp] = useState<boolean>(!!((profile as any).preferences?.showWhatsAppButton));
   const [dirty, setDirty] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
 
@@ -64,11 +65,12 @@ function ProfileSection({ profile }: { profile: Profile }) {
     setPhone(profile.phone || "");
     setWebsite((profile as any).website || "");
     setTimeFormat((profile as any).timeFormat || "24h");
+    setShowWhatsApp(!!((profile as any).preferences?.showWhatsAppButton));
     setDirty(false);
   }, [profile]);
 
   const updateMutation = useMutation({
-    mutationFn: async (data: { fullName: string; phone: string | null; website: string | null; timeFormat: string }) => {
+    mutationFn: async (data: { fullName: string; phone: string | null; website: string | null; timeFormat: string; preferences?: Record<string, any> }) => {
       const res = await apiRequest("PATCH", "/api/profile", data);
       return res.json();
     },
@@ -249,6 +251,18 @@ function ProfileSection({ profile }: { profile: Profile }) {
             <p className="text-xs text-muted-foreground">Applies to the client preview and PDF</p>
           </div>
 
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">WhatsApp Button</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Show WhatsApp button on client profiles</p>
+            </div>
+            <Switch
+              checked={showWhatsApp}
+              onCheckedChange={(checked) => { setShowWhatsApp(checked); setDirty(true); }}
+              data-testid="switch-whatsapp-button"
+            />
+          </div>
+
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wider text-muted-foreground">Role</Label>
             <div>
@@ -271,7 +285,7 @@ function ProfileSection({ profile }: { profile: Profile }) {
               <Button
                 size="sm"
                 disabled={updateMutation.isPending}
-                onClick={() => updateMutation.mutate({ fullName, phone: phone || null, website: website || null, timeFormat })}
+                onClick={() => updateMutation.mutate({ fullName, phone: phone || null, website: website || null, timeFormat, preferences: { ...((profile as any).preferences || {}), showWhatsAppButton: showWhatsApp } })}
                 data-testid="button-save-profile"
               >
                 {updateMutation.isPending ? "Saving..." : "Save changes"}

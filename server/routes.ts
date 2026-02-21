@@ -380,6 +380,7 @@ export async function registerRoutes(
         website: z.string().optional().nullable(),
         timeFormat: z.enum(["12h", "24h"]).optional(),
         avatarUrl: z.string().optional().nullable(),
+        preferences: z.record(z.any()).optional(),
       });
       const parsed = updateSchema.parse(req.body);
       const updateData: any = {};
@@ -388,6 +389,7 @@ export async function registerRoutes(
       if (parsed.website !== undefined) updateData.website = parsed.website || null;
       if (parsed.timeFormat !== undefined) updateData.timeFormat = parsed.timeFormat;
       if (parsed.avatarUrl !== undefined) updateData.avatarUrl = parsed.avatarUrl;
+      if (parsed.preferences !== undefined) updateData.preferences = parsed.preferences;
       const profile = await storage.updateProfile(userId, updateData);
       if (!profile) return res.status(404).json({ message: "Profile not found" });
       res.json(profile);
@@ -1011,6 +1013,7 @@ export async function registerRoutes(
         notes: z.string().optional().or(z.literal("")).or(z.null()),
         tags: z.array(z.string()).optional().or(z.null()),
         assignedAdvisorId: z.string().optional().or(z.null()),
+        homeCities: z.array(z.object({ city: z.string(), countryCode: z.string() })).optional(),
       });
       const parsed = updateSchema.parse(req.body);
       const client = await storage.updateClient(req.params.id, req._orgId, parsed);
