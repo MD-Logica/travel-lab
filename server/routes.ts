@@ -308,6 +308,7 @@ export async function registerRoutes(
 
       req._orgId = profile.orgId;
       req._profile = profile;
+      req._userId = userId;
       next();
     } catch (err) {
       next(err);
@@ -1984,6 +1985,7 @@ export async function registerRoutes(
       }, req._userId).catch(() => {});
       res.json(msg);
     } catch (error) {
+      console.error("Advisor message send error:", error);
       res.status(500).json({ message: "Failed to send message" });
     }
   });
