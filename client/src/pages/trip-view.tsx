@@ -515,22 +515,33 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, lo
               return (
                 <div key={leg.id}>
                   {i > 0 && layovers[i - 1] && (
-                    <div className="py-1.5 flex items-center gap-2 text-[11px]">
-                      <div className={`w-2 h-2 rounded-full ${
-                        layovers[i - 1]!.flag === "tight" ? "bg-amber-500" :
-                        layovers[i - 1]!.flag === "long" ? "bg-muted-foreground/40" :
-                        "bg-emerald-500"
-                      }`} />
-                      <span className={`font-medium ${
-                        layovers[i - 1]!.flag === "tight" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
-                      }`}>
-                        {layovers[i - 1]!.display} layover
-                      </span>
-                      {layovers[i - 1]!.flag === "tight" && (
-                        <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600">Tight</Badge>
-                      )}
+                    <div className="py-1.5 space-y-1">
+                      <div className="flex items-center gap-2 text-[11px]">
+                        <div className={`w-2 h-2 rounded-full ${
+                          layovers[i - 1]!.flag === "tight" ? "bg-amber-500" :
+                          layovers[i - 1]!.flag === "long" ? "bg-muted-foreground/40" :
+                          "bg-emerald-500"
+                        }`} />
+                        <span className={`font-medium ${
+                          layovers[i - 1]!.flag === "tight" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground"
+                        }`}>
+                          {layovers[i - 1]!.display} layover
+                        </span>
+                        {layovers[i - 1]!.flag === "tight" && (
+                          <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600">Tight</Badge>
+                        )}
+                      </div>
                       {layovers[i - 1]!.airportChange && (
-                        <Badge variant="outline" className="text-[9px] border-red-300 text-red-600">Airport change</Badge>
+                        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700 px-3 py-2 space-y-0.5" data-testid={`warning-airport-change-${i}`}>
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                            <span className="text-[12px] font-semibold text-amber-800 dark:text-amber-300">Airport change required</span>
+                            <span className="text-[11px] font-medium text-amber-700 dark:text-amber-400/80">
+                              {layovers[i - 1]!.leg1ArrivalIata} → {layovers[i - 1]!.leg2DepartureIata}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-amber-600/70 dark:text-amber-400/60 pl-6">Allow extra time for transfer between terminals</p>
+                        </div>
                       )}
                     </div>
                   )}
