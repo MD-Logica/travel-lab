@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, Check, Plane, AlertTriangle, MapPin, ArrowRight, CheckCircle } from "lucide-react";
+import { Bell, Check, Plane, AlertTriangle, MapPin, ArrowRight, CheckCircle, ListChecks } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Notification } from "@shared/schema";
 import { Link } from "wouter";
@@ -19,6 +19,7 @@ const changeTypeConfig: Record<string, { icon: typeof Plane; color: string }> = 
   flight_departed: { icon: Plane, color: "text-emerald-500" },
   flight_landed: { icon: Plane, color: "text-sky-500" },
   itinerary_approved: { icon: CheckCircle, color: "text-emerald-600" },
+  selections_submitted: { icon: ListChecks, color: "text-primary" },
 };
 
 function timeAgo(date: Date): string {
@@ -141,7 +142,25 @@ export function NotificationBell() {
                           <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{notif.message}</p>
+                      {notif.type === "selections_submitted" && (notifData as any)?.selections?.length > 0 ? (
+                        <div className="mt-1 space-y-0.5">
+                          {((notifData as any).selections as any[]).map((sel: any, i: number) => (
+                            <div key={i} className="text-[11px] text-muted-foreground leading-relaxed">
+                              <span className="text-foreground/70 font-medium">{sel.selectedLabel}</span>
+                              {sel.price && (
+                                <span className="text-muted-foreground">
+                                  {" "}· {sel.price}
+                                  {sel.quantity > 1 && sel.pricePerUnit
+                                    ? ` (${new Intl.NumberFormat("en-US", { style: "currency", currency: sel.currency || "USD", minimumFractionDigits: 0 }).format(sel.pricePerUnit)} × ${sel.quantity})`
+                                    : ""}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{notif.message}</p>
+                      )}
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-[10px] text-muted-foreground/60">
                           {notif.createdAt ? timeAgo(new Date(notif.createdAt)) : ""}

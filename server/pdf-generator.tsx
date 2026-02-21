@@ -178,7 +178,14 @@ function VariantDisplay({ variants, showPricing, primarySegment }: { variants: S
     return (
       <View style={s.variantBox}>
         <Text style={s.variantHeader}>Selected:</Text>
-        <Text style={s.variantLabel}>{submittedVariant.label}</Text>
+        <Text style={s.variantLabel}>
+          {(() => {
+            const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
+            return isUpgrade && primarySegment
+              ? `${buildPrimaryLabelForPdf(primarySegment)} — ${submittedVariant.label}`
+              : submittedVariant.label;
+          })()}
+        </Text>
         {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (
           <Text style={s.variantDetail}>{formatCurrency(submittedVariant.cost, submittedVariant.currency || "USD")}</Text>
         )}
@@ -213,7 +220,14 @@ function VariantDisplay({ variants, showPricing, primarySegment }: { variants: S
         const refundText = formatRefundability(v.refundability, v.refundDeadline);
         return (
           <View key={v.id} style={{ marginBottom: 4 }}>
-            <Text style={s.variantLabel}>{v.label}</Text>
+            <Text style={s.variantLabel}>
+              {(() => {
+                const isUpgrade = !v.variantType || v.variantType === "upgrade";
+                return isUpgrade && primarySegment
+                  ? `${buildPrimaryLabelForPdf(primarySegment)} — ${v.label}`
+                  : v.label;
+              })()}
+            </Text>
             {showPricing && v.cost != null && v.cost > 0 && (
               <Text style={s.variantDetail}>
                 {formatCurrency(v.cost, v.currency || "USD")}

@@ -479,7 +479,13 @@ export function ChatThread({
                         ? <CheckCircle2 className="w-4 h-4 shrink-0" />
                         : <ListChecks className="w-4 h-4 shrink-0" />
                       }
-                      <span className="text-xs leading-relaxed">{msg.content}</span>
+                      <div className="flex-1 min-w-0">
+                        {msg.content.split("\n").map((line: string, li: number) => (
+                          <p key={li} className={`text-xs leading-relaxed ${
+                            li === 0 ? "font-medium" : "text-current/80"
+                          }`}>{line}</p>
+                        ))}
+                      </div>
                       <span className="text-[10px] opacity-50 shrink-0 ml-auto">{formatTimestamp(msg.createdAt)}</span>
                     </div>
                   </div>

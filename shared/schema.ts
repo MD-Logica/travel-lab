@@ -176,6 +176,7 @@ export const segmentVariants = pgTable("segment_variants", {
   refundDeadline: timestamp("refund_deadline"),
   metadata: jsonb("metadata"),
   isSelected: boolean("is_selected").notNull().default(false),
+  variantType: text("variant_type").default("upgrade"),
   isSubmitted: boolean("is_submitted").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),

@@ -40,7 +40,7 @@ import {
   Copy, Star, MapPin, Calendar, User, ChevronRight, Heart,
   Upload, Download, Eye, EyeOff, File, Image, Loader2, FileText, X,
   ChevronDown, ChevronUp, RefreshCw, Bookmark, Check, Diamond, Share2, MoreHorizontal, Archive,
-  Link2, ExternalLink, RotateCcw, Users, CheckCircle,
+  Link2, ExternalLink, RotateCcw, Users, CheckCircle, ListChecks,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1917,6 +1917,15 @@ export default function TripEditPage() {
     enabled: !!currentVersionId,
   });
 
+  const { data: submittedSelections } = useQuery({
+    queryKey: ["/api/trips", id, "submitted-selections"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/trips/${id}/submitted-selections`);
+      return res.json();
+    },
+    enabled: !!trip?.selectionsSubmittedAt,
+  });
+
   const additionalIds = trip?.additionalClientIds as string[] | undefined;
   const { data: orgClients } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -2642,6 +2651,36 @@ export default function TripEditPage() {
               Client approved <strong>{versions.find(v => v.id === trip.approvedVersionId)?.name || "a version"}</strong>
               {trip.approvedAt && <> on {new Date(trip.approvedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</>}
             </span>
+          </div>
+        )}
+
+        {trip.selectionsSubmittedAt && submittedSelections?.length > 0 && (
+          <div className="mx-4 md:mx-6 mb-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-4 py-3" data-testid="submitted-selections-panel">
+            <div className="flex items-center gap-2 mb-2">
+              <ListChecks className="w-4 h-4 text-amber-600" />
+              <span className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                Client Selections
+                <span className="font-normal ml-1 opacity-70">
+                  submitted {new Date(trip.selectionsSubmittedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                </span>
+              </span>
+            </div>
+            <div className="space-y-1">
+              {(submittedSelections as any[]).map((sel: any, i: number) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <span className="text-amber-600 mt-0.5">•</span>
+                  <div className="min-w-0">
+                    <span className="font-medium text-amber-900 dark:text-amber-200">{sel.segmentTitle}</span>
+                    <span className="text-amber-700 dark:text-amber-300 ml-1">→ {sel.selectedLabel || sel.variantLabel || "Selected"}</span>
+                    {sel.variantType === "upgrade" && (
+                      <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-800/40 text-amber-700 dark:text-amber-300 rounded text-[10px] font-medium">
+                        Upgrade
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 

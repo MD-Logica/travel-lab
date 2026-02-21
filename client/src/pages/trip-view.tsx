@@ -1022,7 +1022,36 @@ function VariantCards({
               {locked ? <Lock className="w-4 h-4 text-muted-foreground" /> : <CheckCircle className="w-4 h-4 text-primary" />}
             </div>
           )}
-          <p className="text-sm font-medium pr-6">{primaryLabel}</p>
+          <p className="text-sm font-medium pr-6">
+            {(() => {
+              const meta = (segment.metadata || {}) as Record<string, any>;
+              if (segment.type === "flight" || segment.type === "charter_flight") {
+                const fn = meta.flightNumber || "";
+                const dep = meta.departure?.iata || meta.departureAirport || "";
+                const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+                const cabin = bookingClassLabels[meta.bookingClass] || "";
+                const qty = meta.quantity || 1;
+                const parts: string[] = [];
+                if (fn) parts.push(fn);
+                if (dep && arr) parts.push(`${dep} → ${arr}`);
+                const extras: string[] = [];
+                if (cabin) extras.push(cabin);
+                if (qty > 1) extras.push(`${qty} passengers`);
+                return parts.length > 0
+                  ? `${parts.join(" / ")}${extras.length > 0 ? ` (${extras.join(", ")})` : ""}`
+                  : primaryLabel;
+              }
+              if (segment.type === "hotel") {
+                const hotelName = meta.hotelName || segment.title || "";
+                const roomType = meta.roomType || segment.subtitle || "";
+                const qty = meta.quantity || 1;
+                const parts = [hotelName, roomType].filter(Boolean);
+                if (qty > 1) parts.push(`${qty} rooms`);
+                return parts.length > 0 ? parts.join(" — ") : primaryLabel;
+              }
+              return primaryLabel;
+            })()}
+          </p>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
             {primaryCost > 0 && (
               <span className="text-xs font-medium">
@@ -1069,7 +1098,18 @@ function VariantCards({
                 {locked ? <Lock className="w-4 h-4 text-muted-foreground" /> : <CheckCircle className="w-4 h-4 text-primary" />}
               </div>
             )}
-            <p className="text-sm font-medium pr-6">{v.label}</p>
+            <p className="text-sm font-medium pr-6">
+              {(() => {
+                const isUpgrade = !v.variantType || v.variantType === "upgrade";
+                if (isUpgrade) {
+                  const upgradeContext = segment.type === "hotel"
+                    ? ((segment.metadata as any)?.hotelName || segment.title)
+                    : buildPrimaryLabel(segment);
+                  return upgradeContext ? <>{upgradeContext} — {v.label}</> : v.label;
+                }
+                return v.label;
+              })()}
+            </p>
             {v.description && (
               <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
             )}

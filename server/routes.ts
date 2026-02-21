@@ -786,43 +786,100 @@ export async function registerRoutes(
             if (cl) clientName = cl.fullName;
           }
 
+          const segs = await db.select({ id: tripSegments.id, title: tripSegments.title })
+            .from(tripSegments)
+            .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
+
+          const segIds = segs.map(s => s.id);
+          const submittedVariants = segIds.length > 0
+            ? await db.select().from(segmentVariants)
+                .where(and(
+                  inArray(segmentVariants.segmentId, segIds),
+                  eq(segmentVariants.isSubmitted, true),
+                  eq(segmentVariants.isSelected, true)
+                ))
+            : [];
+
+          const selections = await Promise.all(submittedVariants.map(async (v) => {
+            const seg = segs.find(s => s.id === v.segmentId);
+            const segFull = await db.select().from(tripSegments)
+              .where(eq(tripSegments.id, v.segmentId)).then(r => r[0]);
+            const meta = (segFull?.metadata || {}) as Record<string, any>;
+
+            let segmentContext = seg?.title || "Segment";
+            if (segFull?.type === "flight") {
+              const dep = meta.departure?.iata || meta.departureAirport || "";
+              const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+              const fn = meta.flightNumber || "";
+              if (dep && arr) segmentContext = fn ? `${fn}: ${dep} → ${arr}` : `${dep} → ${arr}`;
+            } else if (segFull?.type === "hotel") {
+              segmentContext = meta.hotelName || seg?.title || "Hotel";
+            }
+
+            const isUpgrade = !v.variantType || v.variantType === "upgrade";
+            const selectedLabel = isUpgrade && segmentContext !== seg?.title
+              ? `${segmentContext} — ${v.label}`
+              : v.label;
+
+            return {
+              segmentTitle: seg?.title || "Segment",
+              segmentContext,
+              selectedLabel,
+              variantLabel: v.label,
+              variantType: v.variantType || "upgrade",
+              price: v.cost ? new Intl.NumberFormat("en-US", {
+                style: "currency", currency: v.currency || "USD", minimumFractionDigits: 0
+              }).format(v.cost) : undefined,
+              quantity: v.quantity || 1,
+              pricePerUnit: v.pricePerUnit,
+              currency: v.currency || "USD",
+            };
+          }));
+
           if (advisor?.email) {
-            // Get submitted variants for email
-            const segs = await db.select({ id: tripSegments.id, title: tripSegments.title })
-              .from(tripSegments)
-              .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
-
-            const segIds = segs.map(s => s.id);
-            const submittedVariants = segIds.length > 0
-              ? await db.select().from(segmentVariants)
-                  .where(and(
-                    inArray(segmentVariants.segmentId, segIds),
-                    eq(segmentVariants.isSubmitted, true),
-                    eq(segmentVariants.isSelected, true)
-                  ))
-              : [];
-
-            const selections = submittedVariants.map(v => {
-              const seg = segs.find(s => s.id === v.segmentId);
-              return {
-                segmentTitle: seg?.title || "Segment",
-                variantLabel: v.label,
-                price: v.cost ? new Intl.NumberFormat("en-US", { style: "currency", currency: v.currency || "USD", minimumFractionDigits: 0 }).format(v.cost) : undefined,
-              };
-            });
-
             await sendSelectionSubmittedEmail({
               toEmail: advisor.email,
               clientName,
               tripTitle: trip.title,
-              selections,
+              selections: selections.map(s => ({
+                segmentTitle: s.segmentTitle,
+                variantLabel: s.selectedLabel,
+                price: s.price,
+              })),
               submitted: result.submitted,
               pending: result.pending,
             });
           }
+
+          if (trip.advisorId) {
+            const summaryLines = selections.map(sel => {
+              const pricePart = sel.price
+                ? sel.quantity > 1 && sel.pricePerUnit
+                  ? ` · ${sel.price} (${new Intl.NumberFormat("en-US", { style: "currency", currency: sel.currency || "USD", minimumFractionDigits: 0 }).format(sel.pricePerUnit)} × ${sel.quantity})`
+                  : ` · ${sel.price}`
+                : "";
+              return `• ${sel.selectedLabel}${pricePart}`;
+            });
+
+            await storage.createNotification({
+              orgId: trip.orgId,
+              profileId: trip.advisorId,
+              type: "selections_submitted",
+              title: `${clientName} submitted selections for "${trip.title}"`,
+              message: summaryLines.length > 0
+                ? summaryLines.join("\n")
+                : "Client submitted their preferences.",
+              data: {
+                tripId: trip.id,
+                clientName,
+                selections,
+                submittedAt: new Date().toISOString(),
+              },
+            });
+          }
         }
       } catch (emailErr) {
-        console.error("Selection email failed:", emailErr);
+        console.error("Selection email/notification failed:", emailErr);
       }
 
       try {
@@ -832,6 +889,45 @@ export async function registerRoutes(
             .from(clients).where(eq(clients.id, trip.clientId));
           if (cl) clientName = cl.fullName;
 
+          const segs = await db.select({ id: tripSegments.id, title: tripSegments.title })
+            .from(tripSegments)
+            .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
+          const segIds = segs.map(s => s.id);
+          const submittedVariants = segIds.length > 0
+            ? await db.select().from(segmentVariants)
+                .where(and(
+                  inArray(segmentVariants.segmentId, segIds),
+                  eq(segmentVariants.isSubmitted, true),
+                  eq(segmentVariants.isSelected, true)
+                ))
+            : [];
+
+          const summaryLines = await Promise.all(submittedVariants.map(async (v) => {
+            const seg = segs.find(s => s.id === v.segmentId);
+            const segFull = await db.select().from(tripSegments)
+              .where(eq(tripSegments.id, v.segmentId)).then(r => r[0]);
+            const meta = (segFull?.metadata || {}) as Record<string, any>;
+            let segmentContext = seg?.title || "Segment";
+            if (segFull?.type === "flight") {
+              const dep = meta.departure?.iata || meta.departureAirport || "";
+              const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+              const fn = meta.flightNumber || "";
+              if (dep && arr) segmentContext = fn ? `${fn}: ${dep} → ${arr}` : `${dep} → ${arr}`;
+            } else if (segFull?.type === "hotel") {
+              segmentContext = meta.hotelName || seg?.title || "Hotel";
+            }
+            const isUpgrade = !v.variantType || v.variantType === "upgrade";
+            const label = isUpgrade && segmentContext !== seg?.title
+              ? `${segmentContext} — ${v.label}`
+              : v.label;
+            const pricePart = v.cost ? ` · ${new Intl.NumberFormat("en-US", { style: "currency", currency: v.currency || "USD", minimumFractionDigits: 0 }).format(v.cost)}` : "";
+            return `• ${label}${pricePart}`;
+          }));
+
+          const messageContent = summaryLines.length > 0
+            ? `${clientName} submitted their preferences for "${trip.title}":\n${summaryLines.join("\n")}`
+            : `${clientName} submitted their preferences for "${trip.title}".`;
+
           const convo = await storage.getOrCreateConversation(trip.orgId, trip.clientId);
           const msg = await storage.createMessage({
             conversationId: convo.id,
@@ -839,7 +935,7 @@ export async function registerRoutes(
             senderType: "system",
             senderId: "system",
             senderName: "System",
-            content: `${clientName} submitted their option preferences for "${trip.title}"`,
+            content: messageContent,
             isRead: false,
             messageType: "event_selections_submitted",
           });
@@ -858,6 +954,63 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Submit selections error:", error);
       res.status(500).json({ message: "Failed to submit selections" });
+    }
+  });
+
+  app.get("/api/trips/:tripId/submitted-selections", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { tripId } = req.params;
+      const { db } = await import("./db");
+      const { eq, and, inArray } = await import("drizzle-orm");
+
+      const segs = await db.select().from(tripSegments)
+        .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
+
+      const segIds = segs.map(s => s.id);
+      if (segIds.length === 0) return res.json([]);
+
+      const submitted = await db.select().from(segmentVariants)
+        .where(and(
+          inArray(segmentVariants.segmentId, segIds),
+          eq(segmentVariants.isSubmitted, true),
+          eq(segmentVariants.isSelected, true)
+        ));
+
+      const enriched = await Promise.all(submitted.map(async (v) => {
+        const seg = segs.find(s => s.id === v.segmentId);
+        const segFull = await db.select().from(tripSegments)
+          .where(eq(tripSegments.id, v.segmentId)).then(r => r[0]);
+        const meta = (segFull?.metadata || {}) as Record<string, any>;
+
+        let segmentContext = seg?.title || "Segment";
+        if (segFull?.type === "flight") {
+          const dep = meta.departure?.iata || meta.departureAirport || "";
+          const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+          const fn = meta.flightNumber || "";
+          if (dep && arr) segmentContext = fn ? `${fn}: ${dep} → ${arr}` : `${dep} → ${arr}`;
+        } else if (segFull?.type === "hotel") {
+          segmentContext = meta.hotelName || seg?.title || "Hotel";
+        }
+
+        const isUpgrade = !v.variantType || v.variantType === "upgrade";
+        const selectedLabel = isUpgrade && segmentContext !== seg?.title
+          ? `${segmentContext} — ${v.label}`
+          : v.label;
+
+        return {
+          segmentTitle: seg?.title || "Segment",
+          segmentContext,
+          selectedLabel,
+          variantLabel: v.label,
+          variantType: v.variantType || "upgrade",
+          cost: v.cost,
+          currency: v.currency || "USD",
+        };
+      }));
+
+      return res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch submitted selections" });
     }
   });
 
@@ -902,11 +1055,11 @@ export async function registerRoutes(
 
       try {
         if (trip.advisorId) {
-          const [advisor] = await db.select().from(profiles).where(eq(profiles.userId, trip.advisorId));
+          const [advisor] = await db.select().from(profiles).where(eq(profiles.id, trip.advisorId));
           if (advisor) {
             await storage.createNotification({
               orgId: trip.orgId,
-              profileId: advisor.userId,
+              profileId: advisor.id,
               type: "itinerary_approved",
               title: "Itinerary Approved",
               message: `${clientName} approved ${version.name} of "${trip.title}"`,

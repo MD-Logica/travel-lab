@@ -1,0 +1,384 @@
+**Important context before starting:** Some parts of this prompt have already been implemented in the codebase. Specifically: the `messageType` column already exists on the messages table, `getOrCreateConversation` is already being called inside the submit-selections route, a system message is already being posted to the chat thread on submission using `messageType: "event_selections_submitted"`, and `sendSelectionSubmittedEmail` already exists in the email file. Do NOT add these again or create duplicates. What this prompt should do is: (1) add the `variantType` field to `segmentVariants` — this is the only schema migration needed, (2) enrich the existing submit-selections route by building a more detailed selections breakdown and replacing the existing generic system message content with the full per-segment breakdown, (3) add the `selections_submitted` in-app notification to the advisor, (4) add the variant type toggle UI to the segment editor, (5) add the submitted-selections GET route, (6) add the client selections panel to the trip builder sidebar, and (7) update the variant display in the trip preview to show upgrade vs. alternative context with quantity and pricing.
+
+---
+
+# PART A — Variant Type Field
+
+## A1 — Schema (`shared/schema.ts`)
+
+Add one field to `segmentVariants`:
+
+```typescript
+variantType: text("variant_type").default("upgrade"),
+```
+
+Two valid values:
+- `"upgrade"` — same property or same flight routing, different configuration (cabin class, room category, refund policy). The hotel name / flight route is inherited from the parent segment.
+- `"alternative"` — entirely different property or routing. Requires full standalone context in the label.
+
+Run the migration. This is the only schema change needed.
+
+---
+
+## A2 — Segment editor variant form (`client/src/components/segment-editor.tsx`)
+
+Inside each variant row (the `variants.map(...)` block), add a type selector at the top of the card, before the label input:
+
+```tsx
+<div className="flex gap-2 mb-2">
+  <button
+    type="button"
+    onClick={() => updateVariant(i, { variantType: "upgrade" })}
+    className={`flex-1 text-xs py-1.5 px-2 rounded border transition-colors ${
+      (v.variantType || "upgrade") === "upgrade"
+        ? "bg-primary/10 border-primary/40 text-primary font-medium"
+        : "border-border text-muted-foreground hover:border-primary/30"
+    }`}
+    data-testid={`button-variant-type-upgrade-${i}`}
+  >
+    Upgrade / Same {type === "hotel" ? "Hotel" : "Flight"}
+  </button>
+  <button
+    type="button"
+    onClick={() => updateVariant(i, { variantType: "alternative" })}
+    className={`flex-1 text-xs py-1.5 px-2 rounded border transition-colors ${
+      v.variantType === "alternative"
+        ? "bg-primary/10 border-primary/40 text-primary font-medium"
+        : "border-border text-muted-foreground hover:border-primary/30"
+    }`}
+    data-testid={`button-variant-type-alternative-${i}`}
+  >
+    Different {type === "hotel" ? "Hotel" : "Flight"}
+  </button>
+</div>
+```
+
+Update the placeholder text on the label input to be context-aware:
+
+```tsx
+placeholder={
+  v.variantType === "alternative"
+    ? type === "hotel" ? "e.g. The Peninsula Beverly Hills" : "e.g. AA 1234 JFK → LAX direct"
+    : type === "hotel" ? "e.g. Grand Suite" : "e.g. Premium Economy"
+}
+```
+
+Add a small helper note below the type selector:
+
+```tsx
+<p className="text-[10px] text-muted-foreground -mt-1 mb-1">
+  {(v.variantType || "upgrade") === "upgrade"
+    ? `Same ${type === "hotel" ? "hotel" : "flight"} — hotel name / route auto-included`
+    : `Different ${type === "hotel" ? "property" : "airline or routing"} — use full name`
+  }
+</p>
+```
+
+Make sure `variantType` is included in the save payload (POST and PATCH calls for variants).
+
+---
+
+## A3 — Variant display in `trip-view.tsx` — upgrade vs. alternative rendering
+
+In `VariantCards`, change how each card builds its display title based on `v.variantType`:
+
+```tsx
+const isUpgrade = !v.variantType || v.variantType === "upgrade";
+
+const upgradeContext = isUpgrade
+  ? segment.type === "hotel"
+    ? (segment.metadata as any)?.hotelName || segment.title
+    : buildPrimaryLabel(segment)
+  : null;
+
+// Card label line:
+<p className="text-sm font-medium pr-6">
+  {isUpgrade && upgradeContext
+    ? <>{upgradeContext} — {v.label}</>
+    : v.label
+  }
+</p>
+
+// Quantity / price per unit line — for both types:
+{v.quantity && v.quantity > 1 && v.pricePerUnit && v.pricePerUnit > 0 && (
+  <p className="text-xs text-muted-foreground mt-0.5">
+    {formatViewCurrency(v.pricePerUnit, v.currency || "USD")} × {v.quantity} {segment.type === "flight" ? "passengers" : "rooms"}
+  </p>
+)}
+```
+
+Also update the **primary card** label to be more specific:
+
+For flights: `AA 1700 / AA 1759 — EWR → LAX (Business, 2 passengers)`
+Pull `meta.flightNumber`, `meta.departure?.iata`, `meta.arrival?.iata`, `bookingClassLabels[meta.bookingClass]`, and `meta.quantity`.
+
+For hotels: `Hotel Bel-Air — Junior Suite (2 rooms)`
+Pull `meta.hotelName`, `meta.roomType || segment.subtitle`, `meta.quantity`.
+
+---
+
+## A4 — PDF variant display (`server/pdf-generator.tsx`)
+
+Apply the same upgrade/alternative logic to `VariantDisplay`. When `v.variantType === "upgrade"` (or undefined), prepend the inherited context to the label:
+
+```typescript
+const isUpgrade = !v.variantType || v.variantType === "upgrade";
+const displayLabel = isUpgrade && primarySegment
+  ? `${buildPrimaryLabelForPdf(primarySegment)} — ${v.label}`
+  : v.label;
+```
+
+Add quantity/per-unit pricing to each variant in the PDF:
+
+```typescript
+if (v.quantity && v.quantity > 1 && v.pricePerUnit && v.pricePerUnit > 0) {
+  details.push(`${formatCurrency(v.pricePerUnit, v.currency || "USD")} × ${v.quantity} ${primarySegment?.type === "flight" ? "passengers" : "rooms"}`);
+}
+```
+
+---
+
+# PART B — Selection Summary for Advisors
+
+## B1 — Enrich the existing submit-selections route (`server/routes.ts`)
+
+The `POST /api/trips/:tripId/submit-selections` route already exists and already posts a system message to the chat. Do not add a new route or a second system message. Instead, make two targeted changes to the existing route:
+
+**Change 1:** Build a richer `selections` array with full segment context. Replace the existing thin `selections` mapping (which only has `segmentTitle` and `variantLabel`) with this:
+
+```typescript
+const selections = await Promise.all(submittedVariants.map(async (v) => {
+  const seg = segs.find(s => s.id === v.segmentId);
+  const segFull = await db.select().from(tripSegments)
+    .where(eq(tripSegments.id, v.segmentId)).then(r => r[0]);
+  const meta = (segFull?.metadata || {}) as Record<string, any>;
+
+  let segmentContext = seg?.title || "Segment";
+  if (segFull?.type === "flight") {
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const fn = meta.flightNumber || "";
+    if (dep && arr) segmentContext = fn ? `${fn}: ${dep} → ${arr}` : `${dep} → ${arr}`;
+  } else if (segFull?.type === "hotel") {
+    segmentContext = meta.hotelName || seg?.title || "Hotel";
+  }
+
+  const isUpgrade = !v.variantType || v.variantType === "upgrade";
+  const selectedLabel = isUpgrade && segmentContext !== seg?.title
+    ? `${segmentContext} — ${v.label}`
+    : v.label;
+
+  return {
+    segmentContext,
+    selectedLabel,
+    variantType: v.variantType || "upgrade",
+    price: v.cost ? new Intl.NumberFormat("en-US", {
+      style: "currency", currency: v.currency || "USD", minimumFractionDigits: 0
+    }).format(v.cost) : undefined,
+    quantity: v.quantity || 1,
+    pricePerUnit: v.pricePerUnit,
+    currency: v.currency || "USD",
+  };
+}));
+```
+
+**Change 2:** Replace the existing generic system message content with the detailed breakdown. Find the existing `storage.createMessage(...)` call inside the submit-selections route and update its `content` field to use:
+
+```typescript
+const summaryLines = selections.map(sel => {
+  const pricePart = sel.price ? ` · ${sel.price}` : "";
+  return `• ${sel.selectedLabel}${pricePart}`;
+});
+
+const messageContent = selections.length > 0
+  ? `${clientName} submitted their preferences for "${trip.title}":\n${summaryLines.join("\n")}`
+  : `${clientName} submitted their preferences for "${trip.title}".`;
+```
+
+Pass `messageContent` as the `content` field in the existing `createMessage` call.
+
+---
+
+## B2 — In-app notification for advisor (`server/routes.ts`)
+
+Inside the existing submit-selections route, after building the `selections` array, add an in-app notification for the advisor. This notification does not yet exist — add it alongside the existing email send:
+
+```typescript
+if (trip.advisorId) {
+  const summaryLines = selections.map(sel => {
+    const pricePart = sel.price
+      ? sel.quantity > 1 && sel.pricePerUnit
+        ? ` · ${sel.price} (${new Intl.NumberFormat("en-US", { style: "currency", currency: sel.currency || "USD", minimumFractionDigits: 0 }).format(sel.pricePerUnit)} × ${sel.quantity})`
+        : ` · ${sel.price}`
+      : "";
+    return `• ${sel.selectedLabel}${pricePart}`;
+  });
+
+  await storage.createNotification({
+    orgId: trip.orgId,
+    profileId: trip.advisorId,
+    type: "selections_submitted",
+    title: `${clientName} submitted selections for "${trip.title}"`,
+    message: summaryLines.length > 0
+      ? summaryLines.join("\n")
+      : "Client submitted their preferences.",
+    data: {
+      tripId: trip.id,
+      clientName,
+      selections,
+      submittedAt: new Date().toISOString(),
+    },
+  });
+}
+```
+
+---
+
+## B3 — Notification bell renders selection notifications properly (`client/src/components/notification-bell.tsx`)
+
+Add `selections_submitted` to the `changeTypeConfig` map. Import `ListChecks` from lucide-react:
+
+```typescript
+selections_submitted: { icon: ListChecks, color: "text-primary" },
+```
+
+In the notification item render, when `notif.type === "selections_submitted"`, show the selections as a structured list rather than a single text line:
+
+```tsx
+{notif.type === "selections_submitted" && notifData?.selections?.length > 0 ? (
+  <div className="mt-1 space-y-0.5">
+    {(notifData.selections as any[]).map((sel: any, i: number) => (
+      <div key={i} className="text-[11px] text-muted-foreground leading-relaxed">
+        <span className="text-foreground/70 font-medium">{sel.selectedLabel}</span>
+        {sel.price && (
+          <span className="text-muted-foreground">
+            {" "}· {sel.price}
+            {sel.quantity > 1 && sel.pricePerUnit
+              ? ` (${new Intl.NumberFormat("en-US", { style: "currency", currency: sel.currency || "USD", minimumFractionDigits: 0 }).format(sel.pricePerUnit)} × ${sel.quantity})`
+              : ""}
+          </span>
+        )}
+      </div>
+    ))}
+  </div>
+) : (
+  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{notif.message}</p>
+)}
+```
+
+---
+
+## B4 — Chat thread renders system messages as banners (`client/src/components/chat-thread.tsx`)
+
+Check whether the chat thread already renders messages where `senderType === "system"` differently from regular chat bubbles. If it does not yet render them as centered banners, add this rendering to the message loop:
+
+```tsx
+if (msg.senderType === "system" || msg.messageType?.startsWith("event_")) {
+  const isApproval = msg.messageType === "event_itinerary_approved";
+  return (
+    <div key={msg.id} className="flex justify-center my-4 px-4">
+      <div className={`w-full max-w-sm rounded-lg border px-4 py-3 ${
+        isApproval
+          ? "bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800"
+          : "bg-primary/5 border-primary/20"
+      }`}>
+        {msg.content.split("\n").map((line, i) => (
+          <p key={i} className={`text-xs leading-relaxed ${
+            i === 0
+              ? "font-medium text-foreground mb-1.5"
+              : "text-muted-foreground"
+          }`}>
+            {line}
+          </p>
+        ))}
+        <p className="text-[10px] text-muted-foreground/50 mt-2">
+          {formatTimestamp(msg.createdAt)}
+        </p>
+      </div>
+    </div>
+  );
+}
+```
+
+If system messages already render as banners, skip this step entirely.
+
+---
+
+## B5 — Trip builder shows submitted selections panel (`client/src/pages/trip-edit.tsx`)
+
+Add a query to fetch submitted variants for the current trip:
+
+```typescript
+const { data: submittedSelections } = useQuery({
+  queryKey: ["/api/trips", id, "submitted-selections"],
+  queryFn: async () => {
+    const res = await apiRequest("GET", `/api/trips/${id}/submitted-selections`);
+    return res.json();
+  },
+  enabled: !!trip?.selectionsSubmittedAt,
+});
+```
+
+Add the GET route to `server/routes.ts`:
+
+```typescript
+app.get("/api/trips/:tripId/submitted-selections", isAuthenticated, orgMiddleware, async (req: any, res) => {
+  try {
+    const { tripId } = req.params;
+    const segs = await db.select().from(tripSegments)
+      .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
+
+    const segIds = segs.map(s => s.id);
+    if (segIds.length === 0) return res.json([]);
+
+    const submitted = await db.select().from(segmentVariants)
+      .where(and(
+        inArray(segmentVariants.segmentId, segIds),
+        eq(segmentVariants.isSubmitted, true),
+        eq(segmentVariants.isSelected, true)
+      ));
+
+    return res.json(submitted.map(v => ({
+      ...v,
+      segmentTitle: segs.find(s => s.id === v.segmentId)?.title || "Segment",
+    })));
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch submitted selections" });
+  }
+});
+```
+
+In the trip-edit sidebar, in the same area as the approved version banner, add a "Client Selections" panel when `trip.selectionsSubmittedAt` is set:
+
+```tsx
+{trip.selectionsSubmittedAt && (
+  <div className="mx-4 mb-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
+    <p className="text-xs font-medium text-primary mb-1.5 flex items-center gap-1.5">
+      <ListChecks className="w-3.5 h-3.5" />
+      Client selections · {format(new Date(trip.selectionsSubmittedAt), "d MMM, h:mm a")}
+    </p>
+    {submittedSelections && submittedSelections.length > 0 ? (
+      <div className="space-y-1.5">
+        {submittedSelections.map((sel: any) => (
+          <div key={sel.id} className="text-xs">
+            <span className="text-muted-foreground">{sel.segmentTitle} → </span>
+            <span className="font-medium">{sel.label}</span>
+            {sel.cost && (
+              <span className="text-muted-foreground">
+                {" "}· {new Intl.NumberFormat("en-US", { style: "currency", currency: sel.currency || "USD", minimumFractionDigits: 0 }).format(sel.cost)}
+                {sel.quantity > 1 && sel.pricePerUnit
+                  ? ` (${new Intl.NumberFormat("en-US", { style: "currency", currency: sel.currency || "USD", minimumFractionDigits: 0 }).format(sel.pricePerUnit)} × ${sel.quantity})`
+                  : ""}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    ) : (
+      <p className="text-xs text-muted-foreground">No specific options selected</p>
+    )}
+  </div>
+)}
+```
+
+Import `ListChecks` from lucide-react in trip-edit.tsx.
