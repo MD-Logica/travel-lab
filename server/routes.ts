@@ -742,6 +742,7 @@ export async function registerRoutes(
       const tripData = {
         ...req.body,
         orgId,
+        advisorId: req._profile.id,
         startDate: req.body.startDate ? new Date(req.body.startDate) : null,
         endDate: req.body.endDate ? new Date(req.body.endDate) : null,
       };
@@ -765,11 +766,17 @@ export async function registerRoutes(
 
   app.patch("/api/trips/:id", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
-      const updateData = {
+      const updateData: any = {
         ...req.body,
         startDate: req.body.startDate ? new Date(req.body.startDate) : null,
         endDate: req.body.endDate ? new Date(req.body.endDate) : null,
       };
+      if (!updateData.advisorId) {
+        const existing = await storage.getTrip(req.params.id, req._orgId);
+        if (existing && !existing.advisorId) {
+          updateData.advisorId = req._profile.id;
+        }
+      }
       const trip = await storage.updateTrip(req.params.id, req._orgId, updateData);
       if (!trip) return res.status(404).json({ message: "Trip not found" });
       res.json(trip);
