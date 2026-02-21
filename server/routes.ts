@@ -1366,6 +1366,7 @@ export async function registerRoutes(
         organization: fullData.organization,
         advisor: fullData.advisor,
         client: fullData.client,
+        companions: fullData.companions,
         version: selectedVersion,
         segments,
       });

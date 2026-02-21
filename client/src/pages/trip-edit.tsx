@@ -165,14 +165,71 @@ function SegmentCard({
   onEdit,
   tracking,
   showPricing = false,
+  positionInDay,
+  daySegments,
+  allSegments,
+  currentVersionId,
 }: {
   segment: TripSegment;
   tripId: string;
   onEdit: (s: TripSegment) => void;
   tracking?: FlightTracking | null;
   showPricing?: boolean;
+  positionInDay?: number;
+  daySegments?: TripSegment[];
+  allSegments?: TripSegment[];
+  currentVersionId?: string;
 }) {
   const { toast } = useToast();
+  const [editingPosition, setEditingPosition] = useState(false);
+  const [positionValue, setPositionValue] = useState(String(positionInDay || 1));
+  const posInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingPosition && posInputRef.current) {
+      posInputRef.current.select();
+    }
+  }, [editingPosition]);
+
+  const reorderMutation = useMutation({
+    mutationFn: async (segmentIds: string[]) => {
+      await apiRequest("POST", `/api/trips/${tripId}/versions/${currentVersionId}/segments/reorder`, { segmentIds });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "segments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Reorder failed", description: e.message, variant: "destructive" });
+    },
+  });
+
+  const commitPosition = () => {
+    setEditingPosition(false);
+    if (!daySegments || !allSegments || !currentVersionId || positionInDay == null) return;
+    const newPos = Math.max(1, Math.min(daySegments.length, parseInt(positionValue) || positionInDay));
+    if (newPos === positionInDay) return;
+
+    const dayOrder = [...daySegments];
+    const oldIdx = positionInDay - 1;
+    const [moved] = dayOrder.splice(oldIdx, 1);
+    dayOrder.splice(newPos - 1, 0, moved);
+    const updatedDayIds = new Set(dayOrder.map(s => s.id));
+
+    const rebuilt: string[] = [];
+    let inserted = false;
+    for (const seg of allSegments) {
+      if (updatedDayIds.has(seg.id)) {
+        if (!inserted) {
+          dayOrder.forEach(s => rebuilt.push(s.id));
+          inserted = true;
+        }
+      } else {
+        rebuilt.push(seg.id);
+      }
+    }
+    reorderMutation.mutate(rebuilt);
+  };
   const cfg = segmentTypeConfig[segment.type] || segmentTypeConfig.activity;
   const Icon = cfg.icon;
 
@@ -297,6 +354,34 @@ function SegmentCard({
   return (
     <Card className="group relative hover-elevate" data-testid={`card-segment-${segment.id}`}>
       <CardContent className="p-3 flex items-start gap-3">
+        {positionInDay != null && (
+          editingPosition ? (
+            <input
+              ref={posInputRef}
+              type="number"
+              min={1}
+              value={positionValue}
+              onChange={(e) => setPositionValue(e.target.value)}
+              onBlur={commitPosition}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); commitPosition(); }
+                if (e.key === "Escape") { setEditingPosition(false); setPositionValue(String(positionInDay)); }
+              }}
+              className="w-6 h-6 rounded-full border border-border bg-muted/50 text-[10px] text-center font-medium text-muted-foreground shrink-0 focus:outline-none focus:ring-1 focus:ring-primary self-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              data-testid={`input-position-${segment.id}`}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => { setPositionValue(String(positionInDay)); setEditingPosition(true); }}
+              className="w-6 h-6 rounded-full bg-muted/50 text-[10px] font-medium text-muted-foreground shrink-0 flex items-center justify-center hover:bg-muted transition-colors self-center"
+              title="Click to reorder"
+              data-testid={`badge-position-${segment.id}`}
+            >
+              {positionInDay}
+            </button>
+          )
+        )}
         <div className={`flex items-center justify-center w-9 h-9 rounded-md shrink-0 ${cfg.color}`}>
           <Icon className="w-4 h-4" strokeWidth={1.5} />
         </div>
@@ -2697,6 +2782,7 @@ export default function TripEditPage() {
                               />
                             );
                           }
+                          const segIdx = daySegments.indexOf(item.segment);
                           return (
                             <SegmentCard
                               key={item.segment.id}
@@ -2705,6 +2791,10 @@ export default function TripEditPage() {
                               onEdit={openEditSegment}
                               tracking={item.segment.type === "flight" ? trackingBySegment.get(item.segment.id) : null}
                               showPricing={showPricing}
+                              positionInDay={segIdx + 1}
+                              daySegments={daySegments}
+                              allSegments={segments}
+                              currentVersionId={currentVersionId}
                             />
                           );
                         })}

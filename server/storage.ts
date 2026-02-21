@@ -135,6 +135,7 @@ export interface IStorage {
     organization: { id: string; name: string; logoUrl: string | null };
     advisor: { fullName: string; email: string | null; avatarUrl: string | null; phone: string | null; website: string | null; timeFormat: string } | null;
     client: { fullName: string; email: string | null } | null;
+    companions: { id: string; fullName: string }[];
     versions: (TripVersion & { segments: TripSegment[] })[];
   } | undefined>;
 
@@ -566,6 +567,7 @@ export class DatabaseStorage implements IStorage {
     organization: { id: string; name: string; logoUrl: string | null };
     advisor: { fullName: string; email: string | null; avatarUrl: string | null; phone: string | null; website: string | null; timeFormat: string } | null;
     client: { fullName: string; email: string | null } | null;
+    companions: { id: string; fullName: string }[];
     versions: (TripVersion & { segments: TripSegment[] })[];
   } | undefined> {
     const [trip] = await db.select().from(trips).where(eq(trips.id, tripId));
@@ -600,6 +602,16 @@ export class DatabaseStorage implements IStorage {
       if (cl) client = cl;
     }
 
+    let companions: { id: string; fullName: string }[] = [];
+    const additionalIds = trip.additionalClientIds as string[] | null;
+    if (additionalIds && additionalIds.length > 0) {
+      const { inArray } = await import("drizzle-orm");
+      companions = await db
+        .select({ id: clients.id, fullName: clients.fullName })
+        .from(clients)
+        .where(inArray(clients.id, additionalIds));
+    }
+
     const versionRows = await db.select().from(tripVersions)
       .where(eq(tripVersions.tripId, tripId))
       .orderBy(tripVersions.versionNumber);
@@ -618,6 +630,7 @@ export class DatabaseStorage implements IStorage {
       organization: org,
       advisor,
       client,
+      companions,
       versions: versionsWithSegments,
     };
   }

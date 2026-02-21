@@ -403,6 +403,7 @@ interface PdfData {
   organization: { name: string; logoUrl: string | null };
   advisor: { fullName: string; email?: string | null; phone?: string | null; website?: string | null; timeFormat?: string } | null;
   client: { fullName: string } | null;
+  companions?: { id: string; fullName: string }[];
   version: TripVersion;
   segments: TripSegment[];
 }
@@ -438,7 +439,7 @@ function PropertyGroupView({ groupSegments, showPricing, timeFormat, photoMap, v
 }
 
 function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoMap: Map<string, ResolvedPhoto[]>; variantMap: Map<string, SegmentVariant[]> }) {
-  const { trip, organization, advisor, client, version, segments } = data;
+  const { trip, organization, advisor, client, companions, version, segments } = data;
   const showPricing = version.showPricing ?? true;
   const timeFormat = advisor?.timeFormat || "24h";
 
@@ -456,6 +457,11 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
           <Text style={s.coverTitle}>{trip.title}</Text>
           <Text style={s.coverSubtitle}>{formatDestinations((trip as any).destinations, trip.destination)}</Text>
           {client && <Text style={s.coverSubtitle}>Prepared for {client.fullName}</Text>}
+          {companions && companions.length > 0 && (
+            <Text style={{ fontFamily: "Serif", fontSize: 12, color: "#9ca3af", marginTop: 2 }}>
+              Traveling with: {companions.map(c => c.fullName).join(", ")}
+            </Text>
+          )}
           {dateRange && <Text style={s.coverDate}>{dateRange}</Text>}
           <Text style={s.coverBranding}>
             {advisor ? `CURATED BY ${advisor.fullName.toUpperCase()} AT ` : "PREPARED BY "}

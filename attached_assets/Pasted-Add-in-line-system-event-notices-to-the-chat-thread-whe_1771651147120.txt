@@ -1,0 +1,53 @@
+Add in-line system event notices to the chat thread when clients take action on their itinerary. These should look like banners/notices — not chat bubbles.
+
+Step 1 — Add messageType field to messages schema (shared/schema.ts)
+Add a nullable text column to the messages table:
+typescriptmessageType: text("message_type").default("message"),
+Values: "message" (default, existing behavior), "event_selections_submitted", "event_itinerary_approved".
+Update insertMessageSchema to allow this field.
+
+Step 2 — Post system messages at key moments (server/routes.ts)
+On selection submission — in the POST /api/trips/:tripId/submit-selections route, after storage.submitVariantsForTrip(tripId) succeeds:
+
+Find the conversation for this client: storage.getOrCreateConversation(trip.orgId, trip.clientId)
+Create a system message:
+
+typescriptawait storage.createMessage({
+  conversationId: convo.id,
+  orgId: trip.orgId,
+  senderType: "system",
+  senderId: "system",
+  senderName: "System",
+  content: `${clientName} submitted their option preferences for "${trip.title}"`,
+  isRead: false,
+  messageType: "event_selections_submitted",
+});
+
+Broadcast via broadcastNewMessage(convo.id, msg) so it appears live.
+
+On itinerary approval — when you build the approval endpoint (POST /api/trips/:tripId/approve), do the same with:
+typescriptcontent: `${clientName} approved the itinerary for "${trip.title}"`,
+messageType: "event_itinerary_approved",
+
+Step 3 — Render event messages as banners (client/src/components/chat-thread.tsx)
+In the message rendering loop, before checking isAdvisor, check if msg.messageType starts with "event_". If so, render a special banner instead of a chat bubble:
+tsxif (msg.messageType?.startsWith("event_")) {
+  const isApproval = msg.messageType === "event_itinerary_approved";
+  return (
+    <div key={msg.id} className="flex justify-center my-3 px-4">
+      <div className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm max-w-[85%] ${
+        isApproval
+          ? "bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-300"
+          : "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-300"
+      }`}>
+        {isApproval
+          ? <CheckCircle2 className="w-4 h-4 shrink-0" />
+          : <ListChecks className="w-4 h-4 shrink-0" />
+        }
+        <span className="text-xs leading-relaxed">{msg.content}</span>
+        <span className="text-[10px] opacity-50 shrink-0 ml-auto">{formatTimestamp(msg.createdAt)}</span>
+      </div>
+    </div>
+  );
+}
+Import CheckCircle2 and ListChecks from lucide-react. These banners should not have reaction hover states, avatar, or any bubble styling. They sit centered in the thread.

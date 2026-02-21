@@ -1309,7 +1309,7 @@ export default function TripViewPage() {
     );
   }
 
-  const { trip, organization, advisor, client } = data;
+  const { trip, organization, advisor, client, companions } = data;
   const timeFormat = (advisor?.timeFormat === "12h" ? "12h" : "24h") as "12h" | "24h";
   const dateRange = formatDateRange(trip.startDate, trip.endDate);
   const activeDayInfo = getActiveDayInfo(trip.startDate, trip.endDate);
@@ -1339,6 +1339,12 @@ export default function TripViewPage() {
           {client && (
             <p className="text-[11px] font-medium uppercase tracking-[0.25em] text-white/70 mb-3" data-testid="text-client-name">
               Prepared for {client.fullName}
+            </p>
+          )}
+          {companions && companions.length > 0 && (
+            <p className="text-[11px] text-white/60 flex items-center gap-1.5 -mt-1 mb-3" data-testid="text-companions">
+              <Users className="w-3 h-3" strokeWidth={1.5} />
+              Traveling with: {companions.map((c: any) => c.fullName).join(", ")}
             </p>
           )}
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif font-bold text-white leading-tight mb-3" data-testid="text-trip-title">
