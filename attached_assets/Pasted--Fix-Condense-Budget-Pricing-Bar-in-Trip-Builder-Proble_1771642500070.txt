@@ -1,0 +1,48 @@
+# Fix: Condense Budget/Pricing Bar in Trip Builder
+
+## Problem
+The budget and pricing area in the trip builder sidebar takes up too much vertical space. Currently there are two separate card blocks stacked:
+1. A "Budget" progress bar card (border, padding, progress bar, two text rows)
+2. A "Subtotal / Discount / Total" card (border, padding, multiple rows)
+3. Below those: a "+ Add discount or credit" link or an expanded discount editor
+
+This takes up excessive height and pushes the itinerary content down.
+
+## Goal
+Replace all of that with one single compact horizontal bar — one line of height — that fits everything. No separate stacked cards. No borders.
+
+## The New Design
+
+Replace the entire block starting at the IIFE `{(() => {` that contains `data-testid="budget-progress-bar"` and `data-testid="cost-summary"` and `data-testid="button-add-discount"` / `data-testid="discount-editor"` with a single compact inline row:
+
+```
+[Budget bar pill]  $X,XXX used of $XX,XXX  ·  $X remaining  ·  [-X% Loyalty credit]  [+ Discount]
+```
+
+Specifically, render ONE horizontal `div` with `flex items-center gap-3 px-4 py-1.5 text-[11px] text-muted-foreground` that contains all of:
+
+1. **Progress pill** (only if `budgetAmount > 0`): A small inline pill `w-20 h-1.5 bg-muted rounded-full` with a colored fill bar inside it (emerald/amber/red based on % used)
+
+2. **Used / Budget** (only if `budgetAmount > 0`): `{fmtBudget(totalCost)} of {fmtBudget(budgetAmount)}`
+
+3. **Remaining or over** (only if `budgetAmount > 0`): A small badge — either `{fmtBudget(remaining)} left` in muted text or `{fmtBudget(over)} over` in red
+
+4. **Subtotal** (only if `subtotalCost > 0` AND `budgetAmount === 0`): `{fmtBudget(subtotalCost)}` in muted text
+
+5. **Discount line** (only if `discountValue > 0`): a small emerald badge showing `-{fmtBudget(discountValue)}` and the `versionDiscountLabel`
+
+6. **Total** (only if `discountValue > 0`): `= {fmtBudget(totalCost)}` in slightly bolder text
+
+7. **Discount button** (always): a small `ghost` button or text link on the right side of the row, either `"+ Discount"` (if no discount set) or a pencil icon (if discount already set), that toggles the `showDiscountEditor` state
+
+8. **Discount editor popover/inline** (when `showDiscountEditor`): Keep the existing fields (type select, amount input, label input, Save/Remove buttons) but render them as a compact inline row directly below this bar — same horizontal layout as the existing `discount-editor` div, already well-designed
+
+The key constraint: **no standalone bordered cards for budget or subtotal**. Everything fits on one line. No padding-heavy boxes.
+
+## Do Not Change
+- The `showDiscountEditor` state and `handleSaveDiscount` / `handleClearDiscount` logic — keep exactly as-is
+- All the `fmtBudget`, `subtotalCost`, `totalCost`, `discountValue`, `versionDiscountLabel`, `versionDiscountType`, `versionDiscount`, `budgetAmount` variables — keep as-is
+- The "Show pricing to client" toggle above
+- The version tabs above that
+- The segment cards below
+- Any other file

@@ -1,0 +1,46 @@
+# Fix: Variants/Options Not Showing in Client Preview for Flights
+
+## Problem
+Segment variants (booking options) are saved correctly in the database and show
+the "Options available" badge in the advisor builder. But in the **client preview** (`trip-view.tsx`):
+
+1. **Flights with connections** are grouped into `JourneyViewCard` — but `JourneyViewCard` never renders `VariantCards`. All variant options for connected flights are invisible.
+
+2. **Single flights** only show variants if `seg.hasVariants` is true AND the `variantMap` has loaded the variants via the `/api/segments/:id/variants?token=...` fetch.
+
+3. **Refundability** is shown correctly for the PRIMARY hotel segment, but NOT for any variants added to hotels.
+
+## Files to change: ONLY `client/src/pages/trip-view.tsx`
+
+### Fix 1 — Variants inside JourneyViewCard
+
+In `JourneyViewCard` (the component that renders connected flights), after rendering the journey card content, add variant display support.
+
+The journey card groups multiple legs. The FIRST leg of the journey (`legs[0]`) is the segment that has `hasVariants`. After rendering the journey card, check if `legs[0].hasVariants` is true and if `variantMap?.[legs[0].id]` has data, then render the `VariantCards` component below it.
+
+The `JourneyViewCard` component currently receives `{ legs, showPricing, timeFormat }`. It needs two additional optional props:
+- `variantMap?: Record<string, any[]>`
+- `onSelectVariant?: (segmentId: string, variantId: string) => void`
+
+Pass these from `DayView` when rendering journeys (the same way they are passed for standalone segments).
+
+### Fix 2 — Ensure `localSelections` is respected for journey legs
+
+When a variant is selected for a journey leg, ensure the selection highlights correctly in the `VariantCards` display using `localSelections?.[legs[0].id]`.
+
+### Fix 3 — Refundability display in VariantCards
+
+In `VariantCards` component (around line 776), each variant card `v` already shows `v.refundability`. Verify and ensure:
+- `non_refundable` → red "Non-refundable" text
+- `fully_refundable` → green "Fully refundable" + deadline if set
+- `partially_refundable` → amber "Partially refundable" + deadline if set
+- `unknown` → show nothing
+
+The `v.refundDeadline` field may come back as an ISO timestamp from the API. Format it as `"MMM d, yyyy"` using date-fns `format()`.
+
+### What NOT to change
+- Do not change any server files
+- Do not change the variant fetching logic (the `useEffect` that loads `variantMap`)
+- Do not change `PropertyGroupViewCard`
+- Do not change the `SegmentView`, `FlightCard`, or any other card components
+- Do not change how variants are saved or the segment editor

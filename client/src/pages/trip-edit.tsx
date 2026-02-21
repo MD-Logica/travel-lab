@@ -2426,70 +2426,50 @@ export default function TripEditPage() {
             maximumFractionDigits: 0,
           }).format(amount);
 
+        const percentage = budgetAmount > 0 ? (totalCost / budgetAmount) * 100 : 0;
+        const isOverBudget = budgetAmount > 0 && totalCost > budgetAmount;
+        const isWarning = budgetAmount > 0 && percentage >= 80 && !isOverBudget;
+        const remaining = budgetAmount - totalCost;
+
         return (
-          <div className="mx-4 mb-3 space-y-2">
-            {budgetAmount > 0 && (() => {
-              const percentage = budgetAmount > 0 ? (totalCost / budgetAmount) * 100 : 0;
-              const isOverBudget = totalCost > budgetAmount;
-              const isWarning = percentage >= 80 && !isOverBudget;
-              return (
-                <div className="p-3 rounded-lg border bg-card/50" data-testid="budget-progress-bar">
-                  <div className="flex justify-between items-center mb-1.5">
-                    <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Budget</span>
-                    <span className="text-xs font-semibold">{fmtBudget(budgetAmount)}</span>
-                  </div>
-                  <div className="relative h-1.5 bg-muted rounded-full overflow-hidden">
+          <div className="mx-4 mb-2">
+            <div className="flex items-center gap-3 px-4 py-1.5 text-[11px] text-muted-foreground" data-testid="budget-progress-bar">
+              {budgetAmount > 0 && (
+                <>
+                  <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden flex-shrink-0">
                     <div
-                      className={`absolute left-0 top-0 h-full rounded-full transition-all duration-500 ${isOverBudget ? "bg-red-500 w-full" : isWarning ? "bg-amber-500" : "bg-emerald-500"}`}
+                      className={`h-full rounded-full transition-all duration-500 ${isOverBudget ? "bg-red-500" : isWarning ? "bg-amber-500" : "bg-emerald-500"}`}
                       style={{ width: `${Math.min(percentage, 100)}%` }}
                     />
                   </div>
-                  <div className="flex justify-between items-center mt-1.5">
-                    <span className="text-[11px] text-muted-foreground">{fmtBudget(totalCost)} used</span>
-                    <span className={`text-[11px] font-medium ${isOverBudget ? "text-red-500" : isWarning ? "text-amber-500" : "text-muted-foreground"}`}>
-                      {isOverBudget ? `${fmtBudget(totalCost - budgetAmount)} over budget` : `${fmtBudget(budgetAmount - totalCost)} remaining`}
-                    </span>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {subtotalCost > 0 && (
-              <div className="p-3 rounded-lg border bg-card/50" data-testid="cost-summary">
-                <div className="flex justify-between items-center">
-                  <span className="text-[11px] text-muted-foreground">Subtotal</span>
-                  <span className="text-xs">{fmtBudget(subtotalCost)}</span>
-                </div>
-                {discountValue > 0 && (
-                  <div className="flex justify-between items-center mt-1" data-testid="discount-line">
-                    <span className="text-[11px] text-emerald-600">
-                      {versionDiscountLabel || "Discount"}{versionDiscountType === "percent" ? ` (${versionDiscount}%)` : ""}
-                    </span>
-                    <span className="text-xs text-emerald-600">-{fmtBudget(discountValue)}</span>
-                  </div>
-                )}
-                {discountValue > 0 && (
-                  <>
-                    <Separator className="my-1.5" />
-                    <div className="flex justify-between items-center">
-                      <span className="text-[11px] font-semibold">Total</span>
-                      <span className="text-xs font-semibold">{fmtBudget(totalCost)}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {!showDiscountEditor ? (
+                  <span className="whitespace-nowrap">{fmtBudget(totalCost)} of {fmtBudget(budgetAmount)}</span>
+                  <span className={`whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded-full ${isOverBudget ? "bg-red-50 text-red-600" : "bg-muted"}`}>
+                    {isOverBudget ? `${fmtBudget(Math.abs(remaining))} over` : `${fmtBudget(remaining)} left`}
+                  </span>
+                </>
+              )}
+              {subtotalCost > 0 && budgetAmount === 0 && (
+                <span className="whitespace-nowrap" data-testid="cost-summary">{fmtBudget(subtotalCost)}</span>
+              )}
+              {discountValue > 0 && (
+                <>
+                  <span className="whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600" data-testid="discount-line">
+                    -{fmtBudget(discountValue)} {versionDiscountLabel || "Discount"}{versionDiscountType === "percent" ? ` (${versionDiscount}%)` : ""}
+                  </span>
+                  <span className="whitespace-nowrap font-medium text-foreground">= {fmtBudget(totalCost)}</span>
+                </>
+              )}
+              <div className="flex-1" />
               <button
-                onClick={() => setShowDiscountEditor(true)}
-                className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline transition-colors"
+                onClick={() => setShowDiscountEditor(!showDiscountEditor)}
+                className="whitespace-nowrap hover:text-foreground transition-colors flex-shrink-0"
                 data-testid="button-add-discount"
               >
-                + Add discount or credit
+                {discountValue > 0 ? <Pencil className="h-3 w-3" /> : "+ Discount"}
               </button>
-            ) : (
-              <div className="flex items-center gap-2 flex-wrap p-3 rounded-lg border bg-card/50" data-testid="discount-editor">
+            </div>
+            {showDiscountEditor && (
+              <div className="flex items-center gap-2 flex-wrap px-4 py-1.5" data-testid="discount-editor">
                 <Select value={discountTypeInput} onValueChange={setDiscountTypeInput}>
                   <SelectTrigger className="h-7 w-24 text-xs" data-testid="select-discount-type">
                     <SelectValue />
