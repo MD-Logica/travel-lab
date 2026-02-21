@@ -1,0 +1,308 @@
+# PW — PDF variant labels: match preview link exactly
+
+One file changes: `server/pdf-generator.tsx`.
+
+The font files are confirmed valid — do not touch them. The problem is purely in the label-building logic inside `VariantDisplay`.
+
+---
+
+## What the preview shows vs. what the PDF shows
+
+**Hotel primary option (the "included" card):**
+- Preview: `The Beverly Hills Hotel — Grand Suite`
+- PDF currently: `Grand Suite` (just the room type, hotel name missing)
+
+**Hotel variant option:**
+- Preview: `The Beverly Hills Hotel — [variant label]` (e.g. "The Beverly Hills Hotel — Presidential Suite")
+- PDF currently: `[variant label]` only (e.g. "Grand Suite")
+
+**Flight primary option (single-leg):**
+- Preview: `AA 1700 / EWR → DFW (First, 2 passengers)`
+- PDF currently: `AA 1700: EWR → DFW` (missing cabin class and quantity)
+
+**Flight primary option (multi-leg journey):**
+- Preview: `EWR → LAX (1 stop, First, 2 passengers)`
+- PDF currently: `EWR → LAX` (missing stops, cabin, quantity)
+
+**Flight variant (upgrade type, single-leg):**
+- Preview: `EWR → DFW (Business)`
+- PDF currently: `EWR → DFW — [variant label]` (wrong — appends label as suffix instead of using cabin-aware format)
+
+**Flight variant (upgrade type, multi-leg):**
+- Preview: `EWR → LAX (1 stop, Business, 2 passengers)`
+- PDF currently: `EWR → LAX — [variant label]` (wrong format)
+
+---
+
+## Changes required
+
+### 1. Replace `buildPrimaryLabelForPdf` with a richer version
+
+Find and replace the entire `buildPrimaryLabelForPdf` function:
+
+```typescript
+// REPLACE THIS:
+function buildPrimaryLabelForPdf(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  if (segment.type === "flight") {
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const flight = meta.flightNumber || "";
+    if (dep && arr && flight) return `${flight}: ${dep} → ${arr}`;
+    if (dep && arr) return `${dep} → ${arr}`;
+  }
+  if (segment.type === "hotel") {
+    return meta.hotelName || meta.roomType || segment.title || "Primary room";
+  }
+  return segment.title || "Primary option";
+}
+```
+
+```typescript
+// WITH THIS:
+const bookingClassLabelsPdf: Record<string, string> = {
+  first: "First",
+  business: "Business",
+  premium_economy: "Premium Economy",
+  economy: "Economy",
+};
+
+function buildFlightPrimaryLabelPdf(
+  segment: TripSegment,
+  journeyLegs?: TripSegment[]
+): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const qty = meta.quantity || 1;
+  const cabin = bookingClassLabelsPdf[meta.bookingClass] || "";
+
+  if (journeyLegs && journeyLegs.length > 1) {
+    const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+    const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+    const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+    const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+    const stops = journeyLegs.length - 1;
+    const routePart = dep && arr ? `${dep} → ${arr}` : (firstMeta.airline || "Flight");
+    const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+    const extras: string[] = [stopsPart];
+    if (cabin) extras.push(cabin);
+    if (qty > 1) extras.push(`${qty} passengers`);
+    return `${routePart} (${extras.join(", ")})`;
+  }
+
+  const dep = meta.departure?.iata || meta.departureAirport || "";
+  const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+  const fn = meta.flightNumber || "";
+  const parts: string[] = [];
+  if (fn) parts.push(fn);
+  if (dep && arr) parts.push(`${dep} → ${arr}`);
+  const extras: string[] = [];
+  if (cabin) extras.push(cabin);
+  if (qty > 1) extras.push(`${qty} passengers`);
+  const base = parts.join(" / ");
+  return base
+    ? `${base}${extras.length > 0 ? ` (${extras.join(", ")})` : ""}`
+    : (segment.title || "Primary flight");
+}
+
+function buildHotelPrimaryLabelPdf(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const hotelName = meta.hotelName || segment.title || "";
+  const roomType = meta.roomType || segment.subtitle || "";
+  const qty = meta.quantity || 1;
+  const parts = [hotelName, roomType].filter(Boolean);
+  if (qty > 1) parts.push(`${qty} rooms`);
+  return parts.length > 0 ? parts.join(" — ") : "Primary room";
+}
+
+function buildPrimaryLabelForPdf(segment: TripSegment, journeyLegs?: TripSegment[]): string {
+  if (segment.type === "flight" || segment.type === "charter_flight") {
+    return buildFlightPrimaryLabelPdf(segment, journeyLegs);
+  }
+  if (segment.type === "hotel") {
+    return buildHotelPrimaryLabelPdf(segment);
+  }
+  return segment.title || "Primary option";
+}
+```
+
+### 2. Update `VariantDisplay` to accept and pass `journeyLegs`
+
+The `VariantDisplay` component signature needs to accept a `journeyLegs` prop so it can pass it into `buildPrimaryLabelForPdf` for multi-leg flight journeys.
+
+Find the current signature:
+```typescript
+function VariantDisplay({ variants, showPricing, primarySegment }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment }) {
+```
+
+Replace with:
+```typescript
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[] }) {
+```
+
+### 3. Update all `buildPrimaryLabelForPdf` calls inside `VariantDisplay`
+
+Inside `VariantDisplay` there are multiple calls to `buildPrimaryLabelForPdf(primarySegment)`. Update all of them to pass `journeyLegs`:
+
+```typescript
+// Every occurrence of:
+buildPrimaryLabelForPdf(primarySegment)
+
+// Becomes:
+buildPrimaryLabelForPdf(primarySegment, journeyLegs)
+```
+
+There are approximately 4 occurrences inside `VariantDisplay`:
+- The submitted variant label (inside the `if (submittedVariant)` branch)
+- The primary segment row label (the row shown before the list of variants)
+- Each variant's label in the `variants.map(...)` loop
+
+### 4. Update variant label logic for flights inside `VariantDisplay`
+
+The current variant label for upgrade-type flight variants just does `${buildPrimaryLabelForPdf(primarySegment)} — ${v.label}`, which appends the variant's text label as a dash-suffix. But the preview shows it as a route + cabin in parens.
+
+Inside the `variants.map((v) => {...})` block, replace the label-building logic:
+
+Find:
+```typescript
+<Text style={s.variantLabel}>
+  {(() => {
+    const isUpgrade = !v.variantType || v.variantType === "upgrade";
+    return isUpgrade && primarySegment
+      ? `${buildPrimaryLabelForPdf(primarySegment)} — ${v.label}`
+      : v.label;
+  })()}
+</Text>
+```
+
+Replace with:
+```typescript
+<Text style={s.variantLabel}>
+  {(() => {
+    const isUpgrade = !v.variantType || v.variantType === "upgrade";
+    if (isUpgrade && primarySegment) {
+      if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+        const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+        const variantCabin = bookingClassLabelsPdf[v.bookingClass] || bookingClassLabelsPdf[v.cabin] || v.label || "";
+        const vQty = v.quantity || segMeta.quantity || 1;
+
+        if (journeyLegs && journeyLegs.length > 1) {
+          const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+          const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+          const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+          const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+          const stops = journeyLegs.length - 1;
+          const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+          const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+          const extras: string[] = [stopsPart];
+          if (variantCabin) extras.push(variantCabin);
+          if (vQty > 1) extras.push(`${vQty} passengers`);
+          return `${routePart} (${extras.join(", ")})`;
+        }
+
+        const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+        const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+        const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+        const extras: string[] = [];
+        if (variantCabin) extras.push(variantCabin);
+        if (vQty > 1) extras.push(`${vQty} passengers`);
+        return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+      }
+
+      if (primarySegment.type === "hotel") {
+        const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+        const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
+        const parts = [hotelName, v.label].filter(Boolean);
+        if (vQty > 1) parts.push(`${vQty} rooms`);
+        return parts.join(" — ");
+      }
+
+      const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+      return ctx ? `${ctx} — ${v.label}` : v.label;
+    }
+    return v.label;
+  })()}
+</Text>
+```
+
+Do the same for the identical block inside the `if (submittedVariant)` branch:
+
+Find (inside the submittedVariant branch):
+```typescript
+const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
+return isUpgrade && primarySegment
+  ? `${buildPrimaryLabelForPdf(primarySegment)} — ${submittedVariant.label}`
+  : submittedVariant.label;
+```
+
+Replace with the same pattern, using `submittedVariant` instead of `v`:
+```typescript
+const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
+if (isUpgrade && primarySegment) {
+  if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+    const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+    const variantCabin = bookingClassLabelsPdf[submittedVariant.bookingClass] || bookingClassLabelsPdf[submittedVariant.cabin] || submittedVariant.label || "";
+    const vQty = submittedVariant.quantity || segMeta.quantity || 1;
+
+    if (journeyLegs && journeyLegs.length > 1) {
+      const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+      const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+      const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+      const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+      const stops = journeyLegs.length - 1;
+      const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+      const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+      const extras: string[] = [stopsPart];
+      if (variantCabin) extras.push(variantCabin);
+      if (vQty > 1) extras.push(`${vQty} passengers`);
+      return `${routePart} (${extras.join(", ")})`;
+    }
+
+    const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+    const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+    const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+    const extras: string[] = [];
+    if (variantCabin) extras.push(variantCabin);
+    if (vQty > 1) extras.push(`${vQty} passengers`);
+    return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+  }
+
+  if (primarySegment.type === "hotel") {
+    const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+    const vQty = submittedVariant.quantity || (primarySegment.metadata as any)?.quantity || 1;
+    const parts = [hotelName, submittedVariant.label].filter(Boolean);
+    if (vQty > 1) parts.push(`${vQty} rooms`);
+    return parts.join(" — ");
+  }
+
+  const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+  return ctx ? `${ctx} — ${submittedVariant.label}` : submittedVariant.label;
+}
+return submittedVariant.label;
+```
+
+### 5. Pass `journeyLegs` when calling `VariantDisplay` from `JourneyPdfView`
+
+Find the call inside `JourneyPdfView`:
+```typescript
+<VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} />
+```
+
+Replace with:
+```typescript
+<VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} journeyLegs={legs} />
+```
+
+All other `VariantDisplay` usages (from `SegmentView` and `PropertyGroupView`) do not pass `journeyLegs` — that's correct, since single-segment flight and hotel variants don't need it.
+
+---
+
+## Summary of what changes
+
+- `buildPrimaryLabelForPdf` is replaced with three focused helpers that exactly replicate the preview's label format
+- Hotel primary card now shows `Hotel Name — Room Type` (e.g. "The Beverly Hills Hotel — Grand Suite")
+- Hotel variants now show `Hotel Name — Variant Label` (e.g. "The Beverly Hills Hotel — Presidential Suite") 
+- Flight primary card now shows `Route (cabin, N passengers)` matching the preview
+- Multi-leg flight primary and variants now show `DEP → ARR (N stops, cabin, N passengers)` matching the preview
+- Flight variant upgrade labels now use the same cabin-in-parens format instead of `Route — label`
+- `VariantDisplay` gains a `journeyLegs` prop and `JourneyPdfView` passes it through
+- Font files are not touched — they are confirmed valid

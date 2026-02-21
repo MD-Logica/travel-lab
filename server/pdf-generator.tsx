@@ -158,22 +158,71 @@ function formatRefundability(refundability: string | null | undefined, refundDea
   return null;
 }
 
-function buildPrimaryLabelForPdf(segment: TripSegment): string {
+const bookingClassLabelsPdf: Record<string, string> = {
+  first: "First",
+  business: "Business",
+  premium_economy: "Premium Economy",
+  economy: "Economy",
+};
+
+function buildFlightPrimaryLabelPdf(
+  segment: TripSegment,
+  journeyLegs?: TripSegment[]
+): string {
   const meta = (segment.metadata || {}) as Record<string, any>;
-  if (segment.type === "flight") {
-    const dep = meta.departure?.iata || meta.departureAirport || "";
-    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
-    const flight = meta.flightNumber || "";
-    if (dep && arr && flight) return `${flight}: ${dep} → ${arr}`;
-    if (dep && arr) return `${dep} → ${arr}`;
+  const qty = meta.quantity || 1;
+  const cabin = bookingClassLabelsPdf[meta.bookingClass] || "";
+
+  if (journeyLegs && journeyLegs.length > 1) {
+    const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+    const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+    const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+    const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+    const stops = journeyLegs.length - 1;
+    const routePart = dep && arr ? `${dep} → ${arr}` : (firstMeta.airline || "Flight");
+    const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+    const extras: string[] = [stopsPart];
+    if (cabin) extras.push(cabin);
+    if (qty > 1) extras.push(`${qty} passengers`);
+    return `${routePart} (${extras.join(", ")})`;
+  }
+
+  const dep = meta.departure?.iata || meta.departureAirport || "";
+  const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+  const fn = meta.flightNumber || "";
+  const parts: string[] = [];
+  if (fn) parts.push(fn);
+  if (dep && arr) parts.push(`${dep} → ${arr}`);
+  const extras: string[] = [];
+  if (cabin) extras.push(cabin);
+  if (qty > 1) extras.push(`${qty} passengers`);
+  const base = parts.join(" / ");
+  return base
+    ? `${base}${extras.length > 0 ? ` (${extras.join(", ")})` : ""}`
+    : (segment.title || "Primary flight");
+}
+
+function buildHotelPrimaryLabelPdf(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const hotelName = meta.hotelName || segment.title || "";
+  const roomType = meta.roomType || segment.subtitle || "";
+  const qty = meta.quantity || 1;
+  const parts = [hotelName, roomType].filter(Boolean);
+  if (qty > 1) parts.push(`${qty} rooms`);
+  return parts.length > 0 ? parts.join(" — ") : "Primary room";
+}
+
+function buildPrimaryLabelForPdf(segment: TripSegment, journeyLegs?: TripSegment[]): string {
+  if (segment.type === "flight" || segment.type === "charter_flight") {
+    return buildFlightPrimaryLabelPdf(segment, journeyLegs);
   }
   if (segment.type === "hotel") {
-    return meta.hotelName || meta.roomType || segment.title || "Primary room";
+    return buildHotelPrimaryLabelPdf(segment);
   }
   return segment.title || "Primary option";
 }
 
-function VariantDisplay({ variants, showPricing, primarySegment }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment }) {
+function VariantDisplay({ variants, showPricing, primarySegment, journeyLegs }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment; journeyLegs?: TripSegment[] }) {
   if (!variants || variants.length === 0) return null;
   const submittedVariant = variants.find(v => v.isSubmitted);
 
@@ -185,9 +234,47 @@ function VariantDisplay({ variants, showPricing, primarySegment }: { variants: S
         <Text style={s.variantLabel}>
           {(() => {
             const isUpgrade = !submittedVariant.variantType || submittedVariant.variantType === "upgrade";
-            return isUpgrade && primarySegment
-              ? `${buildPrimaryLabelForPdf(primarySegment)} — ${submittedVariant.label}`
-              : submittedVariant.label;
+            if (isUpgrade && primarySegment) {
+              if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+                const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+                const variantCabin = bookingClassLabelsPdf[(submittedVariant as any).bookingClass] || bookingClassLabelsPdf[(submittedVariant as any).cabin] || submittedVariant.label || "";
+                const vQty = submittedVariant.quantity || segMeta.quantity || 1;
+
+                if (journeyLegs && journeyLegs.length > 1) {
+                  const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+                  const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+                  const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+                  const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+                  const stops = journeyLegs.length - 1;
+                  const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+                  const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+                  const extras: string[] = [stopsPart];
+                  if (variantCabin) extras.push(variantCabin);
+                  if (vQty > 1) extras.push(`${vQty} passengers`);
+                  return `${routePart} (${extras.join(", ")})`;
+                }
+
+                const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+                const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+                const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+                const extras: string[] = [];
+                if (variantCabin) extras.push(variantCabin);
+                if (vQty > 1) extras.push(`${vQty} passengers`);
+                return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+              }
+
+              if (primarySegment.type === "hotel") {
+                const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+                const vQty = submittedVariant.quantity || (primarySegment.metadata as any)?.quantity || 1;
+                const parts = [hotelName, submittedVariant.label].filter(Boolean);
+                if (vQty > 1) parts.push(`${vQty} rooms`);
+                return parts.join(" — ");
+              }
+
+              const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+              return ctx ? `${ctx} — ${submittedVariant.label}` : submittedVariant.label;
+            }
+            return submittedVariant.label;
           })()}
         </Text>
         {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (
@@ -205,7 +292,7 @@ function VariantDisplay({ variants, showPricing, primarySegment }: { variants: S
       {primarySegment && (
         <View style={{ marginBottom: 4, paddingBottom: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
           <Text style={[s.variantLabel, { color: colors.primary }]}>
-            {buildPrimaryLabelForPdf(primarySegment)}
+            {buildPrimaryLabelForPdf(primarySegment, journeyLegs)}
           </Text>
           {showPricing && primarySegment.cost != null && primarySegment.cost > 0 && (
             <Text style={s.variantDetail}>
@@ -227,9 +314,47 @@ function VariantDisplay({ variants, showPricing, primarySegment }: { variants: S
             <Text style={s.variantLabel}>
               {(() => {
                 const isUpgrade = !v.variantType || v.variantType === "upgrade";
-                return isUpgrade && primarySegment
-                  ? `${buildPrimaryLabelForPdf(primarySegment)} — ${v.label}`
-                  : v.label;
+                if (isUpgrade && primarySegment) {
+                  if (primarySegment.type === "flight" || primarySegment.type === "charter_flight") {
+                    const segMeta = (primarySegment.metadata || {}) as Record<string, any>;
+                    const variantCabin = bookingClassLabelsPdf[(v as any).bookingClass] || bookingClassLabelsPdf[(v as any).cabin] || v.label || "";
+                    const vQty = v.quantity || segMeta.quantity || 1;
+
+                    if (journeyLegs && journeyLegs.length > 1) {
+                      const firstMeta = (journeyLegs[0].metadata || {}) as Record<string, any>;
+                      const lastMeta = (journeyLegs[journeyLegs.length - 1].metadata || {}) as Record<string, any>;
+                      const dep = firstMeta.departure?.iata || firstMeta.departureAirport || "";
+                      const arr = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
+                      const stops = journeyLegs.length - 1;
+                      const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+                      const stopsPart = stops === 1 ? "1 stop" : `${stops} stops`;
+                      const extras: string[] = [stopsPart];
+                      if (variantCabin) extras.push(variantCabin);
+                      if (vQty > 1) extras.push(`${vQty} passengers`);
+                      return `${routePart} (${extras.join(", ")})`;
+                    }
+
+                    const dep = segMeta.departure?.iata || segMeta.departureAirport || "";
+                    const arr = segMeta.arrival?.iata || segMeta.arrivalAirport || "";
+                    const routePart = dep && arr ? `${dep} → ${arr}` : buildPrimaryLabelForPdf(primarySegment);
+                    const extras: string[] = [];
+                    if (variantCabin) extras.push(variantCabin);
+                    if (vQty > 1) extras.push(`${vQty} passengers`);
+                    return extras.length > 0 ? `${routePart} (${extras.join(", ")})` : routePart;
+                  }
+
+                  if (primarySegment.type === "hotel") {
+                    const hotelName = (primarySegment.metadata as any)?.hotelName || primarySegment.title || "";
+                    const vQty = v.quantity || (primarySegment.metadata as any)?.quantity || 1;
+                    const parts = [hotelName, v.label].filter(Boolean);
+                    if (vQty > 1) parts.push(`${vQty} rooms`);
+                    return parts.join(" — ");
+                  }
+
+                  const ctx = buildPrimaryLabelForPdf(primarySegment, journeyLegs);
+                  return ctx ? `${ctx} — ${v.label}` : v.label;
+                }
+                return v.label;
               })()}
             </Text>
             {showPricing && v.cost != null && v.cost > 0 && (
@@ -432,7 +557,7 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantM
         );
       })}
       {legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (
-        <VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} />
+        <VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} journeyLegs={legs} />
       )}
     </View>
   );
