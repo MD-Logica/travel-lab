@@ -18,6 +18,7 @@ import {
   Clock, MapPin, Hash, ChevronDown, Calendar, Download, Star,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Users,
   ArrowRight, FileDown, CalendarPlus, Diamond, CheckCircle, Send, Lock,
+  Train, Bus, Anchor, Truck, Phone, User,
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
@@ -415,6 +416,142 @@ function NoteCard({ segment }: { segment: TripSegment }) {
   );
 }
 
+function TransportViewCard({ segment, timeFormat = "24h" }: { segment: TripSegment; timeFormat?: "12h" | "24h" }) {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const tType = meta.transportType || "car";
+  const timeFmt = timeFormatString(timeFormat);
+
+  const transportIcons: Record<string, typeof Car> = { car: Car, transfer: Truck, train: Train, bus: Bus, ferry: Anchor, other: Car };
+  const transportLabels: Record<string, string> = { car: "Car", transfer: "Transfer", train: "Train", bus: "Bus", ferry: "Ferry", other: "Transport" };
+  const TIcon = transportIcons[tType] || Car;
+
+  const fmtDt = (val: string | undefined) => {
+    if (!val) return null;
+    try { return format(new Date(val), `d MMM · ${timeFmt}`); } catch { return val; }
+  };
+  const fmtTime = (val: string | undefined) => {
+    if (!val) return null;
+    try { return format(new Date(val), timeFmt); } catch { return val; }
+  };
+
+  const confNum = meta.confirmationNumber || segment.confirmationNumber;
+
+  return (
+    <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-segment-${segment.id}`}>
+      <div className="flex items-stretch">
+        <div className="w-1.5 bg-emerald-500 shrink-0" />
+        <div className="flex-1 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40">
+              <TIcon className="w-3.5 h-3.5" strokeWidth={1.5} />
+            </div>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{transportLabels[tType]}</span>
+            {meta.provider && <span className="text-xs text-muted-foreground">· {meta.provider}</span>}
+          </div>
+
+          <p className="text-base font-serif font-medium">{segment.title}</p>
+          {segment.subtitle && <p className="text-sm text-muted-foreground mt-0.5">{segment.subtitle}</p>}
+
+          {(tType === "car" || tType === "transfer" || tType === "other") && (
+            <div className="mt-3 space-y-2">
+              {(meta.pickupLocation || meta.dropoffLocation) && (
+                <div className="flex items-center gap-2 text-sm">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span>{meta.pickupLocation || "—"}</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span>{meta.dropoffLocation || "—"}</span>
+                </div>
+              )}
+              {meta.pickupTime && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Clock className="w-3 h-3" />
+                  <span>Pickup: {fmtDt(meta.pickupTime)}</span>
+                </div>
+              )}
+              {(meta.driverName || meta.driverPhone) && (
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  {meta.driverName && <span className="flex items-center gap-1"><User className="w-3 h-3" />{meta.driverName}</span>}
+                  {meta.driverPhone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{meta.driverPhone}</span>}
+                </div>
+              )}
+              {meta.vehicleDetails && <p className="text-xs text-muted-foreground">{meta.vehicleDetails}</p>}
+            </div>
+          )}
+
+          {tType === "train" && (
+            <div className="mt-3 space-y-2">
+              {(meta.departureStation || meta.arrivalStation) && (
+                <div className="flex items-center gap-2 text-sm">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span>{meta.departureStation || "—"}</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span>{meta.arrivalStation || "—"}</span>
+                </div>
+              )}
+              {meta.trainNumber && <p className="text-xs text-muted-foreground">Train {meta.trainNumber}</p>}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {meta.departureTime && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Dep: {fmtDt(meta.departureTime)}</span>}
+                {meta.arrivalTime && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Arr: {fmtTime(meta.arrivalTime)}</span>}
+              </div>
+              {(meta.coachNumber || meta.seatNumber) && (
+                <p className="text-xs text-muted-foreground">
+                  {[meta.coachNumber && `Coach ${meta.coachNumber}`, meta.seatNumber && `Seat ${meta.seatNumber}`].filter(Boolean).join(" · ")}
+                </p>
+              )}
+            </div>
+          )}
+
+          {tType === "bus" && (
+            <div className="mt-3 space-y-2">
+              {(meta.departureStop || meta.arrivalStop) && (
+                <div className="flex items-center gap-2 text-sm">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span>{meta.departureStop || "—"}</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span>{meta.arrivalStop || "—"}</span>
+                </div>
+              )}
+              {meta.routeNumber && <p className="text-xs text-muted-foreground">Route {meta.routeNumber}</p>}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {meta.departureTime && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Dep: {fmtDt(meta.departureTime)}</span>}
+                {meta.arrivalTime && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Arr: {fmtTime(meta.arrivalTime)}</span>}
+              </div>
+              {meta.seatNumber && <p className="text-xs text-muted-foreground">Seat {meta.seatNumber}</p>}
+            </div>
+          )}
+
+          {tType === "ferry" && (
+            <div className="mt-3 space-y-2">
+              {(meta.departurePort || meta.arrivalPort) && (
+                <div className="flex items-center gap-2 text-sm">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span>{meta.departurePort || "—"}</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <span>{meta.arrivalPort || "—"}</span>
+                </div>
+              )}
+              {meta.vesselName && <p className="text-xs text-muted-foreground">{meta.vesselName}</p>}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {meta.departureTime && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Dep: {fmtDt(meta.departureTime)}</span>}
+                {meta.arrivalTime && <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Arr: {fmtTime(meta.arrivalTime)}</span>}
+              </div>
+              {meta.cabinClass && <p className="text-xs text-muted-foreground">{meta.cabinClass}</p>}
+            </div>
+          )}
+
+          {confNum && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
+              <Hash className="w-3 h-3" />
+              <span className="font-mono tracking-wider">{confNum}</span>
+            </div>
+          )}
+          {segment.notes && <p className="text-xs text-muted-foreground mt-2">{segment.notes}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GenericCard({ segment }: { segment: TripSegment }) {
   const Icon = segmentIcons[segment.type] || StickyNote;
   const color = segmentColors[segment.type] || segmentColors.note;
@@ -794,6 +931,7 @@ function SegmentView({ segment, showPricing, timeFormat = "24h" }: { segment: Tr
       case "hotel": return <HotelCard segment={segment} timeFormat={timeFormat} />;
       case "restaurant": return <RestaurantCard segment={segment} timeFormat={timeFormat} />;
       case "activity": return <ActivityCard segment={segment} timeFormat={timeFormat} />;
+      case "transport": return <TransportViewCard segment={segment} timeFormat={timeFormat} />;
       case "note": return <NoteCard segment={segment} />;
       default: return <GenericCard segment={segment} />;
     }

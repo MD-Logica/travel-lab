@@ -670,6 +670,24 @@ function HotelFields({ metadata, onChange }: { metadata: Record<string, any>; on
 
 function TransportFields({ metadata, onChange }: { metadata: Record<string, any>; onChange: (m: Record<string, any>) => void }) {
   const set = (key: string, val: any) => onChange({ ...metadata, [key]: val });
+  const tType = metadata.transportType || "car";
+
+  const handleTypeChange = (newType: string) => {
+    const typeSpecificKeys: Record<string, string[]> = {
+      car: ["vehicleDetails", "pickupLocation", "pickupTime", "dropoffLocation", "dropoffTime", "driverName", "driverPhone"],
+      transfer: ["vehicleDetails", "pickupLocation", "pickupTime", "dropoffLocation", "dropoffTime", "driverName", "driverPhone"],
+      other: ["vehicleDetails", "pickupLocation", "pickupTime", "dropoffLocation", "dropoffTime", "driverName", "driverPhone"],
+      train: ["trainNumber", "departureStation", "departureTime", "arrivalStation", "arrivalTime", "coachNumber", "seatNumber"],
+      bus: ["routeNumber", "departureStop", "departureTime", "arrivalStop", "arrivalTime", "seatNumber"],
+      ferry: ["vesselName", "departurePort", "departureTime", "arrivalPort", "arrivalTime", "cabinClass"],
+    };
+    const allKeys = new Set(Object.values(typeSpecificKeys).flat());
+    const keepKeys = new Set(typeSpecificKeys[newType] || []);
+    const cleared: Record<string, any> = {};
+    allKeys.forEach(k => { if (!keepKeys.has(k)) cleared[k] = ""; });
+    onChange({ ...metadata, ...cleared, transportType: newType });
+  };
+
   return (
     <div className="space-y-3">
       <SectionHeading>Transport Details</SectionHeading>
@@ -678,14 +696,14 @@ function TransportFields({ metadata, onChange }: { metadata: Record<string, any>
         <div className="flex flex-wrap gap-1.5">
           {transportSubTypes.map((t) => {
             const TIcon = t.icon;
-            const selected = metadata.transportType === t.value;
+            const selected = tType === t.value;
             return (
               <Button
                 key={t.value}
                 type="button"
                 variant={selected ? "default" : "outline"}
                 size="sm"
-                onClick={() => set("transportType", t.value)}
+                onClick={() => handleTypeChange(t.value)}
                 data-testid={`button-transport-type-${t.value}`}
               >
                 <TIcon className="w-3.5 h-3.5 mr-1" />
@@ -695,53 +713,166 @@ function TransportFields({ metadata, onChange }: { metadata: Record<string, any>
           })}
         </div>
       </div>
-      <FieldRow>
-        <div>
-          <FieldLabel>Provider</FieldLabel>
-          <Input value={metadata.provider || ""} onChange={(e) => set("provider", e.target.value)} placeholder="Blacklane, Trenitalia" data-testid="input-transport-provider" />
-        </div>
-        <div>
-          <FieldLabel>Vehicle Details</FieldLabel>
-          <Input value={metadata.vehicleDetails || ""} onChange={(e) => set("vehicleDetails", e.target.value)} placeholder="Mercedes S-Class" data-testid="input-vehicle-details" />
-        </div>
-      </FieldRow>
 
-      <SectionHeading>Pickup</SectionHeading>
-      <FieldRow>
-        <div>
-          <FieldLabel>Location</FieldLabel>
-          <Input value={metadata.pickupLocation || ""} onChange={(e) => set("pickupLocation", e.target.value)} placeholder="Hotel lobby" data-testid="input-pickup-location" />
-        </div>
-        <div>
-          <FieldLabel>Time</FieldLabel>
-          <Input type="datetime-local" value={metadata.pickupTime || ""} onChange={(e) => set("pickupTime", e.target.value)} data-testid="input-pickup-time" />
-        </div>
-      </FieldRow>
-
-      <SectionHeading>Drop-off</SectionHeading>
-      <FieldRow>
-        <div>
-          <FieldLabel>Location</FieldLabel>
-          <Input value={metadata.dropoffLocation || ""} onChange={(e) => set("dropoffLocation", e.target.value)} placeholder="Airport Terminal 2" data-testid="input-dropoff-location" />
-        </div>
-        <div>
-          <FieldLabel>Time</FieldLabel>
-          <Input type="datetime-local" value={metadata.dropoffTime || ""} onChange={(e) => set("dropoffTime", e.target.value)} data-testid="input-dropoff-time" />
-        </div>
-      </FieldRow>
-
-      <FieldRow>
-        <div>
-          <FieldLabel>Driver Name</FieldLabel>
-          <Input value={metadata.driverName || ""} onChange={(e) => set("driverName", e.target.value)} data-testid="input-driver-name" />
-        </div>
-        <div>
-          <FieldLabel>Driver Phone</FieldLabel>
-          <PhoneInput value={metadata.driverPhone || ""} onChange={(v) => set("driverPhone", v)} placeholder="Driver phone" testId="input-driver-phone" />
-        </div>
-      </FieldRow>
       <div>
-        <FieldLabel>Confirmation Number</FieldLabel>
+        <FieldLabel>{tType === "train" ? "Operator" : tType === "bus" ? "Operator" : tType === "ferry" ? "Operator" : "Provider"}</FieldLabel>
+        <Input value={metadata.provider || ""} onChange={(e) => set("provider", e.target.value)} placeholder={tType === "train" ? "Trenitalia, Eurostar" : tType === "bus" ? "FlixBus, Greyhound" : tType === "ferry" ? "Corsica Ferries" : "Blacklane"} data-testid="input-transport-provider" />
+      </div>
+
+      {(tType === "car" || tType === "transfer" || tType === "other") && (
+        <>
+          <div>
+            <FieldLabel>Vehicle Details</FieldLabel>
+            <Input value={metadata.vehicleDetails || ""} onChange={(e) => set("vehicleDetails", e.target.value)} placeholder="Mercedes S-Class" data-testid="input-vehicle-details" />
+          </div>
+          <SectionHeading>Pickup</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Location</FieldLabel>
+              <Input value={metadata.pickupLocation || ""} onChange={(e) => set("pickupLocation", e.target.value)} placeholder="Hotel lobby" data-testid="input-pickup-location" />
+            </div>
+            <div>
+              <FieldLabel>Date / Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.pickupTime || ""} onChange={(e) => set("pickupTime", e.target.value)} data-testid="input-pickup-time" />
+            </div>
+          </FieldRow>
+          <SectionHeading>Drop-off</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Location</FieldLabel>
+              <Input value={metadata.dropoffLocation || ""} onChange={(e) => set("dropoffLocation", e.target.value)} placeholder="Airport Terminal 2" data-testid="input-dropoff-location" />
+            </div>
+            <div>
+              <FieldLabel>Date / Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.dropoffTime || ""} onChange={(e) => set("dropoffTime", e.target.value)} data-testid="input-dropoff-time" />
+            </div>
+          </FieldRow>
+          <FieldRow>
+            <div>
+              <FieldLabel>Driver Name</FieldLabel>
+              <Input value={metadata.driverName || ""} onChange={(e) => set("driverName", e.target.value)} data-testid="input-driver-name" />
+            </div>
+            <div>
+              <FieldLabel>Driver Phone</FieldLabel>
+              <PhoneInput value={metadata.driverPhone || ""} onChange={(v) => set("driverPhone", v)} placeholder="Driver phone" testId="input-driver-phone" />
+            </div>
+          </FieldRow>
+        </>
+      )}
+
+      {tType === "train" && (
+        <>
+          <div>
+            <FieldLabel>Train / Service Number</FieldLabel>
+            <Input value={metadata.trainNumber || ""} onChange={(e) => set("trainNumber", e.target.value)} placeholder="FR 9626" data-testid="input-train-number" />
+          </div>
+          <SectionHeading>Departure</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Station</FieldLabel>
+              <Input value={metadata.departureStation || ""} onChange={(e) => set("departureStation", e.target.value)} placeholder="Roma Termini" data-testid="input-departure-station" />
+            </div>
+            <div>
+              <FieldLabel>Date / Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.departureTime || ""} onChange={(e) => set("departureTime", e.target.value)} data-testid="input-departure-time" />
+            </div>
+          </FieldRow>
+          <SectionHeading>Arrival</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Station</FieldLabel>
+              <Input value={metadata.arrivalStation || ""} onChange={(e) => set("arrivalStation", e.target.value)} placeholder="Firenze S.M.N." data-testid="input-arrival-station" />
+            </div>
+            <div>
+              <FieldLabel>Arrival Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.arrivalTime || ""} onChange={(e) => set("arrivalTime", e.target.value)} data-testid="input-arrival-time" />
+            </div>
+          </FieldRow>
+          <FieldRow>
+            <div>
+              <FieldLabel>Coach / Car</FieldLabel>
+              <Input value={metadata.coachNumber || ""} onChange={(e) => set("coachNumber", e.target.value)} placeholder="Car 6" data-testid="input-coach-number" />
+            </div>
+            <div>
+              <FieldLabel>Seat Number</FieldLabel>
+              <Input value={metadata.seatNumber || ""} onChange={(e) => set("seatNumber", e.target.value)} placeholder="14A" data-testid="input-seat-number" />
+            </div>
+          </FieldRow>
+        </>
+      )}
+
+      {tType === "bus" && (
+        <>
+          <div>
+            <FieldLabel>Route Number / Name</FieldLabel>
+            <Input value={metadata.routeNumber || ""} onChange={(e) => set("routeNumber", e.target.value)} placeholder="Route 42" data-testid="input-route-number" />
+          </div>
+          <SectionHeading>Departure</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Terminal / Stop</FieldLabel>
+              <Input value={metadata.departureStop || ""} onChange={(e) => set("departureStop", e.target.value)} placeholder="Central Bus Station" data-testid="input-departure-stop" />
+            </div>
+            <div>
+              <FieldLabel>Date / Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.departureTime || ""} onChange={(e) => set("departureTime", e.target.value)} data-testid="input-departure-time" />
+            </div>
+          </FieldRow>
+          <SectionHeading>Arrival</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Terminal / Stop</FieldLabel>
+              <Input value={metadata.arrivalStop || ""} onChange={(e) => set("arrivalStop", e.target.value)} placeholder="Downtown Terminal" data-testid="input-arrival-stop" />
+            </div>
+            <div>
+              <FieldLabel>Arrival Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.arrivalTime || ""} onChange={(e) => set("arrivalTime", e.target.value)} data-testid="input-arrival-time" />
+            </div>
+          </FieldRow>
+          <div>
+            <FieldLabel>Seat Number</FieldLabel>
+            <Input value={metadata.seatNumber || ""} onChange={(e) => set("seatNumber", e.target.value)} placeholder="12B" data-testid="input-seat-number" />
+          </div>
+        </>
+      )}
+
+      {tType === "ferry" && (
+        <>
+          <div>
+            <FieldLabel>Vessel / Ferry Name</FieldLabel>
+            <Input value={metadata.vesselName || ""} onChange={(e) => set("vesselName", e.target.value)} placeholder="MV Blue Star" data-testid="input-vessel-name" />
+          </div>
+          <SectionHeading>Departure</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Port</FieldLabel>
+              <Input value={metadata.departurePort || ""} onChange={(e) => set("departurePort", e.target.value)} placeholder="Piraeus Port" data-testid="input-departure-port" />
+            </div>
+            <div>
+              <FieldLabel>Date / Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.departureTime || ""} onChange={(e) => set("departureTime", e.target.value)} data-testid="input-departure-time" />
+            </div>
+          </FieldRow>
+          <SectionHeading>Arrival</SectionHeading>
+          <FieldRow>
+            <div>
+              <FieldLabel>Port</FieldLabel>
+              <Input value={metadata.arrivalPort || ""} onChange={(e) => set("arrivalPort", e.target.value)} placeholder="Santorini (Athinios)" data-testid="input-arrival-port" />
+            </div>
+            <div>
+              <FieldLabel>Arrival Time</FieldLabel>
+              <Input type="datetime-local" value={metadata.arrivalTime || ""} onChange={(e) => set("arrivalTime", e.target.value)} data-testid="input-arrival-time" />
+            </div>
+          </FieldRow>
+          <div>
+            <FieldLabel>Cabin / Deck Class</FieldLabel>
+            <Input value={metadata.cabinClass || ""} onChange={(e) => set("cabinClass", e.target.value)} placeholder="Business Class" data-testid="input-cabin-class" />
+          </div>
+        </>
+      )}
+
+      <div>
+        <FieldLabel>{tType === "train" || tType === "bus" || tType === "ferry" ? "Booking Reference" : "Confirmation Number"}</FieldLabel>
         <Input value={metadata.confirmationNumber || ""} onChange={(e) => set("confirmationNumber", e.target.value)} data-testid="input-transport-confirmation" />
       </div>
     </div>
