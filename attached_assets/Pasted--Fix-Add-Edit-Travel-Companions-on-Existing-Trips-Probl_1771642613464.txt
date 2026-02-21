@@ -1,0 +1,54 @@
+# Fix: Add/Edit Travel Companions on Existing Trips
+
+## Problem
+When creating a new trip (`trip-new.tsx`), companion selection works correctly —
+it queries `GET /api/clients/:clientId/companions` and lets you check companions from the client's relationship list.
+The selected `additionalClientIds` are saved on the trip.
+
+BUT: once a trip is created, there is NO UI in `trip-edit.tsx` to add or remove
+additional travelers. The field `trip.additionalClientIds` is loaded and displayed
+as "Traveling with: Name1, Name2" but there's no way to change it.
+
+## Fix — only change `client/src/pages/trip-edit.tsx`
+
+### Step 1 — Expose a way to edit companions
+
+In `trip-edit.tsx`, find where `companionNames` is displayed (around line 2189):
+```
+Traveling with: {companionNames.join(", ")}
+```
+
+Next to that line, add a small edit button (pencil icon or "Edit" link). When clicked, open a `Popover` or a small inline panel.
+
+### Step 2 — The companion edit UI
+
+Inside the popover, show:
+1. The current client's existing companions, loaded from `GET /api/clients/${trip.clientId}/companions` (only if `trip.clientId` exists). These should show as checkboxes — pre-checked if their `id` is in `trip.additionalClientIds`.
+2. A small text input + "Add" button to add an ad-hoc guest by name (not a registered client). These ad-hoc guests should be stored differently — keep them as a separate array or a simple name string within `additionalClientIds` (since the field is a text array, you can add plain name strings too).
+
+### Step 3 — Save the update
+
+When the user changes companions and clicks "Save", call:
+`PATCH /api/trips/:id` with `{ additionalClientIds: updatedArray }`
+
+The PATCH route already accepts `req.body` passthrough, so this will work.
+
+### Step 4 — Update the display
+
+After saving, re-read the companions from the trip data and re-render `companionNames`.
+
+The `companionNames` computation already exists:
+```typescript
+const additionalIds = trip?.additionalClientIds as string[] | undefined;
+const companionNames = useMemo(() => {
+  // ... resolves names from allClients
+}, [...]);
+```
+
+Make sure it handles both client IDs (resolved against `allClients`) and plain name strings (displayed as-is).
+
+### What NOT to change
+- Do not change trip-new.tsx
+- Do not change any server file
+- Do not change how companions work on the segment level (partySize)
+- Do not change any other component

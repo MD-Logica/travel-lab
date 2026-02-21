@@ -428,7 +428,7 @@ function GenericCard({ segment }: { segment: TripSegment }) {
   );
 }
 
-function JourneyViewCard({ legs, showPricing, timeFormat = "24h" }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h" }) {
+function JourneyViewCard({ legs, showPricing, timeFormat = "24h", variantMap, localSelections, onSelectVariant }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h"; variantMap?: Record<string, any[]>; localSelections?: Record<string, string>; onSelectVariant?: (segmentId: string, variantId: string) => void }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
   const firstMeta = (firstLeg.metadata || {}) as Record<string, any>;
@@ -574,6 +574,23 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h" }: { legs: Trip
           })()}
         </div>
       </div>
+      {(() => {
+        const primaryLeg = legs[0];
+        const variants = primaryLeg.hasVariants && variantMap?.[primaryLeg.id];
+        if (variants && variants.length > 0 && onSelectVariant) {
+          return (
+            <div className="mt-2">
+              <VariantCards
+                segment={primaryLeg}
+                variants={variants}
+                selectedVariantId={localSelections?.[primaryLeg.id]}
+                onSelect={onSelectVariant}
+              />
+            </div>
+          );
+        }
+        return null;
+      })()}
     </div>
   );
 }
@@ -888,7 +905,7 @@ function DayAccordion({
             <div className="pb-6 space-y-3">
               {buildViewDayRenderItems(segments).map((item) => {
                 if (item.kind === "journey") {
-                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
+                  return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} localSelections={localSelections} onSelectVariant={onSelectVariant} />;
                 }
                 if (item.kind === "propertyGroup") {
                   return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
