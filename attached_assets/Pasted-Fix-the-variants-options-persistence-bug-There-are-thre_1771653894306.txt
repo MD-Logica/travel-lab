@@ -1,0 +1,91 @@
+Fix the variants/options persistence bug. There are three distinct root causes — fix all three. Make surgical changes only to the specified files.
+
+---
+
+## Root cause 1 — The variant fetch returns 401 for authenticated advisors (`server/routes.ts`)
+
+The `GET /api/segments/:segmentId/variants` route at line ~597 has NO `isAuthenticated` or `orgMiddleware` middleware. It tries to check `req._orgId`, but `req._orgId` is only set by `orgMiddleware` — so it's always `undefined` for authenticated advisors. The request falls through to the token check, finds no token, and returns 401. The editor's `.catch(() => {})` silently eats the error, showing nothing.
+
+**Fix**: Add middleware or manually resolve the session to set `req._orgId` for authenticated users. The cleanest approach is to apply optional auth resolution at the top of this route handler:
+
+```typescript
+app.get("/api/segments/:segmentId/variants", async (req: any, res) => {
+  try {
+    const { segmentId } = req.params;
+    const token = req.query.token as string | undefined;
+
+    // Resolve authenticated session if present
+    if (!req._orgId && req.isAuthenticated?.()) {
+      const profile = await storage.getProfile(req.user?.id || req.user?.claims?.sub);
+      if (profile) req._orgId = profile.orgId;
+    }
+
+    // Authenticated access
+    if (req._orgId) {
+      const variants = await storage.getVariantsBySegment(segmentId, req._orgId);
+      return res.json(variants);
+    }
+
+    // Token-based public access
+    if (token) {
+      // ... existing token logic unchanged ...
+    }
+
+    return res.status(401).json({ message: "Authentication required" });
+  } catch (error) {
+    console.error("Get variants error:", error);
+    res.status(500).json({ message: "Failed to get variants" });
+  }
+});
+```
+
+Look at how other unauthenticated-but-session-aware routes resolve the profile (e.g. the client message route around line 2096) and use the same pattern.
+
+---
+
+## Root cause 2 — `charter_flight` type excluded from variant saving (`client/src/components/segment-editor.tsx`)
+
+In the `onSuccess` handler of the save mutation (around line 1254), variants are only saved when:
+```typescript
+type === "hotel" || type === "flight"
+```
+
+`charter_flight` is missing. Change this condition to:
+```typescript
+type === "hotel" || type === "flight" || type === "charter_flight"
+```
+
+Also update the fetch condition in the `useEffect` that loads existing variants (around line 1156):
+```typescript
+if (existingSegment.hasVariants) {
+  fetch(`/api/segments/${existingSegment.id}/variants`, ...)
+```
+This part is already gated on `hasVariants` which is fine, but make sure `charter_flight` segments with variants will also trigger this fetch. Since it just checks `hasVariants` (not type), this should already work once root cause 1 is fixed.
+
+---
+
+## Root cause 3 — "Options available" badge missing for flights in trip-edit (`client/src/pages/trip-edit.tsx`)
+
+The `segment.hasVariants` badge (line ~332) is rendered unconditionally — it should show for both flights and hotels. Read the surrounding code carefully.
+
+The badge IS rendered at line ~332 via `{segment.hasVariants && <Badge>Options available</Badge>}`. If it's not showing for flights, the issue is that `segment.hasVariants` is `false` in the data returned after saving — meaning the `UPDATE tripSegments SET has_variants = true` in `storage.ts` may not be running, OR the segment query cache is stale and not refetching with the updated `hasVariants` value.
+
+**Fix**: After variants are saved in the `onSuccess` handler in `segment-editor.tsx`, the existing code does:
+```typescript
+queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
+```
+
+Also add:
+```typescript
+queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "segments"] });
+queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "full"] });
+```
+
+This forces the segment list to refetch with the updated `hasVariants: true` value, so the badge appears immediately after saving.
+
+---
+
+## Summary of files to change:
+1. `server/routes.ts` — fix auth resolution on the GET variants route
+2. `client/src/components/segment-editor.tsx` — add `charter_flight` to variant save condition + expand cache invalidation
+3. `client/src/pages/trip-edit.tsx` — no change needed if the above fixes work, but verify the badge renders after cache invalidation

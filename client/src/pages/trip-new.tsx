@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CurrencyInput } from "@/components/currency-input";
 import { DestinationInput } from "@/components/destination-input";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import type { DateRange } from "react-day-picker";
 import type { DestinationEntry } from "@shared/schema";
 import {
   Select,
@@ -37,11 +39,12 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft, MapPin, Calendar, DollarSign, Image,
-  User, Search, Check,
+  User, Search, Check, ChevronDown,
 } from "lucide-react";
 import { Link, useLocation, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { format, differenceInCalendarDays, parse } from "date-fns";
 import type { Client } from "@shared/schema";
 
 const tripFormSchema = z.object({
@@ -84,6 +87,9 @@ export default function TripNewPage() {
 
   const [clientSearch, setClientSearch] = useState("");
   const [clientPopoverOpen, setClientPopoverOpen] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
+  const [datePopoverOpen, setDatePopoverOpen] = useState(false);
+  const [showManualDates, setShowManualDates] = useState(false);
   const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
   const [destinationError, setDestinationError] = useState("");
   const [selectedCompanions, setSelectedCompanions] = useState<string[]>([]);
@@ -451,34 +457,126 @@ export default function TripNewPage() {
                         <Calendar className="w-3 h-3" strokeWidth={1.5} />
                         Dates
                       </p>
-                      <div className="grid grid-cols-2 gap-4">
-                        <FormField
-                          control={form.control}
-                          name="startDate"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs text-muted-foreground">Start</FormLabel>
-                              <FormControl>
-                                <Input type="date" data-testid="input-trip-start-date" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={form.control}
-                          name="endDate"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel className="text-xs text-muted-foreground">End</FormLabel>
-                              <FormControl>
-                                <Input type="date" data-testid="input-trip-end-date" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
+                      <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="w-full justify-between font-normal"
+                            data-testid="button-select-dates"
+                          >
+                            {dateRange?.from ? (
+                              <span className="flex items-center gap-2">
+                                <Calendar className="w-3.5 h-3.5 text-muted-foreground" strokeWidth={1.5} />
+                                <span>
+                                  {format(dateRange.from, "MMM d")}
+                                  {dateRange.to ? (
+                                    <>
+                                      {" – "}
+                                      {format(dateRange.to, "MMM d")}, {format(dateRange.to, "yyyy")}
+                                    </>
+                                  ) : (
+                                    <span className="text-muted-foreground">{" → ..."}</span>
+                                  )}
+                                </span>
+                                {dateRange.from && dateRange.to && (
+                                  <span className="text-xs text-muted-foreground ml-1">
+                                    {differenceInCalendarDays(dateRange.to, dateRange.from)} nights
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-2 text-muted-foreground">
+                                <Calendar className="w-3.5 h-3.5" strokeWidth={1.5} />
+                                Select travel dates
+                              </span>
+                            )}
+                            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground ml-auto" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <CalendarComponent
+                            mode="range"
+                            selected={dateRange}
+                            onSelect={(range) => {
+                              setDateRange(range);
+                              if (range?.from) {
+                                form.setValue("startDate", format(range.from, "yyyy-MM-dd"));
+                              }
+                              if (range?.to) {
+                                form.setValue("endDate", format(range.to, "yyyy-MM-dd"));
+                              }
+                              if (range?.from && range?.to) {
+                                setTimeout(() => setDatePopoverOpen(false), 300);
+                              }
+                            }}
+                            numberOfMonths={2}
+                            disabled={{ before: new Date() }}
+                            showOutsideDays
+                            data-testid="calendar-date-range"
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      <button
+                        type="button"
+                        onClick={() => setShowManualDates(!showManualDates)}
+                        className="text-xs text-muted-foreground hover:text-foreground mt-2 transition-colors"
+                        data-testid="button-toggle-manual-dates"
+                      >
+                        {showManualDates ? "Hide manual entry" : "Edit manually"}
+                      </button>
+                      {showManualDates && (
+                        <div className="grid grid-cols-2 gap-4 mt-2">
+                          <FormField
+                            control={form.control}
+                            name="startDate"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs text-muted-foreground">Start</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="date"
+                                    data-testid="input-trip-start-date"
+                                    {...field}
+                                    onChange={(e) => {
+                                      field.onChange(e);
+                                      if (e.target.value) {
+                                        const d = parse(e.target.value, "yyyy-MM-dd", new Date());
+                                        setDateRange(prev => ({ ...prev, from: d, to: prev?.to }));
+                                      }
+                                    }}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="endDate"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs text-muted-foreground">End</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="date"
+                                    data-testid="input-trip-end-date"
+                                    {...field}
+                                    onChange={(e) => {
+                                      field.onChange(e);
+                                      if (e.target.value) {
+                                        const d = parse(e.target.value, "yyyy-MM-dd", new Date());
+                                        setDateRange(prev => ({ from: prev?.from, to: d }));
+                                      }
+                                    }}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     <div>
