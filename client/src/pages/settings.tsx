@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -22,7 +22,7 @@ import {
   User, Building2, CreditCard, Lock, Shield, Crown,
   Calendar, UserPlus, MoreVertical, Trash2, Pencil,
   Bookmark, Plane, Ship, Hotel, Car, UtensilsCrossed,
-  Activity, StickyNote, RefreshCw, X, Clock, Send, Eye,
+  Activity, StickyNote, RefreshCw, X, Clock, Send, Eye, Loader2, Camera,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import type { Organization, Profile, Invitation } from "@shared/schema";
@@ -57,6 +57,7 @@ function ProfileSection({ profile }: { profile: Profile }) {
   const [website, setWebsite] = useState((profile as any).website || "");
   const [timeFormat, setTimeFormat] = useState<"12h" | "24h">((profile as any).timeFormat || "24h");
   const [dirty, setDirty] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setFullName(profile.fullName);
@@ -81,6 +82,38 @@ function ProfileSection({ profile }: { profile: Profile }) {
     },
   });
 
+  const avatarUploadMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("avatar", file);
+      const res = await fetch("/api/profile/avatar", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/profile"] });
+      toast({ title: "Photo updated" });
+    },
+    onError: () => {
+      toast({ title: "Upload failed", variant: "destructive" });
+    },
+  });
+
+  const removeAvatarMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", "/api/profile", { avatarUrl: null });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/profile"] });
+      toast({ title: "Photo removed" });
+    },
+  });
+
   return (
     <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}>
       <div className="mb-8">
@@ -90,14 +123,61 @@ function ProfileSection({ profile }: { profile: Profile }) {
 
       <div className="space-y-8">
         <div className="flex items-center gap-4">
-          <Avatar className="w-16 h-16">
-            <AvatarFallback className="text-lg bg-muted font-serif">
-              {getInitials(profile.fullName)}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative group">
+            <Avatar className="w-16 h-16">
+              <AvatarImage src={profile.avatarUrl || undefined} />
+              <AvatarFallback className="text-lg bg-muted font-serif">
+                {getInitials(profile.fullName)}
+              </AvatarFallback>
+            </Avatar>
+            <button
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={avatarUploadMutation.isPending}
+              className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
+              data-testid="button-upload-avatar"
+            >
+              {avatarUploadMutation.isPending ? (
+                <Loader2 className="w-5 h-5 text-white animate-spin" />
+              ) : (
+                <Camera className="w-5 h-5 text-white" strokeWidth={1.5} />
+              )}
+            </button>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) avatarUploadMutation.mutate(file);
+                e.target.value = "";
+              }}
+              data-testid="input-avatar-file"
+            />
+          </div>
           <div>
             <p className="font-medium">{profile.fullName}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">Photo upload coming soon</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <button
+                onClick={() => avatarInputRef.current?.click()}
+                className="text-xs text-primary hover:underline"
+                data-testid="button-change-photo"
+              >
+                {profile.avatarUrl ? "Change photo" : "Upload photo"}
+              </button>
+              {profile.avatarUrl && (
+                <>
+                  <span className="text-xs text-muted-foreground">·</span>
+                  <button
+                    onClick={() => removeAvatarMutation.mutate()}
+                    className="text-xs text-muted-foreground hover:text-destructive hover:underline"
+                    data-testid="button-remove-avatar"
+                  >
+                    Remove
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
 

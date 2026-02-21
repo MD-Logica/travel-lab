@@ -14,6 +14,16 @@ import { sendTeamInviteEmail, sendClientPortalInviteEmail, sendSelectionSubmitte
 import { segmentVariants, tripSegments, trips, profiles, clients } from "@shared/schema";
 import { broadcastNewMessage, broadcastReactionUpdate, broadcastSeen } from "./websocket";
 import webpush from "web-push";
+import multer from "multer";
+
+const avatarUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
 
 const objectStorageService = new ObjectStorageService();
 
@@ -326,6 +336,41 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/profile/avatar", isAuthenticated, orgMiddleware, avatarUpload.single("avatar"), async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const file = req.file;
+      if (!file) return res.status(400).json({ message: "No image file provided" });
+
+      const uploadURL = await objectStorageService.getObjectEntityUploadURL();
+      const objectPath = objectStorageService.normalizeObjectEntityPath(uploadURL);
+
+      await fetch(uploadURL, {
+        method: "PUT",
+        headers: { "Content-Type": file.mimetype },
+        body: file.buffer,
+      });
+
+      const objectId = objectPath.replace("/objects/uploads/", "");
+      const profile = await storage.updateProfile(userId, { avatarUrl: `/api/profile/avatar/serve/${objectId}` });
+      if (!profile) return res.status(404).json({ message: "Profile not found" });
+      res.json({ avatarUrl: profile.avatarUrl });
+    } catch (error) {
+      console.error("Avatar upload error:", error);
+      res.status(500).json({ message: "Failed to upload avatar" });
+    }
+  });
+
+  app.get("/api/profile/avatar/serve/:objectId", async (req: any, res) => {
+    try {
+      const objectPath = "/objects/uploads/" + req.params.objectId;
+      const objectFile = await objectStorageService.getObjectEntityFile(objectPath);
+      await objectStorageService.downloadObject(objectFile, res, 86400);
+    } catch (error) {
+      res.status(404).json({ message: "Avatar not found" });
+    }
+  });
+
   app.patch("/api/profile", isAuthenticated, orgMiddleware, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -334,6 +379,7 @@ export async function registerRoutes(
         phone: z.string().optional().nullable(),
         website: z.string().optional().nullable(),
         timeFormat: z.enum(["12h", "24h"]).optional(),
+        avatarUrl: z.string().optional().nullable(),
       });
       const parsed = updateSchema.parse(req.body);
       const updateData: any = {};
@@ -341,6 +387,7 @@ export async function registerRoutes(
       if (parsed.phone !== undefined) updateData.phone = parsed.phone || null;
       if (parsed.website !== undefined) updateData.website = parsed.website || null;
       if (parsed.timeFormat !== undefined) updateData.timeFormat = parsed.timeFormat;
+      if (parsed.avatarUrl !== undefined) updateData.avatarUrl = parsed.avatarUrl;
       const profile = await storage.updateProfile(userId, updateData);
       if (!profile) return res.status(404).json({ message: "Profile not found" });
       res.json(profile);
