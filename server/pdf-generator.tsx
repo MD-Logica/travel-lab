@@ -59,10 +59,10 @@ const s = StyleSheet.create({
   headerOrg: { fontSize: 8, color: colors.muted, letterSpacing: 1.5, textTransform: "uppercase" },
   headerTrip: { fontSize: 8, color: colors.muted },
   dayHeader: { fontFamily: "Serif", fontSize: 18, fontWeight: 700, marginBottom: 10, marginTop: 16, color: colors.primary },
-  segmentCard: { marginBottom: 8, padding: 10, borderLeftWidth: 3, backgroundColor: colors.light, borderRadius: 3 },
-  segmentTitle: { fontSize: 11, fontWeight: 600, marginBottom: 3 },
-  segmentType: { fontSize: 7, letterSpacing: 1.2, textTransform: "uppercase", color: colors.muted, marginBottom: 4 },
-  segmentDetail: { fontSize: 9, color: colors.muted, marginBottom: 1.5 },
+  segmentCard: { marginBottom: 10, padding: 12, borderLeftWidth: 3, backgroundColor: "#fafaf9", borderRadius: 4 },
+  segmentTitle: { fontSize: 12, fontFamily: "Serif", fontWeight: 700, marginBottom: 3 },
+  segmentType: { fontSize: 7, letterSpacing: 1.5, textTransform: "uppercase", color: colors.muted, marginBottom: 5 },
+  segmentDetail: { fontSize: 9, color: "#4b5563", marginBottom: 2, lineHeight: 1.4 },
   segmentConfirmation: { fontSize: 9, fontWeight: 600, color: colors.primary, marginTop: 3 },
   segmentNotes: { fontSize: 9, color: colors.muted, fontStyle: "italic", marginTop: 3 },
   variantBox: { marginTop: 6, padding: 6, backgroundColor: colors.white, borderRadius: 2, borderWidth: 0.5, borderColor: colors.border },
@@ -154,7 +154,22 @@ function formatRefundability(refundability: string | null | undefined, refundDea
   return null;
 }
 
-function VariantDisplay({ variants, showPricing }: { variants: SegmentVariant[]; showPricing: boolean }) {
+function buildPrimaryLabelForPdf(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  if (segment.type === "flight") {
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const flight = meta.flightNumber || "";
+    if (dep && arr && flight) return `${flight}: ${dep} → ${arr}`;
+    if (dep && arr) return `${dep} → ${arr}`;
+  }
+  if (segment.type === "hotel") {
+    return meta.hotelName || meta.roomType || segment.title || "Primary room";
+  }
+  return segment.title || "Primary option";
+}
+
+function VariantDisplay({ variants, showPricing, primarySegment }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment }) {
   if (!variants || variants.length === 0) return null;
   const submittedVariant = variants.find(v => v.isSubmitted);
 
@@ -173,15 +188,39 @@ function VariantDisplay({ variants, showPricing }: { variants: SegmentVariant[];
   }
 
   return (
-    <View style={s.variantBox}>
+    <View style={[s.variantBox, { marginTop: 8 }]}>
       <Text style={s.variantHeader}>Options:</Text>
+
+      {primarySegment && (
+        <View style={{ marginBottom: 4, paddingBottom: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
+          <Text style={[s.variantLabel, { color: colors.primary }]}>
+            {buildPrimaryLabelForPdf(primarySegment)}
+          </Text>
+          {showPricing && primarySegment.cost != null && primarySegment.cost > 0 && (
+            <Text style={s.variantDetail}>
+              {formatCurrency(primarySegment.cost, primarySegment.currency || "USD")}
+            </Text>
+          )}
+          {(() => {
+            const meta = (primarySegment.metadata || {}) as Record<string, any>;
+            const refText = formatRefundability(meta.refundability || primarySegment.refundability, meta.refundDeadline);
+            return refText ? <Text style={s.variantDetail}>{refText}</Text> : null;
+          })()}
+        </View>
+      )}
+
       {variants.map((v) => {
         const refundText = formatRefundability(v.refundability, v.refundDeadline);
         return (
-          <View key={v.id} style={{ marginBottom: 3 }}>
+          <View key={v.id} style={{ marginBottom: 4 }}>
             <Text style={s.variantLabel}>{v.label}</Text>
             {showPricing && v.cost != null && v.cost > 0 && (
-              <Text style={s.variantDetail}>{formatCurrency(v.cost, v.currency || "USD")}</Text>
+              <Text style={s.variantDetail}>
+                {formatCurrency(v.cost, v.currency || "USD")}
+                {v.quantity && v.quantity > 1 && v.pricePerUnit && v.pricePerUnit > 0
+                  ? ` (${formatCurrency(v.pricePerUnit, v.currency || "USD")} × ${v.quantity})`
+                  : ""}
+              </Text>
             )}
             {refundText && <Text style={s.variantDetail}>{refundText}</Text>}
           </View>
@@ -213,6 +252,10 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
       if (meta.bookingClass) details.push(`Class: ${bookingClassLabels[meta.bookingClass] || meta.bookingClass}`);
       if (meta.status && meta.status !== "Scheduled") details.push(`Status: ${meta.status}`);
       if (meta.aircraft) details.push(`Aircraft: ${meta.aircraft}`);
+      const fQty = meta.quantity || 1;
+      const fPpu = meta.pricePerUnit;
+      if (fQty > 1) details.push(`${fQty} passengers`);
+      if (fPpu && fPpu > 0 && fQty > 1) details.push(`${formatCurrency(fPpu, segment.currency || "USD")} per passenger`);
     } else if (segment.type === "charter" || segment.type === "charter_flight") {
       title = meta.operator || "Private Charter";
       const dep = meta.departureLocation || "";
@@ -228,7 +271,15 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
       if (meta.checkIn && meta.checkOut) details.push(`${meta.checkIn} > ${meta.checkOut}`);
       if (meta.roomType) details.push(`Room: ${meta.roomType}`);
       if (meta.address) details.push(meta.address);
-      if (meta.starRating && Number(meta.starRating) > 0) details.push(`${"*".repeat(Number(meta.starRating))} star`);
+      if (meta.starRating && Number(meta.starRating) > 0) {
+        const starWords: Record<number, string> = { 1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five" };
+        const rating = Number(meta.starRating);
+        details.push(`${starWords[rating] || rating}-Star Hotel`);
+      }
+      const hQty = meta.quantity || 1;
+      const hPpu = meta.pricePerUnit;
+      if (hQty > 1) details.push(`${hQty} rooms`);
+      if (hPpu && hPpu > 0 && hQty > 1) details.push(`${formatCurrency(hPpu, segment.currency || "USD")} per room / night`);
     } else if (segment.type === "restaurant") {
       title = meta.restaurantName || segment.title || "Restaurant";
       if (segment.startTime) details.push(`Time: ${fmtTime(segment.startTime, timeFormat)}`);
@@ -274,7 +325,9 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
         <Text style={s.segmentConfirmation}>Confirmation: {confNum}</Text>
       ) : null}
       {showPricing && segment.cost != null && segment.cost > 0 ? (
-        <Text style={s.segmentDetail}>Cost: {formatCurrency(segment.cost, segment.currency || "USD")}</Text>
+        <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text, marginTop: 2 }}>
+          {formatCurrency(segment.cost, segment.currency || "USD")}
+        </Text>
       ) : null}
       {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
       {(() => {
@@ -292,7 +345,7 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", 
         </View>
       ) : null}
       {segment.hasVariants && variants && variants.length > 0 ? (
-        <VariantDisplay variants={variants} showPricing={showPricing} />
+        <VariantDisplay variants={variants} showPricing={showPricing} primarySegment={segment} />
       ) : null}
     </View>
   );
@@ -311,12 +364,13 @@ function pdfLayoverDisplay(leg1Meta: Record<string, any>, leg2Meta: Record<strin
   } catch { return null; }
 }
 
-function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h" }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: string }) {
+function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantMap }: { legs: TripSegment[]; showPricing?: boolean; timeFormat?: string; variantMap?: Map<string, SegmentVariant[]> }) {
   const firstMeta = (legs[0].metadata || {}) as Record<string, any>;
   const lastMeta = (legs[legs.length - 1].metadata || {}) as Record<string, any>;
   const originIata = firstMeta.departure?.iata || firstMeta.departureAirport || "";
   const destIata = lastMeta.arrival?.iata || lastMeta.arrivalAirport || "";
   const stopsCount = legs.length - 1;
+  const firstLegVariants = variantMap?.get(legs[0].id);
 
   return (
     <View style={[s.segmentCard, { borderLeftColor: colors.flight }]}>
@@ -359,6 +413,9 @@ function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h" }: { legs
           </View>
         );
       })}
+      {legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (
+        <VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} />
+      )}
     </View>
   );
 }
@@ -492,7 +549,7 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
                 const seenPropertyGroups = new Set<string>();
                 return renderItems.map((item) => {
                   if (item.kind === "journey") {
-                    return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
+                    return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} />;
                   }
                   const seg = item.segment;
                   if (seg.propertyGroupId && seg.type === "hotel") {
@@ -553,44 +610,54 @@ function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoM
           );
         })()}
 
+        {advisor && (
+          <View style={{
+            marginTop: 24,
+            paddingTop: 14,
+            borderTopWidth: 1,
+            borderTopColor: colors.border,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 12,
+          }}>
+            <View style={{
+              width: 36,
+              height: 36,
+              borderRadius: 18,
+              backgroundColor: colors.primary,
+              justifyContent: "center",
+              alignItems: "center",
+            }}>
+              <Text style={{ color: colors.white, fontSize: 13, fontFamily: "Serif", fontWeight: 700 }}>
+                {advisor.fullName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
+              </Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: "Serif", fontSize: 11, fontWeight: 700, color: colors.text }}>
+                {advisor.fullName}
+              </Text>
+              <Text style={{ fontSize: 8, color: colors.muted, marginTop: 1 }}>
+                {organization.name}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 3 }}>
+                {advisor.email && (
+                  <Text style={{ fontSize: 8, color: colors.muted }}>{advisor.email}</Text>
+                )}
+                {advisor.phone && (
+                  <Text style={{ fontSize: 8, color: colors.muted }}>{advisor.phone}</Text>
+                )}
+                {advisor.website && (
+                  <Text style={{ fontSize: 8, color: colors.primary }}>{advisor.website}</Text>
+                )}
+              </View>
+            </View>
+          </View>
+        )}
+
         <Text style={s.footer} fixed>
           {organization.name} - Generated by Travel Lab
         </Text>
       </Page>
-
-      {advisor && (
-        <Page size="A4" style={s.page}>
-          <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-            <Text style={{ fontFamily: "Serif", fontSize: 22, color: colors.text, marginBottom: 30, textAlign: "center" }}>
-              Your Travel Advisor
-            </Text>
-            <Text style={{ fontFamily: "Serif", fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 4 }}>
-              {advisor.fullName}
-            </Text>
-            <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.muted, marginBottom: 20 }}>
-              {organization.name}
-            </Text>
-            {advisor.email && (
-              <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.muted, marginBottom: 4 }}>
-                {advisor.email}
-              </Text>
-            )}
-            {advisor.phone && (
-              <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.muted, marginBottom: 4 }}>
-                {advisor.phone}
-              </Text>
-            )}
-            {advisor.website && (
-              <Text style={{ fontFamily: "Sans", fontSize: 10, color: colors.primary, marginBottom: 4 }}>
-                {advisor.website}
-              </Text>
-            )}
-          </View>
-          <Text style={s.footer} fixed>
-            {organization.name} - Generated by Travel Lab
-          </Text>
-        </Page>
-      )}
     </Document>
   );
 }

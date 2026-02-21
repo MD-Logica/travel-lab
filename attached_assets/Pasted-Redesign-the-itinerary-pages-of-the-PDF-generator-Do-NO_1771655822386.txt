@@ -1,0 +1,276 @@
+Redesign the itinerary pages of the PDF generator. Do NOT touch the cover page. All changes are in `server/pdf-generator.tsx` only.
+
+Here is a full list of problems to fix, in order of importance:
+
+---
+
+## 1 — Eliminate the advisor "Your Travel Advisor" third page
+
+Delete the entire `{advisor && (<Page>...</Page>)}` block at the bottom of `TripPdfDocument` (around line 555). That page is gone entirely.
+
+Instead, add a compact advisor contact strip at the bottom of the LAST itinerary page (not fixed — only on the last page). It should sit after the totals section, separated by a thin border, and look like this:
+
+```tsx
+{advisor && (
+  <View style={{
+    marginTop: 24,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  }}>
+    {/* Avatar circle with initials */}
+    <View style={{
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: colors.primary,
+      justifyContent: "center",
+      alignItems: "center",
+    }}>
+      <Text style={{ color: colors.white, fontSize: 13, fontFamily: "Serif", fontWeight: 700 }}>
+        {advisor.fullName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
+      </Text>
+    </View>
+    {/* Contact info */}
+    <View style={{ flex: 1 }}>
+      <Text style={{ fontFamily: "Serif", fontSize: 11, fontWeight: 700, color: colors.text }}>
+        {advisor.fullName}
+      </Text>
+      <Text style={{ fontSize: 8, color: colors.muted, marginTop: 1 }}>
+        {organization.name}
+      </Text>
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 3 }}>
+        {advisor.email && (
+          <Text style={{ fontSize: 8, color: colors.muted }}>{advisor.email}</Text>
+        )}
+        {advisor.phone && (
+          <Text style={{ fontSize: 8, color: colors.muted }}>{advisor.phone}</Text>
+        )}
+        {advisor.website && (
+          <Text style={{ fontSize: 8, color: colors.primary }}>{advisor.website}</Text>
+        )}
+      </View>
+    </View>
+  </View>
+)}
+```
+
+Place this block directly after the totals `View` and before the `<Text style={s.footer}>` line.
+
+---
+
+## 2 — Replace asterisks with written star rating
+
+In `SegmentView`, the hotel section currently does:
+```typescript
+details.push(`${"*".repeat(Number(meta.starRating))} star`)
+```
+
+Replace with a plain English label using a lookup:
+
+```typescript
+const starWords: Record<number, string> = { 1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five" };
+const rating = Number(meta.starRating);
+if (rating > 0) details.push(`${starWords[rating] || rating}-Star Hotel`);
+```
+
+So a five-star property reads "Five-Star Hotel", a four-star reads "Four-Star Hotel", and so on. Clear, unambiguous, no symbols needed.
+
+---
+
+## 3 — Show passenger count, rooms, and price-per-unit on segment cards
+
+In `SegmentView`, after building the `details` array for flights and hotels, add quantity/pricing lines:
+
+**For flights** (`segment.type === "flight"`):
+```typescript
+const qty = meta.quantity || 1;
+const ppu = meta.pricePerUnit;
+if (qty > 1) details.push(`${qty} passengers`);
+if (ppu && ppu > 0 && qty > 1) details.push(`${formatCurrency(ppu, segment.currency || "USD")} per passenger`);
+```
+
+**For hotels** (`segment.type === "hotel"`):
+```typescript
+const qty = meta.quantity || 1;
+const ppu = meta.pricePerUnit;
+if (qty > 1) details.push(`${qty} rooms`);
+if (ppu && ppu > 0 && qty > 1) details.push(`${formatCurrency(ppu, segment.currency || "USD")} per room / night`);
+```
+
+---
+
+## 4 — Variants: show the primary option first, then alternatives
+
+In `VariantDisplay`, when there are variants and no submitted selection, the current code shows only the variant options with "OPTIONS:" header — the primary/base segment is not shown as an option.
+
+Restructure `VariantDisplay` to accept the parent segment as well:
+
+Change the signature to:
+```tsx
+function VariantDisplay({ variants, showPricing, primarySegment }: { variants: SegmentVariant[]; showPricing: boolean; primarySegment?: TripSegment }) {
+```
+
+And update the "show all options" branch to prepend the primary:
+
+```tsx
+return (
+  <View style={[s.variantBox, { marginTop: 8 }]}>
+    <Text style={s.variantHeader}>Options:</Text>
+
+    {/* Primary option */}
+    {primarySegment && (
+      <View style={{ marginBottom: 4, paddingBottom: 4, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
+        <Text style={[s.variantLabel, { color: colors.primary }]}>
+          {buildPrimaryLabelForPdf(primarySegment)} {/* primary */}
+        </Text>
+        {showPricing && primarySegment.cost != null && primarySegment.cost > 0 && (
+          <Text style={s.variantDetail}>
+            {formatCurrency(primarySegment.cost, primarySegment.currency || "USD")}
+          </Text>
+        )}
+        {(() => {
+          const meta = (primarySegment.metadata || {}) as Record<string, any>;
+          const refText = formatRefundability(meta.refundability || primarySegment.refundability, meta.refundDeadline);
+          return refText ? <Text style={s.variantDetail}>{refText}</Text> : null;
+        })()}
+      </View>
+    )}
+
+    {/* Variant options */}
+    {variants.map((v) => {
+      const refundText = formatRefundability(v.refundability, v.refundDeadline);
+      return (
+        <View key={v.id} style={{ marginBottom: 4 }}>
+          <Text style={s.variantLabel}>{v.label}</Text>
+          {showPricing && v.cost != null && v.cost > 0 && (
+            <Text style={s.variantDetail}>
+              {formatCurrency(v.cost, v.currency || "USD")}
+              {v.quantity && v.quantity > 1 && v.pricePerUnit && v.pricePerUnit > 0
+                ? ` (${formatCurrency(v.pricePerUnit, v.currency || "USD")} × ${v.quantity})`
+                : ""}
+            </Text>
+          )}
+          {refundText && <Text style={s.variantDetail}>{refundText}</Text>}
+        </View>
+      );
+    })}
+  </View>
+);
+```
+
+Add this helper function near `VariantDisplay`:
+```typescript
+function buildPrimaryLabelForPdf(segment: TripSegment): string {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  if (segment.type === "flight") {
+    const dep = meta.departure?.iata || meta.departureAirport || "";
+    const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+    const flight = meta.flightNumber || "";
+    if (dep && arr && flight) return `${flight}: ${dep} → ${arr}`;
+    if (dep && arr) return `${dep} → ${arr}`;
+  }
+  if (segment.type === "hotel") {
+    return meta.hotelName || meta.roomType || segment.title || "Primary room";
+  }
+  return segment.title || "Primary option";
+}
+```
+
+Update the call site in `SegmentView` to pass the segment:
+```tsx
+{segment.hasVariants && variants && variants.length > 0 ? (
+  <VariantDisplay variants={variants} showPricing={showPricing} primarySegment={segment} />
+) : null}
+```
+
+---
+
+## 5 — Show flight variants in `JourneyPdfView`
+
+Currently `JourneyPdfView` never shows variants at all. The first leg (`legs[0]`) is the one that has `hasVariants` set. Update `JourneyPdfView` to accept and render variants for the first leg:
+
+```tsx
+function JourneyPdfView({ legs, showPricing = true, timeFormat = "24h", variantMap }: {
+  legs: TripSegment[];
+  showPricing?: boolean;
+  timeFormat?: string;
+  variantMap?: Map<string, SegmentVariant[]>;
+}) {
+  // ... existing rendering ...
+
+  // After all legs are rendered, check first leg for variants:
+  const firstLegVariants = variantMap?.get(legs[0].id);
+  
+  return (
+    <View style={[s.segmentCard, { borderLeftColor: colors.flight }]}>
+      {/* existing content */}
+      {legs[0].hasVariants && firstLegVariants && firstLegVariants.length > 0 && (
+        <VariantDisplay variants={firstLegVariants} showPricing={showPricing} primarySegment={legs[0]} />
+      )}
+    </View>
+  );
+}
+```
+
+Update the call site in `TripPdfDocument` to pass `variantMap`:
+```tsx
+return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} variantMap={variantMap} />;
+```
+
+---
+
+## 6 — Visual polish on segment cards
+
+Update styles to make the itinerary cards feel more premium:
+
+```typescript
+segmentCard: {
+  marginBottom: 10,
+  padding: 12,
+  borderLeftWidth: 3,
+  backgroundColor: "#fafaf9",   // slightly warmer than current #f5f0eb
+  borderRadius: 4,
+},
+segmentTitle: {
+  fontSize: 12,        // up from 11
+  fontFamily: "Serif", // use serif for hotel/place names
+  fontWeight: 700,
+  marginBottom: 3,
+},
+segmentType: {
+  fontSize: 7,
+  letterSpacing: 1.5,
+  textTransform: "uppercase",
+  color: colors.muted,
+  marginBottom: 5,    // more breathing room
+},
+segmentDetail: {
+  fontSize: 9,
+  color: "#4b5563",   // slightly darker than current muted
+  marginBottom: 2,
+  lineHeight: 1.4,
+},
+```
+
+The cost display in `SegmentView` should be rendered slightly more prominently — bold the cost line:
+```tsx
+{showPricing && segment.cost != null && segment.cost > 0 ? (
+  <Text style={{ fontSize: 9, fontWeight: 600, color: colors.text, marginTop: 2 }}>
+    {formatCurrency(segment.cost, segment.currency || "USD")}
+  </Text>
+) : null}
+```
+
+---
+
+## Summary of changes
+- `advisor` third page → deleted, replaced with compact inline footer strip after totals
+- `*****` → colored diamond shapes (hotel star rating)
+- Passengers / rooms / per-unit price → added to segment detail lines
+- Primary option prepended to variant display for both hotels and flights
+- Flight variants (journey-grouped) now show in PDF
+- Segment card typography refined
