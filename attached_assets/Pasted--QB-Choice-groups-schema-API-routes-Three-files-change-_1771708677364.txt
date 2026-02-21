@@ -1,0 +1,275 @@
+# QB — Choice groups: schema + API routes
+
+Three files change: `shared/schema.ts`, `server/storage.ts`, `server/routes.ts`. No UI changes yet — those are QC and QD.
+
+---
+
+## Concept
+
+A **choice group** is two or more segments on the same day that are mutually exclusive — the client (or advisor) picks one, the others are excluded from the final trip. Modeled with two new fields on `tripSegments`:
+
+- `choiceGroupId` — a UUID shared by all segments in the group (nullable; null = not in a group)
+- `isChoiceSelected` — which segment in the group was chosen (boolean, default false)
+
+This is structurally identical to how `propertyGroupId` works, with the added selection state. No new table is needed.
+
+---
+
+## Change 1: `shared/schema.ts` — add fields to `tripSegments`
+
+Find the `tripSegments` table definition. It currently ends with:
+```typescript
+  propertyGroupId: varchar("property_group_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+```
+
+Add the two new fields between `propertyGroupId` and `createdAt`:
+```typescript
+  propertyGroupId: varchar("property_group_id"),
+  choiceGroupId: varchar("choice_group_id"),
+  isChoiceSelected: boolean("is_choice_selected").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+```
+
+The `TripSegment` type and `insertTripSegmentSchema` both derive from this table via `$inferSelect` and `createInsertSchema` respectively, so they automatically pick up the new fields. No manual type additions needed.
+
+---
+
+## Change 2: `server/storage.ts` — add `selectChoiceSegment` method
+
+**Add to the `IStorage` interface** (find the block near `selectVariant` and `submitVariantsForTrip`):
+
+```typescript
+selectChoiceSegment(choiceGroupId: string, selectedSegmentId: string, tripId: string): Promise<TripSegment[]>;
+```
+
+**Add the implementation** to `DatabaseStorage` (after the `selectVariant` implementation):
+
+```typescript
+async selectChoiceSegment(choiceGroupId: string, selectedSegmentId: string, tripId: string): Promise<TripSegment[]> {
+  const { eq, and } = await import("drizzle-orm");
+  
+  // Clear all selections in this group
+  await db.update(tripSegments)
+    .set({ isChoiceSelected: false })
+    .where(and(
+      eq(tripSegments.choiceGroupId, choiceGroupId),
+      eq(tripSegments.tripId, tripId)
+    ));
+  
+  // Set the chosen segment
+  await db.update(tripSegments)
+    .set({ isChoiceSelected: true })
+    .where(and(
+      eq(tripSegments.id, selectedSegmentId),
+      eq(tripSegments.tripId, tripId)
+    ));
+  
+  // Return all segments in the group
+  return db.select().from(tripSegments)
+    .where(and(
+      eq(tripSegments.choiceGroupId, choiceGroupId),
+      eq(tripSegments.tripId, tripId)
+    ))
+    .orderBy(tripSegments.sortOrder);
+}
+```
+
+---
+
+## Change 3: `server/routes.ts` — three additions
+
+### 3A: Add `choiceGroupId` and `isChoiceSelected` to the segment PATCH route
+
+Find the `updateSchema` inside `app.patch("/api/trips/:tripId/segments/:segmentId"`:
+
+```typescript
+const updateSchema = z.object({
+  dayNumber: z.number().int().min(1).optional(),
+  sortOrder: z.number().int().optional(),
+  ...
+  journeyId: z.string().optional().nullable(),
+});
+```
+
+Add to the schema (after `journeyId`):
+```typescript
+  choiceGroupId: z.string().optional().nullable(),
+  isChoiceSelected: z.boolean().optional(),
+```
+
+### 3B: Add the choice selection route
+
+Add this route after the variant select route (`app.post("/api/segments/:segmentId/variants/:variantId/select"`). This mirrors that route exactly in its auth pattern:
+
+```typescript
+app.post("/api/trips/:tripId/segments/:segmentId/choose", async (req: any, res) => {
+  try {
+    const { tripId, segmentId } = req.params;
+    const token = req.query.token as string;
+    const orgId = req._orgId;
+
+    if (!token && !orgId) return res.status(401).json({ message: "Authentication required" });
+
+    const { db } = await import("./db");
+    const { eq, and } = await import("drizzle-orm");
+
+    const [seg] = await db.select({
+      tripId: tripSegments.tripId,
+      orgId: tripSegments.orgId,
+      choiceGroupId: tripSegments.choiceGroupId,
+    }).from(tripSegments).where(eq(tripSegments.id, segmentId));
+
+    if (!seg) return res.status(404).json({ message: "Segment not found" });
+    if (!seg.choiceGroupId) return res.status(400).json({ message: "Segment is not part of a choice group" });
+
+    // Token auth (client via share link)
+    if (token) {
+      const [trip] = await db.select({
+        shareToken: trips.shareToken,
+        shareEnabled: trips.shareEnabled,
+        approvedVersionId: trips.approvedVersionId,
+      }).from(trips).where(eq(trips.id, seg.tripId));
+
+      if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      if (trip.approvedVersionId) {
+        return res.status(400).json({ message: "Itinerary already approved — choices are locked" });
+      }
+    } else if (orgId !== seg.orgId) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const groupSegments = await storage.selectChoiceSegment(seg.choiceGroupId, segmentId, seg.tripId);
+
+    // Notify advisor when client makes a choice
+    if (token) {
+      try {
+        const [trip] = await db.select().from(trips).where(eq(trips.id, seg.tripId));
+        if (trip?.advisorId) {
+          const [chosen] = groupSegments.filter(s => s.isChoiceSelected);
+          const chosenMeta = (chosen?.metadata || {}) as Record<string, any>;
+          let chosenLabel = chosen?.title || "option";
+          if (chosen?.type === "hotel") chosenLabel = chosenMeta.hotelName || chosen.title || "hotel";
+          if (chosen?.type === "flight" || chosen?.type === "charter_flight") {
+            const dep = chosenMeta.departure?.iata || chosenMeta.departureAirport || "";
+            const arr = chosenMeta.arrival?.iata || chosenMeta.arrivalAirport || "";
+            if (dep && arr) chosenLabel = `${dep} → ${arr}`;
+          }
+
+          let clientName = "Client";
+          if (trip.clientId) {
+            const [cl] = await db.select({ fullName: clients.fullName })
+              .from(clients).where(eq(clients.id, trip.clientId));
+            if (cl) clientName = cl.fullName;
+          }
+
+          await storage.createNotification({
+            orgId: trip.orgId,
+            profileId: trip.advisorId,
+            type: "choice_submitted",
+            title: `${clientName} chose "${chosenLabel}" for "${trip.title}"`,
+            message: `Client selected their preferred option from a choice group.`,
+            data: {
+              tripId: trip.id,
+              segmentId,
+              choiceGroupId: seg.choiceGroupId,
+              chosenLabel,
+            },
+          });
+        }
+      } catch (notifyErr) {
+        console.error("Choice notification failed:", notifyErr);
+      }
+    }
+
+    res.json(groupSegments);
+  } catch (error) {
+    console.error("Choose segment error:", error);
+    res.status(500).json({ message: "Failed to record choice" });
+  }
+});
+```
+
+### 3C: Extend `submit-selections` to include choice group selections
+
+The existing `submit-selections` route collects variant selections and sends them in an email to the advisor. It should also include any choice group selections the client has made, so the advisor gets a complete picture.
+
+Find the section in `submit-selections` where the `selections` array is built (the part that maps `submittedVariants`). After the existing `await sendSelectionSubmittedEmail(...)` call, add a separate block that queries choice group selections:
+
+After the existing `result` from `storage.submitVariantsForTrip(tripId)`, add:
+
+```typescript
+// Also collect any choice group selections made by the client
+try {
+  const { inArray, and, eq, isNotNull } = await import("drizzle-orm");
+  
+  const choiceSegs = await db.select().from(tripSegments)
+    .where(and(
+      eq(tripSegments.tripId, tripId),
+      isNotNull(tripSegments.choiceGroupId),
+      eq(tripSegments.isChoiceSelected, true)
+    ));
+  
+  if (choiceSegs.length > 0 && trip.advisorId) {
+    const [advisor] = await db.select({ email: profiles.email, fullName: profiles.fullName })
+      .from(profiles).where(eq(profiles.id, trip.advisorId));
+    
+    if (advisor?.email) {
+      const choiceLines = choiceSegs.map(seg => {
+        const meta = (seg.metadata || {}) as Record<string, any>;
+        let label = seg.title;
+        if (seg.type === "hotel") label = meta.hotelName || seg.title;
+        if (seg.type === "flight" || seg.type === "charter_flight") {
+          const dep = meta.departure?.iata || meta.departureAirport || "";
+          const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+          if (dep && arr) label = `${dep} → ${arr}`;
+        }
+        const costStr = seg.cost
+          ? ` · ${new Intl.NumberFormat("en-US", { style: "currency", currency: seg.currency || "USD", minimumFractionDigits: 0 }).format(seg.cost)}`
+          : "";
+        return `• ${label}${costStr} (chosen option)`;
+      });
+      
+      // Append to existing notification if any, or just log
+      console.log("[submit-selections] Choice group selections:", choiceLines);
+    }
+  }
+} catch (choiceErr) {
+  console.error("Choice group collection in submit-selections failed:", choiceErr);
+}
+```
+
+Note: Full email integration for choice selections is handled in QD when we wire up the client-facing UI. This block is a stub that ensures the data is accessible; the full email formatting comes later.
+
+---
+
+## Database migration
+
+Replit Agent will need to run the Drizzle migration to add the two columns. The migration command is:
+
+```bash
+npx drizzle-kit push
+```
+
+Or if the project uses a custom migration script:
+```bash
+npm run db:push
+```
+
+The new columns are nullable (`choiceGroupId`) and have a default (`isChoiceSelected` defaults to `false`), so the migration is non-destructive — existing rows get `choiceGroupId = null` and `isChoiceSelected = false` automatically.
+
+---
+
+## What this enables
+
+After QB, the database and API layer are ready:
+- Segments can be grouped into choice groups via `choiceGroupId`
+- A client or advisor can select one segment per group via `POST /api/trips/:tripId/segments/:segmentId/choose`
+- The segment PATCH endpoint accepts `choiceGroupId` and `isChoiceSelected` for advisor-side management
+- All existing segment queries return the new fields automatically (they're on `tripSegments` which is already fetched in `getTripFullView`)
+
+QC (advisor builder UI) and QD (client share view) consume these endpoints. QE (PDF) reads the `isChoiceSelected` field directly from segments already in scope.

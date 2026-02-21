@@ -158,6 +158,7 @@ export interface IStorage {
   deleteVariant(id: string, orgId: string): Promise<void>;
   selectVariant(segmentId: string, variantId: string): Promise<SegmentVariant[]>;
   submitVariantsForTrip(tripId: string): Promise<{ submitted: number; pending: number }>;
+  selectChoiceSegment(choiceGroupId: string, selectedSegmentId: string, tripId: string): Promise<TripSegment[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1455,6 +1456,29 @@ export class DatabaseStorage implements IStorage {
       .where(eq(trips.id, tripId));
     
     return { submitted, pending };
+  }
+
+  async selectChoiceSegment(choiceGroupId: string, selectedSegmentId: string, tripId: string): Promise<TripSegment[]> {
+    await db.update(tripSegments)
+      .set({ isChoiceSelected: false })
+      .where(and(
+        eq(tripSegments.choiceGroupId, choiceGroupId),
+        eq(tripSegments.tripId, tripId)
+      ));
+
+    await db.update(tripSegments)
+      .set({ isChoiceSelected: true })
+      .where(and(
+        eq(tripSegments.id, selectedSegmentId),
+        eq(tripSegments.tripId, tripId)
+      ));
+
+    return db.select().from(tripSegments)
+      .where(and(
+        eq(tripSegments.choiceGroupId, choiceGroupId),
+        eq(tripSegments.tripId, tripId)
+      ))
+      .orderBy(tripSegments.sortOrder);
   }
 }
 

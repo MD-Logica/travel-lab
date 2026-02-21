@@ -1,0 +1,408 @@
+# QC — Choice groups: advisor builder UI (trip-edit.tsx)
+
+One file changes: `client/src/pages/trip-edit.tsx`. This adds the "Add alternative" action to segment cards, the `ChoiceGroupCard` component, and the `choiceGroup` kind to `buildDayRenderItems`.
+
+---
+
+## Overview of changes
+
+1. Add `choiceGroup` kind to `DayRenderItem` union type and `buildDayRenderItems`
+2. New `ChoiceGroupCard` component — renders two or more segment cards with an amber OR divider and a bracket wrapper
+3. Add `onAddAlternative` prop to `SegmentCard` — shows an "Add alternative" button below the card when the segment type supports it (hotel, flight, charter)
+4. Add `choiceGroupMutation` in the main page component — creates a new choice group by PATCHing both segments with a shared `choiceGroupId`
+5. Add "Unlink alternatives" action when a segment is already in a choice group
+
+---
+
+## Change 1: `DayRenderItem` type and `buildDayRenderItems`
+
+Find:
+```typescript
+type DayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] }
+  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] };
+```
+
+Replace with:
+```typescript
+type DayRenderItem =
+  | { kind: "segment"; segment: TripSegment }
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] }
+  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] }
+  | { kind: "choiceGroup"; choiceGroupId: string; options: TripSegment[] };
+```
+
+Find `buildDayRenderItems`. It currently initializes `seenJourneyIds`, `seenPropertyGroupIds`, and their corresponding Maps. Add choice group tracking alongside those:
+
+```typescript
+function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
+  const items: DayRenderItem[] = [];
+  const seenJourneyIds = new Set<string>();
+  const seenPropertyGroupIds = new Set<string>();
+  const seenChoiceGroupIds = new Set<string>();           // ADD
+  const journeyGroups = new Map<string, TripSegment[]>();
+  const propertyGroups = new Map<string, TripSegment[]>();
+  const choiceGroups = new Map<string, TripSegment[]>(); // ADD
+
+  for (const seg of daySegments) {
+    if (seg.journeyId) { ... }
+    if (seg.propertyGroupId && seg.type === "hotel") { ... }
+    // ADD:
+    if (seg.choiceGroupId) {
+      if (!choiceGroups.has(seg.choiceGroupId)) choiceGroups.set(seg.choiceGroupId, []);
+      choiceGroups.get(seg.choiceGroupId)!.push(seg);
+    }
+  }
+
+  for (const seg of daySegments) {
+    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+      // existing journey logic
+    } else if (seg.propertyGroupId && seg.type === "hotel" && propertyGroups.get(seg.propertyGroupId)!.length > 1) {
+      // existing property group logic
+    // ADD this block before the final else:
+    } else if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+        seenChoiceGroupIds.add(seg.choiceGroupId);
+        const options = choiceGroups.get(seg.choiceGroupId)!;
+        options.sort((a, b) => a.sortOrder - b.sortOrder);
+        items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
+      }
+    } else {
+      items.push({ kind: "segment", segment: seg });
+    }
+  }
+  return items;
+}
+```
+
+---
+
+## Change 2: `ChoiceGroupCard` component
+
+Add this new component after `PropertyGroupCard` and before the main page component. It wraps each option's `SegmentCard` with an amber bracket and an OR divider between them:
+
+```tsx
+function ChoiceGroupCard({
+  options,
+  tripId,
+  onEdit,
+  showPricing,
+  trackingBySegment,
+  onUnlink,
+  onSelectChoice,
+}: {
+  options: TripSegment[];
+  tripId: string;
+  onEdit: (s: TripSegment) => void;
+  showPricing?: boolean;
+  trackingBySegment: Map<string, FlightTracking>;
+  onUnlink: (choiceGroupId: string) => void;
+  onSelectChoice: (segmentId: string, choiceGroupId: string) => void;
+}) {
+  const selectedOption = options.find(o => o.isChoiceSelected);
+
+  return (
+    <div className="relative">
+      {/* Bracket wrapper */}
+      <div className="border-2 border-dashed border-amber-300/60 dark:border-amber-700/40 rounded-lg p-3 space-y-0 bg-amber-50/30 dark:bg-amber-950/10">
+        
+        {/* Header */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-semibold tracking-widest uppercase text-amber-600 dark:text-amber-400">
+              Either / Or
+            </span>
+            {selectedOption && (
+              <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-600 dark:text-emerald-400">
+                Choice made
+              </Badge>
+            )}
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-6 w-6 text-amber-600/70 hover:text-amber-700">
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem
+                onClick={() => onUnlink(options[0].choiceGroupId!)}
+                className="text-muted-foreground"
+              >
+                Unlink alternatives
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Option cards with OR divider */}
+        {options.map((option, idx) => (
+          <div key={option.id}>
+            {idx > 0 && (
+              <div className="flex items-center gap-2 my-2">
+                <div className="flex-1 border-t border-amber-200/60 dark:border-amber-800/40" />
+                <span className="text-[10px] font-bold text-amber-500 dark:text-amber-400 tracking-wider px-1">OR</span>
+                <div className="flex-1 border-t border-amber-200/60 dark:border-amber-800/40" />
+              </div>
+            )}
+            <div className={`relative transition-opacity ${selectedOption && !option.isChoiceSelected ? "opacity-50" : ""}`}>
+              <SegmentCard
+                segment={option}
+                tripId={tripId}
+                onEdit={onEdit}
+                tracking={option.type === "flight" ? trackingBySegment.get(option.id) : null}
+                showPricing={showPricing}
+              />
+              {/* Advisor choice selection */}
+              <div className="mt-1 flex justify-end">
+                {option.isChoiceSelected ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] border-emerald-300 text-emerald-600 dark:text-emerald-400 gap-1"
+                    onClick={() => onSelectChoice("", option.choiceGroupId!)} // empty = deselect
+                  >
+                    <Check className="w-3 h-3" />
+                    Selected
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                    onClick={() => onSelectChoice(option.id, option.choiceGroupId!)}
+                  >
+                    Select this option
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+## Change 3: Add "Add alternative" button to `SegmentCard`
+
+`SegmentCard` currently has edit and delete icon buttons visible on hover. For segments that support alternatives (hotel, flight, charter, charter_flight) and are NOT already in a choice group, add a third action button — "Add alternative."
+
+Add `onAddAlternative?: () => void` to the `SegmentCard` props interface.
+
+In the hover action buttons area (after the delete button, before closing the `div`):
+
+```tsx
+{onAddAlternative && (
+  <Button
+    size="icon"
+    variant="ghost"
+    onClick={onAddAlternative}
+    title="Add alternative option"
+    data-testid={`button-add-alternative-${segment.id}`}
+  >
+    <GitFork className="w-3.5 h-3.5" />
+  </Button>
+)}
+```
+
+Note: `GitFork` from lucide-react visually communicates "branching choice." Add it to the existing lucide imports at the top of the file.
+
+Also add a visual indicator when the segment IS already in a choice group (belt and suspenders — the `ChoiceGroupCard` wrapper handles this, but a badge helps in edge cases):
+
+In the badges area (after the `hasVariants` badge):
+```tsx
+{segment.choiceGroupId && (
+  <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-600 dark:text-amber-400">
+    Alternative option
+  </Badge>
+)}
+```
+
+---
+
+## Change 4: Mutations and state in main page component
+
+**Add state for the "add alternative" dialog:**
+
+```typescript
+const [addAlternativeDialog, setAddAlternativeDialog] = useState<{
+  open: boolean;
+  existingSegmentId: string;
+  segmentType: string;
+  dayNumber: number;
+} | null>(null);
+```
+
+**Add `choiceGroupMutation`** (modeled exactly on `propertyGroupMutation`):
+
+```typescript
+const choiceGroupMutation = useMutation({
+  mutationFn: async ({ existingSegmentId, newSegmentId }: { existingSegmentId: string; newSegmentId: string }) => {
+    const groupId = crypto.randomUUID();
+    await apiRequest("PATCH", `/api/trips/${id}/segments/${existingSegmentId}`, { choiceGroupId: groupId });
+    await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegmentId}`, { choiceGroupId: groupId });
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+    toast({ title: "Alternatives linked", description: "Client will choose one option." });
+  },
+  onError: (e: Error) => {
+    toast({ title: "Error linking alternatives", description: e.message, variant: "destructive" });
+  },
+});
+```
+
+**Add `unlinkChoiceMutation`:**
+
+```typescript
+const unlinkChoiceMutation = useMutation({
+  mutationFn: async (choiceGroupId: string) => {
+    // Get all segments in the group and clear their choiceGroupId
+    const groupSegments = segments.filter(s => s.choiceGroupId === choiceGroupId);
+    await Promise.all(
+      groupSegments.map(s =>
+        apiRequest("PATCH", `/api/trips/${id}/segments/${s.id}`, { choiceGroupId: null, isChoiceSelected: false })
+      )
+    );
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+    toast({ title: "Alternatives unlinked" });
+  },
+  onError: (e: Error) => {
+    toast({ title: "Error unlinking", description: e.message, variant: "destructive" });
+  },
+});
+```
+
+**Add `selectChoiceMutation`** (calls the new `/choose` route):
+
+```typescript
+const selectChoiceMutation = useMutation({
+  mutationFn: async ({ segmentId, choiceGroupId }: { segmentId: string; choiceGroupId: string }) => {
+    if (!segmentId) {
+      // Deselect: clear isChoiceSelected on all segments in group
+      const groupSegments = segments.filter(s => s.choiceGroupId === choiceGroupId);
+      await Promise.all(
+        groupSegments.map(s =>
+          apiRequest("PATCH", `/api/trips/${id}/segments/${s.id}`, { isChoiceSelected: false })
+        )
+      );
+    } else {
+      await apiRequest("POST", `/api/trips/${id}/segments/${segmentId}/choose`);
+    }
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+  },
+  onError: (e: Error) => {
+    toast({ title: "Error recording choice", description: e.message, variant: "destructive" });
+  },
+});
+```
+
+**Add effect to detect when a new segment should be linked as an alternative.** When `addAlternativeDialog` is open and a new segment has been created (detected via the `segmentDialogOpen` closing), auto-link the newest segment of the matching type on the same day:
+
+```typescript
+useEffect(() => {
+  if (!addAlternativeDialog?.open) return;
+  if (prevSegmentDialogOpen.current && !segmentDialogOpen) {
+    // Dialog just closed — find the newest segment that could be the alternative
+    const candidates = segments.filter(s =>
+      s.dayNumber === addAlternativeDialog.dayNumber &&
+      s.type === addAlternativeDialog.segmentType &&
+      !s.choiceGroupId &&
+      s.id !== addAlternativeDialog.existingSegmentId
+    );
+    if (candidates.length > 0) {
+      // Take the most recently created (highest sortOrder as proxy, or just last)
+      const newest = candidates[candidates.length - 1];
+      choiceGroupMutation.mutate({
+        existingSegmentId: addAlternativeDialog.existingSegmentId,
+        newSegmentId: newest.id,
+      });
+    }
+    setAddAlternativeDialog(null);
+  }
+}, [segmentDialogOpen, segments, addAlternativeDialog]);
+```
+
+---
+
+## Change 5: Wire up `onAddAlternative` in the day render loop
+
+In the day loop where `SegmentCard` is rendered, add the `onAddAlternative` prop for eligible segment types:
+
+```tsx
+<SegmentCard
+  key={item.segment.id}
+  segment={item.segment}
+  tripId={id!}
+  onEdit={openEditSegment}
+  tracking={item.segment.type === "flight" ? trackingBySegment.get(item.segment.id) : null}
+  showPricing={showPricing}
+  positionInDay={renderIdx + 1}
+  daySegments={daySegments}
+  allSegments={segments}
+  currentVersionId={currentVersionId}
+  onAddAlternative={
+    (["hotel", "flight", "charter", "charter_flight"].includes(item.segment.type) && !item.segment.choiceGroupId)
+      ? () => {
+          setAddAlternativeDialog({
+            open: true,
+            existingSegmentId: item.segment.id,
+            segmentType: item.segment.type,
+            dayNumber: item.segment.dayNumber,
+          });
+          openAddSegment(item.segment.dayNumber, item.segment.type);
+        }
+      : undefined
+  }
+/>
+```
+
+Add the `choiceGroup` kind to the render loop (after the `propertyGroup` block):
+
+```tsx
+if (item.kind === "choiceGroup") {
+  return (
+    <ChoiceGroupCard
+      key={`choice-${item.choiceGroupId}`}
+      options={item.options}
+      tripId={id!}
+      onEdit={openEditSegment}
+      showPricing={showPricing}
+      trackingBySegment={trackingBySegment}
+      onUnlink={(cgId) => unlinkChoiceMutation.mutate(cgId)}
+      onSelectChoice={(segId, cgId) => selectChoiceMutation.mutate({ segmentId: segId, choiceGroupId: cgId })}
+    />
+  );
+}
+```
+
+---
+
+## Visual result
+
+When two hotels are linked as alternatives, the advisor sees:
+
+```
+┌─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
+  EITHER / OR                              [⋯]
+  
+  [Hotel card: The Beverly Hills Hotel]
+  [Select this option]
+  
+  ──────────── OR ────────────
+  
+  [Hotel card: The Peninsula Beverly Hills]
+  [Select this option]
+└─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+```
+
+Once the advisor clicks "Select this option," the chosen card shows a green "Selected ✓" button and the other fades to 50% opacity.

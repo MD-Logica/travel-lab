@@ -158,6 +158,8 @@ export const tripSegments = pgTable("trip_segments", {
   refundability: text("refundability").default("unknown"),
   refundDeadline: timestamp("refund_deadline"),
   propertyGroupId: varchar("property_group_id"),
+  choiceGroupId: varchar("choice_group_id"),
+  isChoiceSelected: boolean("is_choice_selected").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

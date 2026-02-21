@@ -757,6 +757,92 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/trips/:tripId/segments/:segmentId/choose", async (req: any, res) => {
+    try {
+      const { tripId, segmentId } = req.params;
+      const token = req.query.token as string;
+      const orgId = req._orgId;
+
+      if (!token && !orgId) return res.status(401).json({ message: "Authentication required" });
+
+      const { db } = await import("./db");
+      const { eq, and } = await import("drizzle-orm");
+
+      const [seg] = await db.select({
+        tripId: tripSegments.tripId,
+        orgId: tripSegments.orgId,
+        choiceGroupId: tripSegments.choiceGroupId,
+      }).from(tripSegments).where(eq(tripSegments.id, segmentId));
+
+      if (!seg) return res.status(404).json({ message: "Segment not found" });
+      if (!seg.choiceGroupId) return res.status(400).json({ message: "Segment is not part of a choice group" });
+
+      if (token) {
+        const [trip] = await db.select({
+          shareToken: trips.shareToken,
+          shareEnabled: trips.shareEnabled,
+          approvedVersionId: trips.approvedVersionId,
+        }).from(trips).where(eq(trips.id, seg.tripId));
+
+        if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+        if (trip.approvedVersionId) {
+          return res.status(400).json({ message: "Itinerary already approved — choices are locked" });
+        }
+      } else if (orgId !== seg.orgId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const groupSegments = await storage.selectChoiceSegment(seg.choiceGroupId, segmentId, seg.tripId);
+
+      if (token) {
+        try {
+          const [trip] = await db.select().from(trips).where(eq(trips.id, seg.tripId));
+          if (trip?.advisorId) {
+            const [chosen] = groupSegments.filter(s => s.isChoiceSelected);
+            const chosenMeta = (chosen?.metadata || {}) as Record<string, any>;
+            let chosenLabel = chosen?.title || "option";
+            if (chosen?.type === "hotel") chosenLabel = chosenMeta.hotelName || chosen.title || "hotel";
+            if (chosen?.type === "flight" || chosen?.type === "charter_flight") {
+              const dep = chosenMeta.departure?.iata || chosenMeta.departureAirport || "";
+              const arr = chosenMeta.arrival?.iata || chosenMeta.arrivalAirport || "";
+              if (dep && arr) chosenLabel = `${dep} → ${arr}`;
+            }
+
+            let clientName = "Client";
+            if (trip.clientId) {
+              const [cl] = await db.select({ fullName: clients.fullName })
+                .from(clients).where(eq(clients.id, trip.clientId));
+              if (cl) clientName = cl.fullName;
+            }
+
+            await storage.createNotification({
+              orgId: trip.orgId,
+              profileId: trip.advisorId,
+              type: "choice_submitted",
+              title: `${clientName} chose "${chosenLabel}" for "${trip.title}"`,
+              message: `Client selected their preferred option from a choice group.`,
+              data: {
+                tripId: trip.id,
+                segmentId,
+                choiceGroupId: seg.choiceGroupId,
+                chosenLabel,
+              },
+            });
+          }
+        } catch (notifyErr) {
+          console.error("Choice notification failed:", notifyErr);
+        }
+      }
+
+      res.json(groupSegments);
+    } catch (error) {
+      console.error("Choose segment error:", error);
+      res.status(500).json({ message: "Failed to record choice" });
+    }
+  });
+
   app.post("/api/trips/:tripId/submit-selections", async (req: any, res) => {
     try {
       const { tripId } = req.params;
@@ -948,6 +1034,43 @@ export async function registerRoutes(
         }
       } catch (sysErr) {
         console.error("System event message failed:", sysErr);
+      }
+
+      try {
+        const { isNotNull } = await import("drizzle-orm");
+
+        const choiceSegs = await db.select().from(tripSegments)
+          .where(and(
+            eq(tripSegments.tripId, tripId),
+            isNotNull(tripSegments.choiceGroupId),
+            eq(tripSegments.isChoiceSelected, true)
+          ));
+
+        if (choiceSegs.length > 0 && trip.advisorId) {
+          const [advisor] = await db.select({ email: profiles.email, fullName: profiles.fullName })
+            .from(profiles).where(eq(profiles.id, trip.advisorId));
+
+          if (advisor?.email) {
+            const choiceLines = choiceSegs.map(seg => {
+              const meta = (seg.metadata || {}) as Record<string, any>;
+              let label = seg.title;
+              if (seg.type === "hotel") label = meta.hotelName || seg.title;
+              if (seg.type === "flight" || seg.type === "charter_flight") {
+                const dep = meta.departure?.iata || meta.departureAirport || "";
+                const arr = meta.arrival?.iata || meta.arrivalAirport || "";
+                if (dep && arr) label = `${dep} → ${arr}`;
+              }
+              const costStr = seg.cost
+                ? ` · ${new Intl.NumberFormat("en-US", { style: "currency", currency: seg.currency || "USD", minimumFractionDigits: 0 }).format(seg.cost)}`
+                : "";
+              return `• ${label}${costStr} (chosen option)`;
+            });
+
+            console.log("[submit-selections] Choice group selections:", choiceLines);
+          }
+        }
+      } catch (choiceErr) {
+        console.error("Choice group collection in submit-selections failed:", choiceErr);
       }
 
       res.json(result);
@@ -1546,6 +1669,8 @@ export async function registerRoutes(
         photos: z.array(z.string()).optional().nullable(),
         metadata: z.record(z.any()).optional().nullable(),
         journeyId: z.string().optional().nullable(),
+        choiceGroupId: z.string().optional().nullable(),
+        isChoiceSelected: z.boolean().optional(),
       });
       const parsed = updateSchema.parse(req.body);
 
