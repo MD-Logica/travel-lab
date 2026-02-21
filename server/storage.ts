@@ -1466,12 +1466,26 @@ export class DatabaseStorage implements IStorage {
         eq(tripSegments.tripId, tripId)
       ));
 
-    await db.update(tripSegments)
-      .set({ isChoiceSelected: true })
-      .where(and(
-        eq(tripSegments.id, selectedSegmentId),
-        eq(tripSegments.tripId, tripId)
-      ));
+    const [selectedSeg] = await db.select({ journeyId: tripSegments.journeyId })
+      .from(tripSegments)
+      .where(eq(tripSegments.id, selectedSegmentId));
+
+    if (selectedSeg?.journeyId) {
+      await db.update(tripSegments)
+        .set({ isChoiceSelected: true })
+        .where(and(
+          eq(tripSegments.journeyId, selectedSeg.journeyId),
+          eq(tripSegments.choiceGroupId, choiceGroupId),
+          eq(tripSegments.tripId, tripId)
+        ));
+    } else {
+      await db.update(tripSegments)
+        .set({ isChoiceSelected: true })
+        .where(and(
+          eq(tripSegments.id, selectedSegmentId),
+          eq(tripSegments.tripId, tripId)
+        ));
+    }
 
     return db.select().from(tripSegments)
       .where(and(

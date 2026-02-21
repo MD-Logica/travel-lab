@@ -1,0 +1,584 @@
+# QG — Three fixes: journey alternatives, variants in choice groups, tiered selection UX
+
+Two files change: `client/src/pages/trip-edit.tsx`, `client/src/pages/trip-view.tsx`.
+
+---
+
+## Fix 1: Journey cards get "Add alternative" button (`trip-edit.tsx`)
+
+### Problem
+Multi-leg connecting flights render as a `JourneyCard`, not a `SegmentCard`. The "Add alternative" button lives only on `SegmentCard`. `JourneyCard` never received `onAddAlternative` and the day loop explicitly excluded journey segments from the gating condition.
+
+### Solution
+
+**Add `onAddAlternative` prop to `JourneyCard`:**
+
+Find `function JourneyCard({` and its props interface. Add:
+```typescript
+  onAddAlternative?: () => void;
+```
+
+Destructure it in the function signature.
+
+**Add the button to `JourneyCard`'s render.** The card has an action area at the top right of the card header — the same place `SegmentCard` shows its edit/delete/add-alternative icons. Find the header row in `JourneyCard` (the `flex items-center gap-2` row containing the Plane icon and the route text). After that row, there is currently no action button area on JourneyCard. Add one by wrapping the entire card header in a `relative` container and placing the action button as an absolute-positioned icon on hover:
+
+Find inside `JourneyCard`, the outer `<Card>` element. Inside `CardContent`, the first `<div className="flex items-center gap-2">` is the header row. Make the Card itself `group` and add a hover-visible action area at the top-right, after the header row and before the legs list:
+
+```tsx
+<Card className="group relative hover-elevate border-sky-200/40 dark:border-sky-800/40" ...>
+  <CardContent className="p-3 space-y-2">
+    {/* ... existing header row ... */}
+    
+    {/* Add alternative button — top-right hover action */}
+    {onAddAlternative && (
+      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="h-7 w-7"
+          onClick={(e) => { e.stopPropagation(); onAddAlternative(); }}
+          title="Add alternative flight option"
+          data-testid={`button-add-alternative-journey-${legs[0]?.journeyId}`}
+        >
+          <GitFork className="w-3.5 h-3.5" />
+        </Button>
+      </div>
+    )}
+    
+    {/* ... existing legs list ... */}
+```
+
+**Wire it up in the day loop.** Find the `item.kind === "journey"` block in the day render loop:
+
+```tsx
+if (item.kind === "journey") {
+  return (
+    <JourneyCard
+      key={`journey-${item.journeyId}`}
+      legs={item.legs}
+      tripId={id!}
+      onEdit={openEditSegment}
+      trackingBySegment={trackingBySegment}
+      showPricing={showPricing}
+      positionInDay={renderIdx + 1}
+      onAddAlternative={
+        (!item.legs[0]?.choiceGroupId)
+          ? () => {
+              // Use the journey's first leg as the "existing segment" anchor
+              // When we create the alternative flight, it will be a new standalone flight
+              // linked to this journey via choiceGroupId on all journey legs
+              setPendingAlternativeLink({
+                existingSegmentId: item.legs[0].id,
+                existingSegmentType: "flight",
+                isJourney: true,
+                journeyId: item.journeyId,
+                journeyLegIds: item.legs.map(l => l.id),
+              });
+              openAddSegment(item.legs[0].dayNumber, "flight");
+            }
+          : undefined
+      }
+    />
+  );
+}
+```
+
+**Update `pendingAlternativeLink` state type** to accommodate journeys:
+
+```typescript
+const [pendingAlternativeLink, setPendingAlternativeLink] = useState<{
+  existingSegmentId: string;
+  existingSegmentType: string;
+  isJourney?: boolean;
+  journeyId?: string;
+  journeyLegIds?: string[];
+} | null>(null);
+```
+
+**Update `onCreated` in `SegmentEditor`** to handle journey-level linking. When `pendingAlternativeLink.isJourney` is true, assign the same `choiceGroupId` to ALL legs of the journey (not just the first):
+
+```typescript
+onCreated={async (newSegment) => {
+  if (pendingAlternativeLink) {
+    const groupId = crypto.randomUUID();
+    try {
+      if (pendingAlternativeLink.isJourney && pendingAlternativeLink.journeyLegIds) {
+        // Link all legs of the journey to the choice group
+        await Promise.all(
+          pendingAlternativeLink.journeyLegIds.map(legId =>
+            apiRequest("PATCH", `/api/trips/${id}/segments/${legId}`, { choiceGroupId: groupId })
+          )
+        );
+      } else {
+        await apiRequest("PATCH", `/api/trips/${id}/segments/${pendingAlternativeLink.existingSegmentId}`, { choiceGroupId: groupId });
+      }
+      await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegment.id}`, { choiceGroupId: groupId });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+      toast({ title: "Alternative added", description: "Client will choose one option." });
+    } catch {
+      toast({ title: "Alternative created but linking failed", variant: "destructive" });
+    }
+    setPendingAlternativeLink(null);
+  }
+}}
+```
+
+Note: When a journey (multi-leg) is in a choice group, `buildDayRenderItems` will emit it as a `choiceGroup` kind (since the legs have `choiceGroupId` set) OR as a `journey` kind (since the legs have `journeyId` set). These two grouping mechanisms can conflict. The fix: in `buildDayRenderItems`, give `choiceGroup` higher priority than `journey`. If a segment has both `choiceGroupId` and `journeyId`, it should be treated as part of a choice group first. Update the for loop in `buildDayRenderItems`:
+
+```typescript
+for (const seg of daySegments) {
+  // choiceGroup takes priority — check it BEFORE journey
+  if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+    if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+      seenChoiceGroupIds.add(seg.choiceGroupId);
+      const options = choiceGroups.get(seg.choiceGroupId)!;
+      options.sort((a, b) => a.sortOrder - b.sortOrder);
+      items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
+    }
+  } else if (seg.journeyId && (journeyGroups.get(seg.journeyId)?.length ?? 0) > 1) {
+    // ... existing journey logic, unchanged
+  } else if (seg.propertyGroupId && ...) {
+    // ... existing property group logic, unchanged
+  } else {
+    items.push({ kind: "segment", segment: seg });
+  }
+}
+```
+
+Apply the same priority fix to `buildViewDayRenderItems` in `trip-view.tsx` — choiceGroup before journey.
+
+However, when a JourneyCard is part of a choice group, the `ChoiceGroupCard` renders individual `SegmentCard`s for each option. For journey-type options (where legs share a `journeyId`), the `ChoiceGroupCard` should render a `JourneyCard` instead of a `SegmentCard`. 
+
+Update `ChoiceGroupCard` in `trip-edit.tsx`: when rendering each option, check if it has a `journeyId`. If so, group all options that share that `journeyId` and render them as a `JourneyCard`. Since a choice group option can itself be a journey (multiple legs), the `options` array for a journey-based choice group will contain multiple legs per option. Group them:
+
+```tsx
+// Inside ChoiceGroupCard, before the options.map:
+// Group legs by journeyId to render JourneyCards where applicable
+const journeyOptionsMap = new Map<string, TripSegment[]>();
+const standaloneOptions: TripSegment[] = [];
+const seenJourneys = new Set<string>();
+
+for (const opt of options) {
+  if (opt.journeyId) {
+    if (!journeyOptionsMap.has(opt.journeyId)) journeyOptionsMap.set(opt.journeyId, []);
+    journeyOptionsMap.get(opt.journeyId)!.push(opt);
+  } else {
+    standaloneOptions.push(opt);
+  }
+}
+
+// Flatten back to render items: journey groups + standalone options
+type ChoiceOption =
+  | { kind: "journey"; journeyId: string; legs: TripSegment[]; representative: TripSegment }
+  | { kind: "segment"; segment: TripSegment };
+
+const renderOptions: ChoiceOption[] = [];
+for (const opt of options) {
+  if (opt.journeyId && !seenJourneys.has(opt.journeyId)) {
+    seenJourneys.add(opt.journeyId);
+    const legs = journeyOptionsMap.get(opt.journeyId)!;
+    legs.sort((a, b) => ((a.metadata as any)?.legNumber || 0) - ((b.metadata as any)?.legNumber || 0));
+    renderOptions.push({ kind: "journey", journeyId: opt.journeyId, legs, representative: legs[0] });
+  } else if (!opt.journeyId) {
+    renderOptions.push({ kind: "segment", segment: opt });
+  }
+}
+```
+
+Then in the render loop, use `renderOptions` instead of `options`, and for `journey` kind items render a `JourneyCard` (without `onAddAlternative` since it's already inside a choice group):
+
+```tsx
+{renderOptions.map((renderOpt, idx) => {
+  const isSelected = renderOpt.kind === "journey"
+    ? renderOpt.legs.some(l => l.isChoiceSelected)
+    : renderOpt.segment.isChoiceSelected;
+  const isDimmed = !!selectedOption && !isSelected;
+  const representativeId = renderOpt.kind === "journey" ? renderOpt.representative.id : renderOpt.segment.id;
+  const representativeChoiceGroupId = renderOpt.kind === "journey"
+    ? renderOpt.representative.choiceGroupId!
+    : renderOpt.segment.choiceGroupId!;
+
+  return (
+    <div key={renderOpt.kind === "journey" ? renderOpt.journeyId : renderOpt.segment.id}>
+      {idx > 0 && /* ... OR divider ... */}
+      <motion.div animate={{ opacity: isDimmed ? 0.45 : 1, scale: isDimmed ? 0.995 : 1 }} ...>
+        <div className={`relative flex rounded-lg overflow-hidden border ... `}>
+          <div className={`w-0.5 shrink-0 ...`} />
+          <div className="flex-1 min-w-0">
+            {renderOpt.kind === "journey" ? (
+              <JourneyCard
+                legs={renderOpt.legs}
+                tripId={tripId}
+                onEdit={onEdit}
+                trackingBySegment={trackingBySegment}
+                showPricing={showPricing}
+              />
+            ) : (
+              <SegmentCard
+                segment={renderOpt.segment}
+                tripId={tripId}
+                onEdit={onEdit}
+                tracking={renderOpt.segment.type === "flight" ? trackingBySegment.get(renderOpt.segment.id) : null}
+                showPricing={showPricing}
+              />
+            )}
+          </div>
+          {/* selection circle */}
+          <div className="shrink-0 flex items-center pr-2 pl-1">
+            {isSelected ? (
+              <button onClick={() => onSelectChoice("", representativeChoiceGroupId)} ...>✓</button>
+            ) : (
+              <button onClick={() => onSelectChoice(representativeId, representativeChoiceGroupId)} ...>○</button>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+})}
+```
+
+---
+
+## Fix 2: Pass `variantMap` and selection state into `ChoiceGroupViewCard` (`trip-view.tsx`)
+
+### Problem
+`ChoiceGroupViewCard` calls `<SegmentView segment={option} />` which has no access to variants. The `variantMap`, `localSelections`, `onSelectVariant`, and `lockedSegments` are available in `DayAccordion` but never passed to `ChoiceGroupViewCard`.
+
+### Solution: Add variant-related props to `ChoiceGroupViewCard`
+
+Add to `ChoiceGroupViewCard` props interface:
+```typescript
+  variantMap?: Record<string, any[]>;
+  localSelections?: Record<string, string>;
+  onSelectVariant?: (segmentId: string, variantId: string) => void;
+  lockedSegments?: Set<string>;
+```
+
+Pass them at the call site in `DayAccordion`'s render loop:
+```tsx
+<ChoiceGroupViewCard
+  key={`choice-${item.choiceGroupId}`}
+  options={item.options}
+  showPricing={showPricing}
+  timeFormat={timeFormat}
+  localChoices={localChoices}
+  onSelectChoice={onSelectChoice}
+  lockedChoices={lockedChoices}
+  token={token}
+  isApproved={isApproved}
+  variantMap={variantMap}                          // ADD
+  localSelections={localSelections}                // ADD
+  onSelectVariant={onSelectVariant}                // ADD
+  lockedSegments={lockedSegments}                  // ADD
+/>
+```
+
+---
+
+## Fix 3: Tiered two-column selection UX in `ChoiceGroupViewCard` (`trip-view.tsx`)
+
+### The interaction model
+- **Pre-choice:** Both option cards shown at full width, stacked with an "or" separator. Standard "Select this option" footer.
+- **Post-choice:** The chosen card compresses to a left column (~55% width, showing a compact summary view). Upgrade tier options expand into a right column (~45% width) as selectable tiles. The unchosen card fades below at 35% opacity, still showing for comparison.
+- **No variants on chosen option:** The chosen card simply fills full width with an emerald "Selected" footer — no right column. Clean and uncluttered.
+- **Approved mode:** Only the chosen card at full width, no UI chrome, no option tiles unless showing which tier was selected.
+
+### Implementation
+
+**Replace** the entire inner `options.map` render inside `ChoiceGroupViewCard` with the tiered layout. The key change is what happens after `isChosen` becomes true for a card that has variants.
+
+The full new render logic for `ChoiceGroupViewCard` (replace from `<div className="space-y-0">` onwards through the closing `</div>` of that block):
+
+```tsx
+{/* Options */}
+<div className="space-y-0">
+  {options.map((option, idx) => {
+    const isChosen = chosenId === option.id;
+    const isOtherChosen = hasChosen && !isChosen;
+    const optionVariants = option.hasVariants ? variantMap?.[option.id] : undefined;
+    const hasVariantsForOption = optionVariants && optionVariants.length > 0;
+    const selectedVariantId = localSelections?.[option.id];
+    const isVariantLocked = lockedSegments?.has(option.id);
+
+    return (
+      <div key={option.id}>
+        {idx > 0 && (
+          <div className="relative flex items-center justify-center my-2">
+            <div className="flex-1 border-t border-border/30 mx-12" />
+            <div className={`absolute inline-flex items-center justify-center w-7 h-7 rounded-full border text-[9px] font-bold tracking-wider transition-all duration-300 ${
+              hasChosen
+                ? "border-border/20 text-muted-foreground/20 bg-background"
+                : "border-amber-200/60 dark:border-amber-800/30 text-amber-500/60 bg-background shadow-sm"
+            }`}>
+              or
+            </div>
+          </div>
+        )}
+
+        <motion.div
+          animate={{
+            opacity: isOtherChosen ? 0.35 : 1,
+            scale: isOtherChosen ? 0.99 : 1,
+          }}
+          transition={{ duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+        >
+          {/* Two-column layout when chosen AND has variants */}
+          {isChosen && hasVariantsForOption && !isApproved ? (
+            <div className="rounded-xl border border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20 overflow-hidden">
+              {/* Emerald accent line */}
+              <div className="h-0.5 w-full bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" />
+              
+              <div className="flex">
+                {/* LEFT: Compressed segment summary */}
+                <div className="w-[55%] border-r border-emerald-100/40 dark:border-emerald-900/30 bg-emerald-50/20 dark:bg-emerald-950/5">
+                  <div className="p-3">
+                    {/* Compact property/flight summary */}
+                    <div className="flex items-start gap-2">
+                      <div className="flex items-center justify-center w-7 h-7 rounded-md shrink-0 bg-emerald-100/60 dark:bg-emerald-950/40 mt-0.5">
+                        {option.type === "hotel" ? (
+                          <Hotel className="w-3.5 h-3.5 text-emerald-600" strokeWidth={1.5} />
+                        ) : (
+                          <Plane className="w-3.5 h-3.5 text-emerald-600" strokeWidth={1.5} />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold font-serif leading-tight text-foreground truncate">
+                          {option.type === "hotel"
+                            ? ((option.metadata as any)?.hotelName || option.title || "Hotel")
+                            : (() => {
+                                const m = (option.metadata as any) || {};
+                                const dep = m.departure?.iata || m.departureAirport || "";
+                                const arr = m.arrival?.iata || m.arrivalAirport || "";
+                                const fn = m.flightNumber || "";
+                                return dep && arr ? `${fn ? fn + " · " : ""}${dep} → ${arr}` : option.title;
+                              })()
+                          }
+                        </p>
+                        <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/60 font-medium mt-0.5 flex items-center gap-1">
+                          <Check className="w-3 h-3" />
+                          Selected
+                        </p>
+                        {showPricing && option.cost != null && option.cost > 0 && (
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            {formatViewCurrency(option.cost, option.currency || "USD")}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {/* Change link */}
+                    {showChoiceUI && !isLocked && (
+                      <button
+                        onClick={() => onSelectChoice?.(choiceGroupId, "")}
+                        className="text-[9px] text-muted-foreground/40 hover:text-muted-foreground underline underline-offset-2 mt-2 block transition-colors"
+                      >
+                        change selection
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* RIGHT: Variant/tier selection */}
+                <div className="flex-1 bg-background">
+                  <div className="p-3">
+                    <p className="text-[9px] font-semibold tracking-widest uppercase text-muted-foreground mb-2">
+                      {option.type === "hotel" ? "Choose room type" : "Choose cabin class"}
+                    </p>
+                    <div className="space-y-1.5">
+                      {/* Primary option tile */}
+                      {(!isVariantLocked || !selectedVariantId || selectedVariantId === "primary") && (
+                        <button
+                          type="button"
+                          onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, "")}
+                          className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs transition-all ${
+                            (!selectedVariantId || selectedVariantId === "primary")
+                              ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                              : "border-border/50 hover:border-primary/30 bg-background"
+                          } ${isVariantLocked ? "cursor-default" : ""}`}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-medium truncate">
+                              {option.type === "hotel"
+                                ? ((option.metadata as any)?.roomType || option.subtitle || "Standard")
+                                : (bookingClassLabels[(option.metadata as any)?.bookingClass] || (option.metadata as any)?.bookingClass || "Economy")
+                              }
+                            </span>
+                            {(!selectedVariantId || selectedVariantId === "primary") && (
+                              <CheckCircle className="w-3 h-3 text-primary shrink-0" />
+                            )}
+                          </div>
+                          {showPricing && option.cost != null && option.cost > 0 && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {formatViewCurrency(option.cost, option.currency || "USD")}
+                            </p>
+                          )}
+                        </button>
+                      )}
+                      {/* Variant tiles */}
+                      {optionVariants!.map((v: any) => {
+                        const isVSelected = selectedVariantId === v.id;
+                        if (isVariantLocked && !isVSelected) return null;
+                        return (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={isVariantLocked ? undefined : () => onSelectVariant?.(option.id, v.id)}
+                            className={`w-full text-left rounded-lg border px-2.5 py-2 text-xs transition-all ${
+                              isVSelected
+                                ? "bg-primary/5 border-primary/30 ring-1 ring-primary/20"
+                                : "border-border/50 hover:border-primary/30 bg-background"
+                            } ${isVariantLocked ? "cursor-default" : ""}`}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="font-medium truncate">{v.label}</span>
+                              {isVSelected && <CheckCircle className="w-3 h-3 text-primary shrink-0" />}
+                            </div>
+                            {showPricing && v.cost != null && v.cost > 0 && (
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {formatViewCurrency(v.cost, v.currency || option.currency || "USD")}
+                              </p>
+                            )}
+                            {v.refundability && v.refundability !== "unknown" && (
+                              <p className={`text-[9px] mt-0.5 ${
+                                v.refundability === "non_refundable" ? "text-red-500" :
+                                v.refundability === "fully_refundable" ? "text-emerald-500" :
+                                "text-amber-500"
+                              }`}>
+                                {v.refundability === "non_refundable" ? "Non-refundable" :
+                                 v.refundability === "fully_refundable" ? "Refundable" : "Partial refund"}
+                              </p>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          ) : (
+            /* Full-width card — pre-choice OR chosen with no variants */
+            <div className={`relative rounded-xl border overflow-hidden transition-all duration-400 ${
+              isChosen
+                ? "border-emerald-200/70 dark:border-emerald-800/50 shadow-md shadow-emerald-500/5 ring-1 ring-emerald-200/30 dark:ring-emerald-800/20"
+                : isOtherChosen
+                ? "border-border/20"
+                : "border-border/50 hover:border-border/80"
+            }`}>
+              <div className={`h-0.5 w-full transition-colors duration-300 ${
+                isChosen ? "bg-gradient-to-r from-emerald-300/60 via-emerald-400/40 to-emerald-300/60" : "bg-transparent"
+              }`} />
+              <div className="p-0">
+                <SegmentView segment={option} showPricing={showPricing} timeFormat={timeFormat} />
+              </div>
+              {showChoiceUI && (
+                <div className={`px-4 py-2.5 border-t transition-colors duration-300 ${
+                  isChosen
+                    ? "border-emerald-100/50 dark:border-emerald-900/30 bg-emerald-50/40 dark:bg-emerald-950/10"
+                    : "border-border/30 bg-muted/10"
+                }`}>
+                  {isChosen ? (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                          {isLocked ? "Your selection — submitted to advisor" : "Selected"}
+                        </span>
+                      </div>
+                      {!isLocked && (
+                        <button
+                          onClick={() => onSelectChoice?.(choiceGroupId, "")}
+                          className="text-[9px] text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 transition-colors"
+                        >
+                          change
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => onSelectChoice?.(choiceGroupId, option.id)}
+                      disabled={isLocked}
+                      className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg border border-border/50 hover:border-primary/40 bg-background hover:bg-accent/50 text-xs font-medium text-muted-foreground hover:text-foreground transition-all duration-200 disabled:opacity-30 disabled:cursor-not-allowed active:scale-[0.99]"
+                      data-testid={`button-choose-option-${option.id}`}
+                    >
+                      Select this option
+                    </button>
+                  )}
+                </div>
+              )}
+              {!token && isChosen && !isApproved && (
+                <div className="px-4 py-2 border-t border-emerald-100/40 dark:border-emerald-900/20 bg-emerald-50/30 dark:bg-emerald-950/10">
+                  <span className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70 font-medium flex items-center gap-1.5">
+                    <Check className="w-3 h-3" />
+                    Client's preferred option
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </motion.div>
+      </div>
+    );
+  })}
+</div>
+```
+
+**Icons needed:** `Hotel` and `Plane` from lucide-react must be imported in `trip-view.tsx`. `CheckCircle` too. Check existing imports — if already present, do not duplicate.
+
+**`bookingClassLabels` map:** This map is defined in `trip-edit.tsx`. Either duplicate it in `trip-view.tsx` or move it to a shared file. For simplicity, copy the map definition to `trip-view.tsx` if it doesn't already exist there.
+
+---
+
+## Visual summary
+
+### Client view — two hotels, neither chosen yet
+```
+● Your advisor is offering two options
+
+╔══════════════════════════════╗
+║ [The Beverly Hills Hotel]    ║
+║──────────────────────────────║
+║    [ Select this option ]    ║
+╚══════════════════════════════╝
+              or
+╔══════════════════════════════╗
+║ [The Peninsula Beverly Hills]║
+║──────────────────────────────║
+║    [ Select this option ]    ║
+╚══════════════════════════════╝
+```
+
+### After client selects The Peninsula (which has 3 room types)
+```
+● Option selected — review below          change
+
+╔══════════════════════════════╗  (35% opacity)
+║ [The Beverly Hills Hotel]    ║
+╚══════════════════════════════╝
+
+              or  (faded)
+
+╔══════════════════════╦═══════════════╗  ← emerald border
+▔▔▔▔▔▔▔▔ (emerald gradient) ▔▔▔▔▔▔▔▔▔▔▔
+║ 🏨 The Peninsula     ║ CHOOSE ROOM   ║
+║    Beverly Hills     ║               ║
+║ ✓ Selected           ║ ◉ Grand Suite ║
+║ $8,400               ║ ○ Deluxe Room ║
+║                      ║ ○ Classic Rm  ║
+║ [change selection]   ║               ║
+╚══════════════════════╩═══════════════╝
+```
+
+### Same pattern for flights: choose carrier first, then cabin class appears on the right
+```
+╔═══════════════════════╦══════════════╗
+║ ✈ AA 1700             ║ CHOOSE CABIN  ║
+║   JFK → LAX           ║              ║
+║ ✓ Selected            ║ ○ Economy    ║
+║                       ║ ◉ Business   ║
+║ [change selection]    ║ ○ First      ║
+╚═══════════════════════╩══════════════╝
+```

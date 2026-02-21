@@ -624,7 +624,14 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
   }
 
   for (const seg of daySegments) {
-    if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
+    if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
+      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
+        seenChoiceGroupIds.add(seg.choiceGroupId);
+        const options = choiceGroups.get(seg.choiceGroupId)!;
+        options.sort((a, b) => a.sortOrder - b.sortOrder);
+        items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
+      }
+    } else if (seg.journeyId && journeyGroups.get(seg.journeyId)!.length > 1) {
       if (!seenJourneyIds.has(seg.journeyId)) {
         seenJourneyIds.add(seg.journeyId);
         const legs = journeyGroups.get(seg.journeyId)!;
@@ -641,13 +648,6 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
         const rooms = propertyGroups.get(seg.propertyGroupId)!;
         items.push({ kind: "propertyGroup", propertyGroupId: seg.propertyGroupId, rooms });
       }
-    } else if (seg.choiceGroupId && (choiceGroups.get(seg.choiceGroupId)?.length ?? 0) > 1) {
-      if (!seenChoiceGroupIds.has(seg.choiceGroupId)) {
-        seenChoiceGroupIds.add(seg.choiceGroupId);
-        const options = choiceGroups.get(seg.choiceGroupId)!;
-        options.sort((a, b) => a.sortOrder - b.sortOrder);
-        items.push({ kind: "choiceGroup", choiceGroupId: seg.choiceGroupId, options });
-      }
     } else {
       items.push({ kind: "segment", segment: seg });
     }
@@ -662,6 +662,7 @@ function JourneyCard({
   trackingBySegment,
   showPricing,
   positionInDay,
+  onAddAlternative,
 }: {
   legs: TripSegment[];
   tripId: string;
@@ -669,6 +670,7 @@ function JourneyCard({
   trackingBySegment: Map<string, FlightTracking>;
   showPricing?: boolean;
   positionInDay?: number;
+  onAddAlternative?: () => void;
 }) {
   const firstLeg = legs[0];
   const lastLeg = legs[legs.length - 1];
@@ -708,6 +710,20 @@ function JourneyCard({
     >
     <Card className="group relative hover-elevate border-sky-200/40 dark:border-sky-800/40" data-testid={`card-journey-${firstLeg.journeyId}`}>
       <CardContent className="p-3 space-y-2">
+        {onAddAlternative && (
+          <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={(e) => { e.stopPropagation(); onAddAlternative(); }}
+              title="Add alternative flight option"
+              data-testid={`button-add-alternative-journey-${legs[0]?.journeyId}`}
+            >
+              <GitFork className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {positionInDay != null && (
             <div className="w-6 h-6 rounded-full bg-muted/50 text-[10px] font-medium text-muted-foreground shrink-0 flex items-center justify-center self-center">
@@ -1052,8 +1068,40 @@ function ChoiceGroupCard({
   onUnlink: (choiceGroupId: string) => void;
   onSelectChoice: (segmentId: string, choiceGroupId: string) => void;
 }) {
-  const selectedOption = options.find(o => o.isChoiceSelected);
   const choiceGroupId = options[0]?.choiceGroupId || "";
+
+  type ChoiceOption =
+    | { kind: "journey"; journeyId: string; legs: TripSegment[]; representative: TripSegment }
+    | { kind: "segment"; segment: TripSegment };
+
+  const renderOptions = useMemo(() => {
+    const journeyOptionsMap = new Map<string, TripSegment[]>();
+    const seenJourneys = new Set<string>();
+    const result: ChoiceOption[] = [];
+
+    for (const opt of options) {
+      if (opt.journeyId) {
+        if (!journeyOptionsMap.has(opt.journeyId)) journeyOptionsMap.set(opt.journeyId, []);
+        journeyOptionsMap.get(opt.journeyId)!.push(opt);
+      }
+    }
+
+    for (const opt of options) {
+      if (opt.journeyId && !seenJourneys.has(opt.journeyId)) {
+        seenJourneys.add(opt.journeyId);
+        const legs = journeyOptionsMap.get(opt.journeyId)!;
+        legs.sort((a, b) => ((a.metadata as any)?.legNumber || 0) - ((b.metadata as any)?.legNumber || 0));
+        result.push({ kind: "journey", journeyId: opt.journeyId, legs, representative: legs[0] });
+      } else if (!opt.journeyId) {
+        result.push({ kind: "segment", segment: opt });
+      }
+    }
+    return result;
+  }, [options]);
+
+  const selectedOption = renderOptions.find(ro =>
+    ro.kind === "journey" ? ro.legs.some(l => l.isChoiceSelected) : ro.segment.isChoiceSelected
+  );
 
   return (
     <motion.div
@@ -1106,12 +1154,15 @@ function ChoiceGroupCard({
           <div className="absolute left-3 top-[calc(50%-12px)] w-0.5 h-6 bg-amber-200/70 dark:bg-amber-800/50" />
         </div>
 
-        {options.map((option, idx) => {
-          const isSelected = !!selectedOption && option.isChoiceSelected;
-          const isDimmed = !!selectedOption && !option.isChoiceSelected;
+        {renderOptions.map((renderOpt, idx) => {
+          const isSelected = renderOpt.kind === "journey"
+            ? renderOpt.legs.some(l => l.isChoiceSelected)
+            : renderOpt.segment.isChoiceSelected;
+          const isDimmed = !!selectedOption && !isSelected;
+          const representativeId = renderOpt.kind === "journey" ? renderOpt.representative.id : renderOpt.segment.id;
 
           return (
-            <div key={option.id}>
+            <div key={renderOpt.kind === "journey" ? renderOpt.journeyId : renderOpt.segment.id}>
               {idx > 0 && (
                 <div className="relative flex items-center justify-center my-1 z-10">
                   <div className="flex-1 border-t border-amber-200/50 dark:border-amber-800/30 mx-8" />
@@ -1136,13 +1187,23 @@ function ChoiceGroupCard({
                     isSelected ? "bg-emerald-400" : "bg-amber-300/60 dark:bg-amber-700/40"
                   }`} />
                   <div className="flex-1 min-w-0">
-                    <SegmentCard
-                      segment={option}
-                      tripId={tripId}
-                      onEdit={onEdit}
-                      tracking={option.type === "flight" ? trackingBySegment.get(option.id) : null}
-                      showPricing={showPricing}
-                    />
+                    {renderOpt.kind === "journey" ? (
+                      <JourneyCard
+                        legs={renderOpt.legs}
+                        tripId={tripId}
+                        onEdit={onEdit}
+                        trackingBySegment={trackingBySegment}
+                        showPricing={showPricing}
+                      />
+                    ) : (
+                      <SegmentCard
+                        segment={renderOpt.segment}
+                        tripId={tripId}
+                        onEdit={onEdit}
+                        tracking={renderOpt.segment.type === "flight" ? trackingBySegment.get(renderOpt.segment.id) : null}
+                        showPricing={showPricing}
+                      />
+                    )}
                   </div>
                   <div className="shrink-0 flex items-center pr-2 pl-1">
                     {isSelected ? (
@@ -1150,7 +1211,7 @@ function ChoiceGroupCard({
                         onClick={() => onSelectChoice("", choiceGroupId)}
                         className="flex flex-col items-center gap-0.5 group"
                         title="Clear selection"
-                        data-testid={`button-choice-selected-${option.id}`}
+                        data-testid={`button-choice-selected-${representativeId}`}
                       >
                         <div className="w-5 h-5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-700 flex items-center justify-center">
                           <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
@@ -1159,10 +1220,10 @@ function ChoiceGroupCard({
                       </button>
                     ) : (
                       <button
-                        onClick={() => onSelectChoice(option.id, choiceGroupId)}
+                        onClick={() => onSelectChoice(representativeId, choiceGroupId)}
                         className="w-5 h-5 rounded-full border border-border/60 hover:border-emerald-300 dark:hover:border-emerald-700 bg-background hover:bg-emerald-50 dark:hover:bg-emerald-950/30 flex items-center justify-center transition-all duration-200 group"
                         title="Record as selected option"
-                        data-testid={`button-select-choice-${option.id}`}
+                        data-testid={`button-select-choice-${representativeId}`}
                       >
                         <Check className="w-3 h-3 text-muted-foreground/30 group-hover:text-emerald-500 transition-colors" />
                       </button>
@@ -2195,6 +2256,9 @@ export default function TripEditPage() {
   const [pendingAlternativeLink, setPendingAlternativeLink] = useState<{
     existingSegmentId: string;
     existingSegmentType: string;
+    isJourney?: boolean;
+    journeyId?: string;
+    journeyLegIds?: string[];
   } | null>(null);
   const prevSegmentDialogOpen = useRef(false);
 
@@ -3296,6 +3360,20 @@ export default function TripEditPage() {
                                 trackingBySegment={trackingBySegment}
                                 showPricing={showPricing}
                                 positionInDay={renderIdx + 1}
+                                onAddAlternative={
+                                  (!item.legs[0]?.choiceGroupId)
+                                    ? () => {
+                                        setPendingAlternativeLink({
+                                          existingSegmentId: item.legs[0].id,
+                                          existingSegmentType: "flight",
+                                          isJourney: true,
+                                          journeyId: item.journeyId,
+                                          journeyLegIds: item.legs.map(l => l.id),
+                                        });
+                                        openAddSegment(item.legs[0].dayNumber, "flight");
+                                      }
+                                    : undefined
+                                }
                               />
                             );
                           }
@@ -3416,7 +3494,15 @@ export default function TripEditPage() {
             if (pendingAlternativeLink) {
               const groupId = crypto.randomUUID();
               try {
-                await apiRequest("PATCH", `/api/trips/${id}/segments/${pendingAlternativeLink.existingSegmentId}`, { choiceGroupId: groupId });
+                if (pendingAlternativeLink.isJourney && pendingAlternativeLink.journeyLegIds) {
+                  await Promise.all(
+                    pendingAlternativeLink.journeyLegIds.map(legId =>
+                      apiRequest("PATCH", `/api/trips/${id}/segments/${legId}`, { choiceGroupId: groupId })
+                    )
+                  );
+                } else {
+                  await apiRequest("PATCH", `/api/trips/${id}/segments/${pendingAlternativeLink.existingSegmentId}`, { choiceGroupId: groupId });
+                }
                 await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegment.id}`, { choiceGroupId: groupId });
                 queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
                 toast({ title: "Alternative added", description: "Client will choose one option." });
