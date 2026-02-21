@@ -1474,6 +1474,8 @@ export function SegmentEditor({
         queryClient.invalidateQueries({ queryKey: ["/api/segment-templates"] });
       }
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "segments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "full"] });
       toast({ title: isEdit ? "Segment updated" : "Segment added" });
       resetForm();
       onOpenChange(false);

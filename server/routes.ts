@@ -644,7 +644,11 @@ export async function registerRoutes(
       const { segmentId } = req.params;
       const token = req.query.token as string | undefined;
 
-      // Try authenticated access first
+      if (!req._orgId && req.isAuthenticated?.()) {
+        const profile = await storage.getProfile(req.user?.claims?.sub || req.user?.id);
+        if (profile) req._orgId = profile.orgId;
+      }
+
       if (req._orgId) {
         const variants = await storage.getVariantsBySegment(segmentId, req._orgId);
         return res.json(variants);
