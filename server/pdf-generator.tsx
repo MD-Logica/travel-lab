@@ -6,11 +6,8 @@ import { differenceInMinutes, parseISO } from "date-fns";
 import { eq } from "drizzle-orm";
 import { db } from "./db";
 import path from "path";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const FONTS_DIR = path.join(__dirname, "fonts");
+const FONTS_DIR = path.join(process.cwd(), "server", "fonts");
 
 Font.register({
   family: "Serif",
