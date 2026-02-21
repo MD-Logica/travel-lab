@@ -34,6 +34,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ArrowLeft, MapPin, Calendar, DollarSign, Image,
   User, Search, Check,
@@ -86,6 +87,10 @@ export default function TripNewPage() {
   const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
   const [destinationError, setDestinationError] = useState("");
   const [selectedCompanions, setSelectedCompanions] = useState<string[]>([]);
+  const [photoSearchQuery, setPhotoSearchQuery] = useState("luxury travel");
+  const [photoSearchInput, setPhotoSearchInput] = useState("");
+  const [coverTab, setCoverTab] = useState("suggest");
+  const [storedPhotoCredit, setStoredPhotoCredit] = useState<{ name: string; url: string } | null>(null);
 
   const { data: clients, isLoading: clientsLoading } = useQuery<Client[]>({
     queryKey: ["/api/clients"],
@@ -114,19 +119,33 @@ export default function TripNewPage() {
     return clients.find((c) => c.id === selectedClientId) || null;
   }, [selectedClientId, clients]);
 
-  const { data: companions } = useQuery({
-    queryKey: ["/api/clients", selectedClientId, "companions"],
-    queryFn: async () => {
-      if (!selectedClientId) return [];
-      const res = await fetch(`/api/clients/${selectedClientId}/companions`, { credentials: "include" });
-      return res.json();
-    },
+  const { data: companions } = useQuery<any[]>({
+    queryKey: [`/api/clients/${selectedClientId}/companions`],
     enabled: !!selectedClientId,
   });
 
   useEffect(() => {
     setSelectedCompanions([]);
   }, [selectedClientId]);
+
+  useEffect(() => {
+    const query = destinations[0]?.name || "luxury travel";
+    setPhotoSearchQuery(query);
+  }, [destinations.length > 0 ? destinations[0]?.name : ""]);
+
+  const photoSearchUrl = `/api/photos/search?q=${encodeURIComponent(photoSearchQuery)}&count=6`;
+  const { data: photoData, isLoading: photoLoading } = useQuery<{ photos: any[] }>({
+    queryKey: [photoSearchUrl],
+  });
+  const photoResults = photoData?.photos || [];
+
+  const photoCredit = useMemo(() => {
+    if (!coverImageUrl) return null;
+    const match = photoResults.find((p: any) => p.full === coverImageUrl);
+    if (match) return { name: match.credit, url: match.creditUrl };
+    if (storedPhotoCredit && coverImageUrl.includes("unsplash.com")) return storedPhotoCredit;
+    return null;
+  }, [coverImageUrl, photoResults, storedPhotoCredit]);
 
   const filteredClients = useMemo(() => {
     if (!clients) return [];
@@ -539,23 +558,126 @@ export default function TripNewPage() {
                         <Image className="w-3 h-3" strokeWidth={1.5} />
                         Cover Image
                       </p>
-                      <FormField
-                        control={form.control}
-                        name="coverImageUrl"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-muted-foreground">Image URL</FormLabel>
-                            <FormControl>
-                              <Input
-                                placeholder="https://images.unsplash.com/..."
-                                data-testid="input-trip-cover-image"
-                                {...field}
+                      <Tabs value={coverTab} onValueChange={setCoverTab}>
+                        <TabsList className="w-full mb-3">
+                          <TabsTrigger value="suggest" className="flex-1 text-xs" data-testid="tab-suggest-photos">Suggest photos</TabsTrigger>
+                          <TabsTrigger value="custom" className="flex-1 text-xs" data-testid="tab-custom-url">Custom URL</TabsTrigger>
+                        </TabsList>
+
+                        <TabsContent value="suggest" className="space-y-3">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                            <Input
+                              placeholder="Search photos (e.g. 'Amalfi Coast sunset')"
+                              className="pl-8 text-sm"
+                              value={photoSearchInput}
+                              onChange={(e) => setPhotoSearchInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  if (photoSearchInput.trim()) setPhotoSearchQuery(photoSearchInput.trim());
+                                }
+                              }}
+                              data-testid="input-photo-search"
+                            />
+                          </div>
+
+                          {photoLoading ? (
+                            <div className="grid grid-cols-3 gap-2">
+                              {Array.from({ length: 6 }).map((_, i) => (
+                                <Skeleton key={i} className="aspect-[16/10] rounded-md" />
+                              ))}
+                            </div>
+                          ) : photoResults.length > 0 ? (
+                            <div className="grid grid-cols-3 gap-2" data-testid="photo-grid">
+                              {photoResults.map((photo) => {
+                                const isSelected = coverImageUrl === photo.full;
+                                return (
+                                  <button
+                                    key={photo.id}
+                                    type="button"
+                                    className={`relative aspect-[16/10] rounded-md overflow-hidden border-2 transition-all cursor-pointer group ${
+                                      isSelected
+                                        ? "border-primary ring-2 ring-primary/30"
+                                        : "border-transparent hover:border-muted-foreground/20"
+                                    }`}
+                                    onClick={() => {
+                                      form.setValue("coverImageUrl", photo.full);
+                                      setStoredPhotoCredit({ name: photo.credit, url: photo.creditUrl });
+                                    }}
+                                    data-testid={`photo-option-${photo.id}`}
+                                  >
+                                    <img
+                                      src={photo.thumb}
+                                      alt={photo.altDescription || "Cover option"}
+                                      className="w-full h-full object-cover"
+                                      loading="lazy"
+                                    />
+                                    {isSelected && (
+                                      <div className="absolute inset-0 bg-primary/20 flex items-center justify-center">
+                                        <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+                                          <Check className="w-3.5 h-3.5 text-white" />
+                                        </div>
+                                      </div>
+                                    )}
+                                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                      <p className="text-[9px] text-white truncate">{photo.credit}</p>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-center py-6 text-sm text-muted-foreground" data-testid="text-no-photos">
+                              No photos found. Try a different search term.
+                            </div>
+                          )}
+
+                          {photoCredit && coverImageUrl && (
+                            <p className="text-[10px] text-muted-foreground" data-testid="text-photo-attribution">
+                              Photo by{" "}
+                              <a href={photoCredit.url} target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground" data-testid="link-photo-credit">
+                                {photoCredit.name}
+                              </a>
+                              {" "}on{" "}
+                              <a href="https://unsplash.com?utm_source=travel_lab&utm_medium=referral" target="_blank" rel="noopener noreferrer" className="underline hover:text-foreground" data-testid="link-unsplash">
+                                Unsplash
+                              </a>
+                            </p>
+                          )}
+                        </TabsContent>
+
+                        <TabsContent value="custom">
+                          <FormField
+                            control={form.control}
+                            name="coverImageUrl"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel className="text-xs text-muted-foreground">Image URL</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder="https://images.unsplash.com/..."
+                                    data-testid="input-trip-cover-image"
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          {coverImageUrl && coverTab === "custom" && (
+                            <div className="mt-3 aspect-[16/10] overflow-hidden rounded-md border">
+                              <img
+                                src={coverImageUrl}
+                                alt="Custom cover preview"
+                                className="w-full h-full object-cover"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                data-testid="img-custom-cover-preview"
                               />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                            </div>
+                          )}
+                        </TabsContent>
+                      </Tabs>
                     </div>
                   </div>
 

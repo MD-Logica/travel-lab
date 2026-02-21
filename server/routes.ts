@@ -2147,5 +2147,44 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/photos/search", isAuthenticated, async (req: any, res) => {
+    try {
+      const key = process.env.UNSPLASH_ACCESS_KEY;
+      if (!key) return res.status(503).json({ error: "Photo search not configured" });
+
+      const query = (req.query.q as string) || "luxury travel";
+      const count = Math.min(parseInt(req.query.count as string || "6"), 12);
+
+      const url = new URL("https://api.unsplash.com/search/photos");
+      url.searchParams.set("query", query);
+      url.searchParams.set("per_page", String(count));
+      url.searchParams.set("orientation", "landscape");
+      url.searchParams.set("content_filter", "high");
+
+      const apiRes = await fetch(url.toString(), {
+        headers: { Authorization: `Client-ID ${key}` },
+      });
+
+      if (!apiRes.ok) throw new Error(`Unsplash error: ${apiRes.status}`);
+
+      const data = await apiRes.json();
+
+      const photos = (data.results || []).map((p: any) => ({
+        id: p.id,
+        thumb: p.urls.small,
+        regular: p.urls.regular,
+        full: p.urls.full,
+        credit: p.user.name,
+        creditUrl: p.user.links.html + "?utm_source=travel_lab&utm_medium=referral",
+        altDescription: p.alt_description,
+      }));
+
+      res.json({ photos });
+    } catch (error) {
+      console.error("[Unsplash] search error:", error);
+      res.status(500).json({ error: "Photo search failed" });
+    }
+  });
+
   return httpServer;
 }

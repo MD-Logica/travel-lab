@@ -1,0 +1,410 @@
+Two improvements to polish the client-facing experience:
+  1. Replace the plain text footer with a pill-shaped advisor
+     contact card in the preview and PDF
+  2. Add a 12h/24h time format preference to settings, applied
+     everywhere times are displayed
+
+─── PART 1: ADD FIELDS TO PROFILES ──────────────────────────────────────────
+
+  ALTER TABLE profiles
+    ADD COLUMN IF NOT EXISTS website text,
+    ADD COLUMN IF NOT EXISTS time_format text
+      NOT NULL DEFAULT '24h';
+
+Add to shared/schema.ts profiles table:
+  website: text("website"),
+  timeFormat: text("time_format").notNull().default("24h"),
+
+─── PART 2: SETTINGS PAGE — PROFILE FIELDS ──────────────────────────────────
+
+In settings.tsx, add two new fields to the profile form:
+
+WEBSITE field (below phone):
+  <div className="space-y-2">
+    <Label className="text-xs uppercase tracking-wider
+      text-muted-foreground">
+      Website
+    </Label>
+    <Input
+      value={website}
+      onChange={(e) => setWebsite(e.target.value)}
+      placeholder="https://yourtravelagency.com"
+      data-testid="input-website"
+    />
+  </div>
+
+TIME FORMAT field:
+  <div className="space-y-2">
+    <Label className="text-xs uppercase tracking-wider
+      text-muted-foreground">
+      Time Format
+    </Label>
+    <div className="flex items-center rounded-md border
+      border-border overflow-hidden w-fit">
+      <button
+        type="button"
+        onClick={() => setTimeFormat("24h")}
+        className={`px-4 py-1.5 text-sm transition-colors
+          ${timeFormat === "24h"
+            ? "bg-primary text-primary-foreground"
+            : "hover:bg-muted"}`}
+        data-testid="button-time-format-24h"
+      >
+        24h
+      </button>
+      <button
+        type="button"
+        onClick={() => setTimeFormat("12h")}
+        className={`px-4 py-1.5 text-sm transition-colors
+          ${timeFormat === "12h"
+            ? "bg-primary text-primary-foreground"
+            : "hover:bg-muted"}`}
+        data-testid="button-time-format-12h"
+      >
+        12h AM/PM
+      </button>
+    </div>
+    <p className="text-xs text-muted-foreground">
+      Applies to the client preview and PDF
+    </p>
+  </div>
+
+Include website and timeFormat in the update mutation payload.
+Update PATCH /api/profile to accept and save both fields.
+
+─── PART 3: TIME FORMAT UTILITY ─────────────────────────────────────────────
+
+Create: client/src/lib/time-utils.ts
+
+  /**
+   * Format a time string "HH:mm" to either 24h or 12h AM/PM.
+   * Input is always "HH:mm" (24h) as stored in metadata.
+   * timeFormat comes from the advisor's profile preference.
+   */
+  export function formatTime(
+    time: string | null | undefined,
+    timeFormat: "12h" | "24h" = "24h"
+  ): string {
+    if (!time) return "";
+    const [hStr, mStr] = time.split(":");
+    const h = parseInt(hStr);
+    const m = parseInt(mStr);
+    if (isNaN(h) || isNaN(m)) return time;
+
+    if (timeFormat === "24h") {
+      return time; // already in correct format
+    }
+
+    // 12h AM/PM
+    const period = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+  }
+
+  /**
+   * Format a date-fns format string time.
+   * Use this when formatting via date-fns format() calls.
+   */
+  export function timeFormatString(
+    timeFormat: "12h" | "24h"
+  ): string {
+    return timeFormat === "12h" ? "h:mm a" : "HH:mm";
+  }
+
+─── PART 4: PASS timeFormat TO PREVIEW ──────────────────────────────────────
+
+The trip-view page fetches trip data from /api/trip-view/:id.
+The advisor's timeFormat preference needs to reach the client
+preview even when accessed via share token (unauthenticated).
+
+In storage.ts, update getTripFullView to include advisor's
+timeFormat in the advisor object:
+
+  const [adv] = await db.select({
+    fullName: profiles.fullName,
+    email: profiles.email,
+    avatarUrl: profiles.avatarUrl,
+    phone: profiles.phone,
+    website: profiles.website,
+    timeFormat: profiles.timeFormat,  // ← ADD
+  }).from(profiles).where(...);
+
+Update the advisor type to include:
+  timeFormat: string | null;
+
+In trip-view.tsx, extract timeFormat from advisor:
+  const timeFormat = (data.advisor?.timeFormat || "24h")
+    as "12h" | "24h";
+
+Pass timeFormat to all segment card components as a prop.
+
+─── PART 5: APPLY formatTime IN trip-view.tsx ────────────────────────────────
+
+Import formatTime and timeFormatString from
+"@/lib/time-utils".
+
+Replace all raw time displays in trip-view.tsx:
+
+  meta.departureTime → formatTime(meta.departureTime, timeFormat)
+  meta.arrivalTime   → formatTime(meta.arrivalTime, timeFormat)
+  meta.departureTime (charter) → formatTime(...)
+
+For date-fns format() calls using "HH:mm":
+  format(new Date(meta.checkInDateTime),
+    `d MMM, ${timeFormatString(timeFormat)}`)
+  format(new Date(meta.reservationDateTime),
+    timeFormatString(timeFormat))
+  format(new Date(meta.startDateTime),
+    timeFormatString(timeFormat))
+
+Add "local time" label after displayed flight times:
+  <span className="text-xs text-muted-foreground/50 ml-1">
+    local
+  </span>
+
+Apply this label to departure and arrival times on flight
+and charter cards only (hotel/restaurant times are always
+local, no need to label).
+
+─── PART 6: PASS FULL ADVISOR DATA FOR CONTACT CARD ─────────────────────────
+
+The advisor object in getTripFullView currently has:
+  fullName, email, avatarUrl
+
+Add phone and website (if not already done in Part 4):
+  phone: profiles.phone,
+  website: profiles.website,
+
+Update all TypeScript types referencing the advisor shape
+in trip-view.tsx and pdf-generator.tsx to include:
+  phone: string | null;
+  website: string | null;
+  timeFormat: string | null;
+
+─── PART 7: ADVISOR CONTACT CARD COMPONENT ──────────────────────────────────
+
+Create: client/src/components/advisor-contact-card.tsx
+
+Props:
+  advisor: {
+    fullName: string;
+    email: string | null;
+    avatarUrl: string | null;
+    phone: string | null;
+    website: string | null;
+  }
+  organization: { name: string; logoUrl: string | null }
+
+  <div className="flex items-center gap-4 px-6 py-4
+    rounded-2xl border border-border/50 bg-card shadow-sm
+    max-w-lg mx-auto">
+
+    {/* Avatar */}
+    {advisor.avatarUrl ? (
+      <img src={advisor.avatarUrl} alt={advisor.fullName}
+        className="w-14 h-14 rounded-full object-cover
+          ring-2 ring-border/30 shrink-0" />
+    ) : (
+      <div className="w-14 h-14 rounded-full bg-primary/10
+        flex items-center justify-center shrink-0
+        ring-2 ring-border/30">
+        <span className="text-xl font-serif text-primary">
+          {advisor.fullName.charAt(0)}
+        </span>
+      </div>
+    )}
+
+    {/* Info */}
+    <div className="flex-1 min-w-0">
+      <p className="font-serif font-semibold text-base
+        text-foreground">
+        {advisor.fullName}
+      </p>
+      <p className="text-xs text-muted-foreground mb-1.5">
+        {organization.name}
+      </p>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {advisor.email && (
+          <a href={`mailto:${advisor.email}`}
+            className="flex items-center gap-1 text-xs
+              text-muted-foreground hover:text-foreground
+              transition-colors">
+            <Mail className="w-3 h-3" />
+            {advisor.email}
+          </a>
+        )}
+        {advisor.phone && (
+          <a href={`tel:${advisor.phone}`}
+            className="flex items-center gap-1 text-xs
+              text-muted-foreground hover:text-foreground
+              transition-colors">
+            <Phone className="w-3 h-3" />
+            {advisor.phone}
+          </a>
+        )}
+        {advisor.website && (
+          <a href={advisor.website} target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-xs
+              text-muted-foreground hover:text-foreground
+              transition-colors">
+            <Globe className="w-3 h-3" />
+            {advisor.website.replace(/^https?:\/\//, "")}
+          </a>
+        )}
+      </div>
+    </div>
+  </div>
+
+Import Mail, Phone, Globe from lucide-react.
+
+─── PART 8: USE IN TRIP PREVIEW ─────────────────────────────────────────────
+
+In trip-view.tsx, replace the plain footer (lines ~1008-1022):
+
+  import { AdvisorContactCard } from
+    "@/components/advisor-contact-card";
+
+  <footer className="py-12" data-testid="trip-view-footer">
+    {advisor ? (
+      <AdvisorContactCard
+        advisor={advisor}
+        organization={organization}
+      />
+    ) : (
+      <p className="text-center text-sm text-muted-foreground">
+        Prepared by{" "}
+        <span className="font-medium text-foreground">
+          {organization.name}
+        </span>
+      </p>
+    )}
+    <p className="text-center text-xs text-muted-foreground/40
+      tracking-wider uppercase mt-6">
+      Travel Lab
+    </p>
+  </footer>
+
+─── PART 9: ADVISOR CARD IN PDF ─────────────────────────────────────────────
+
+In pdf-generator.tsx, add a dedicated final page after all
+itinerary content. Remove the existing fixed footer text.
+
+Update PdfData advisor type to include phone and website.
+
+  <Page size="A4" style={s.page}>
+    <View style={{
+      flex: 1, alignItems: "center",
+      justifyContent: "center",
+    }}>
+      <View style={{
+        flexDirection: "row", alignItems: "center",
+        gap: 16, padding: 24, borderRadius: 16,
+        border: "1pt solid #e5e7eb",
+        backgroundColor: "#fafafa", maxWidth: 380,
+      }}>
+        {/* Avatar circle — initials in PDF */}
+        <View style={{
+          width: 52, height: 52, borderRadius: 26,
+          backgroundColor: "#f0f0f0",
+          alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+        }}>
+          <Text style={{
+            fontSize: 22, color: "#666",
+            fontFamily: "Times-Roman",
+          }}>
+            {advisor?.fullName?.charAt(0) || "A"}
+          </Text>
+        </View>
+
+        {/* Info */}
+        <View style={{ flex: 1 }}>
+          <Text style={{
+            fontSize: 13, fontFamily: "Times-Roman",
+            color: "#1a1a1a", marginBottom: 2,
+          }}>
+            {advisor?.fullName}
+          </Text>
+          <Text style={{
+            fontSize: 8, color: "#888", marginBottom: 6,
+          }}>
+            {organization.name}
+          </Text>
+          {advisor?.email && (
+            <Text style={{
+              fontSize: 8, color: "#555", marginBottom: 2,
+            }}>
+              ✉  {advisor.email}
+            </Text>
+          )}
+          {advisor?.phone && (
+            <Text style={{
+              fontSize: 8, color: "#555", marginBottom: 2,
+            }}>
+              ✆  {advisor.phone}
+            </Text>
+          )}
+          {advisor?.website && (
+            <Text style={{ fontSize: 8, color: "#555" }}>
+              ⊕  {advisor.website.replace(/^https?:\/\//, "")}
+            </Text>
+          )}
+        </View>
+      </View>
+
+      <Text style={{
+        fontSize: 7, color: "#ccc", marginTop: 24,
+        letterSpacing: 2,
+      }}>
+        TRAVEL LAB
+      </Text>
+    </View>
+  </Page>
+
+─── PART 10: APPLY timeFormat IN PDF ────────────────────────────────────────
+
+In pdf-generator.tsx, the timeFormat preference should apply
+to time displays in the PDF as well.
+
+Pass timeFormat through PdfData:
+  timeFormat: string (from advisor.timeFormat or "24h")
+
+In generateTripPdf, extract:
+  const timeFormat = (data.advisor as any)?.timeFormat || "24h";
+
+In SegmentView, apply formatTime from a server-compatible
+version of the utility. Since pdf-generator runs server-side,
+inline the formatTime logic directly:
+
+  function fmtTime(t: string | null | undefined,
+    tf: string): string {
+    if (!t) return "";
+    const [hStr, mStr] = t.split(":");
+    const h = parseInt(hStr), m = parseInt(mStr);
+    if (isNaN(h) || isNaN(m)) return t || "";
+    if (tf !== "12h") return t;
+    const period = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+  }
+
+Apply fmtTime(meta.departureTime, timeFormat) everywhere
+departure/arrival times are rendered in the PDF.
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+TIME FORMAT:
+1. Settings → switch to "12h AM/PM" → save
+2. Open client preview → flight shows "3:45 PM local" not "15:45"
+3. Hotel check-in shows "2:00 PM" not "14:00"
+4. PDF shows 12h format throughout
+5. Switch back to 24h → preview and PDF revert
+
+ADVISOR CARD:
+6. Settings → add phone and website → save
+7. Open client preview → pill card at bottom shows avatar
+   initial, name, agency, email (clickable), phone, website
+8. PDF last page → styled advisor card with same info
+9. Remove phone/website → those lines omit cleanly
+10. Trip with no advisor assigned → falls back to org name

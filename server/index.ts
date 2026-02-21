@@ -60,6 +60,13 @@ app.use((req, res, next) => {
   next();
 });
 
+if (!process.env.RESEND_API_KEY) {
+  console.warn("[Email] RESEND_API_KEY not set — email sending is disabled");
+}
+if (!process.env.UNSPLASH_ACCESS_KEY) {
+  console.warn("[Photos] UNSPLASH_ACCESS_KEY not set — photo search is disabled");
+}
+
 (async () => {
   await registerRoutes(httpServer, app);
 
