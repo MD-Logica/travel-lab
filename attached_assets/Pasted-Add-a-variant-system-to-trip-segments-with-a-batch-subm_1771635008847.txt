@@ -1,0 +1,527 @@
+Add a variant system to trip segments with a batch-submission
+approval flow, multi-room property grouping for hotels, and
+refundability fields. This is a substantial prompt — implement
+each part in order.
+
+─── PART 1: DATABASE ────────────────────────────────────────────────────────
+
+Run these migrations:
+
+1. segment_variants table:
+   CREATE TABLE IF NOT EXISTS segment_variants (
+     id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+     segment_id varchar NOT NULL
+       REFERENCES trip_segments(id) ON DELETE CASCADE,
+     org_id varchar NOT NULL REFERENCES organizations(id),
+     label text NOT NULL,
+     description text,
+     cost integer,
+     currency text DEFAULT 'USD',
+     price_per_unit integer,
+     quantity integer DEFAULT 1,
+     refundability text DEFAULT 'unknown',
+     refund_deadline timestamp,
+     metadata jsonb,
+     is_selected boolean NOT NULL DEFAULT false,
+     is_submitted boolean NOT NULL DEFAULT false,
+     sort_order integer NOT NULL DEFAULT 0,
+     created_at timestamp DEFAULT now()
+   );
+
+2. Add columns to trip_segments:
+   ALTER TABLE trip_segments
+     ADD COLUMN IF NOT EXISTS has_variants
+       boolean NOT NULL DEFAULT false,
+     ADD COLUMN IF NOT EXISTS quantity integer DEFAULT 1,
+     ADD COLUMN IF NOT EXISTS price_per_unit integer,
+     ADD COLUMN IF NOT EXISTS refundability text
+       DEFAULT 'unknown',
+     ADD COLUMN IF NOT EXISTS refund_deadline timestamp,
+     ADD COLUMN IF NOT EXISTS property_group_id varchar;
+
+   property_group_id: groups hotel segments at the same
+   property (mirrors journeyId pattern for flights)
+
+3. Add variant_selections_submitted to trips table:
+   ALTER TABLE trips
+     ADD COLUMN IF NOT EXISTS selections_submitted_at
+       timestamp;
+
+Add all of the above to shared/schema.ts in Drizzle ORM syntax.
+
+─── PART 2: API ROUTES ──────────────────────────────────────────────────────
+
+  GET /api/segments/:segmentId/variants
+    Returns variants ordered by sort_order
+    Validates segment belongs to req._orgId
+    Public: also accessible with valid ?token= param
+    (check trip's share_token like /api/trip-view does)
+
+  POST /api/segments/:segmentId/variants
+    isAuthenticated + orgMiddleware
+    Creates variant, sets segment.has_variants = true
+
+  PATCH /api/segments/:segmentId/variants/:variantId
+    isAuthenticated + orgMiddleware
+
+  DELETE /api/segments/:segmentId/variants/:variantId
+    isAuthenticated + orgMiddleware
+    If no variants remain: set segment.has_variants = false
+
+  POST /api/segments/:segmentId/variants/:variantId/select
+    PUBLIC — token auth only (no isAuthenticated)
+    Validates ?token= against trip's share_token
+    Validates trip.share_enabled = true
+    Sets is_selected = true on this variant
+    Sets is_selected = false on all other variants of
+    same segment (but preserves is_submitted)
+    Does NOT send email here — email fires on submit
+    Returns updated variants array
+
+  POST /api/trips/:tripId/submit-selections
+    PUBLIC — token auth only
+    Validates ?token= against trip's share_token
+    Collects all is_selected = true variants for this trip
+    Marks them as is_submitted = true
+    Sets trip.selections_submitted_at = now()
+    Sends ONE summary email to advisor via Resend:
+
+      Subject: "[Client name] submitted their selections for
+               [trip title]"
+
+      Body lists each submitted selection:
+        "• [Segment title]: [Variant label]
+            ([price if available])"
+      Footer: "X of Y options selected.
+               [N] options still pending."
+
+    Returns { submitted: count, pending: count }
+
+─── PART 3: REFUNDABILITY IN SEGMENT EDITOR ─────────────────────────────────
+
+Add to HotelFields, FlightFields, ActivityFields in
+segment-editor.tsx. Place after the cost/currency fields:
+
+  <SectionHeading>Cancellation Policy</SectionHeading>
+  <Select
+    value={metadata.refundability || "unknown"}
+    onValueChange={(v) => set("refundability", v)}
+  >
+    <SelectTrigger data-testid="select-refundability">
+      <SelectValue placeholder="Select policy" />
+    </SelectTrigger>
+    <SelectContent>
+      <SelectItem value="unknown">Not specified</SelectItem>
+      <SelectItem value="fully_refundable">
+        ✓ Fully refundable
+      </SelectItem>
+      <SelectItem value="partially_refundable">
+        ~ Partially refundable
+      </SelectItem>
+      <SelectItem value="non_refundable">
+        ✕ Non-refundable
+      </SelectItem>
+    </SelectContent>
+  </Select>
+
+  {(metadata.refundability === "fully_refundable" ||
+    metadata.refundability === "partially_refundable") && (
+    <div>
+      <FieldLabel>Refund deadline</FieldLabel>
+      <Input
+        type="date"
+        value={metadata.refundDeadline?.split("T")[0] || ""}
+        onChange={(e) => set("refundDeadline",
+          e.target.value
+            ? new Date(e.target.value).toISOString()
+            : null)}
+        data-testid="input-refund-deadline"
+      />
+    </div>
+  )}
+
+─── PART 4: QUANTITY + PRICE PER UNIT ───────────────────────────────────────
+
+In HotelFields and FlightFields, add below cost/currency:
+
+  <div className="grid grid-cols-2 gap-3">
+    <div>
+      <FieldLabel>
+        {type === "hotel" ? "Rooms" : "Passengers"}
+      </FieldLabel>
+      <Input
+        type="number" min={1}
+        value={metadata.quantity || 1}
+        onChange={(e) => {
+          const qty = parseInt(e.target.value) || 1;
+          set("quantity", qty);
+          if (metadata.pricePerUnit) {
+            setCost(String(qty * metadata.pricePerUnit));
+          }
+        }}
+        data-testid="input-quantity"
+      />
+    </div>
+    <div>
+      <FieldLabel>Price per unit</FieldLabel>
+      <Input
+        type="number"
+        value={metadata.pricePerUnit || ""}
+        onChange={(e) => {
+          const ppu = parseInt(e.target.value) || 0;
+          set("pricePerUnit", ppu);
+          const qty = metadata.quantity || 1;
+          setCost(String(qty * ppu));
+        }}
+        placeholder="Per person / room"
+        data-testid="input-price-per-unit"
+      />
+    </div>
+  </div>
+  {metadata.quantity > 1 && metadata.pricePerUnit && (
+    <p className="text-xs text-muted-foreground">
+      Total: {formatCurrency(
+        metadata.quantity * metadata.pricePerUnit,
+        currency || "USD"
+      )}
+    </p>
+  )}
+
+─── PART 5: VARIANT EDITOR IN SEGMENT EDITOR ────────────────────────────────
+
+Add a Variants section at the bottom of HotelFields and
+FlightFields. Show it regardless of whether variants exist
+(the "+ Add option" button starts the flow).
+
+  const [variants, setVariants] = useState<any[]>([]);
+
+  On segment load (existingSegment): if segment.has_variants,
+  fetch variants from GET /api/segments/:id/variants and
+  populate local state.
+
+  function addVariant() {
+    setVariants([...variants, {
+      label: "", description: "", cost: null,
+      currency: currency || "USD",
+      pricePerUnit: null, quantity: 1,
+      refundability: "unknown", refundDeadline: null,
+      sortOrder: variants.length,
+    }]);
+  }
+
+  function updateVariant(i: number, field: string, val: any) {
+    setVariants(variants.map((v, idx) =>
+      idx === i ? { ...v, [field]: val } : v));
+  }
+
+  function removeVariant(i: number) {
+    setVariants(variants.filter((_, idx) => idx !== i));
+  }
+
+Display each variant as a bordered card:
+
+  {variants.map((v, i) => (
+    <div key={i} className="rounded-md border border-border/50
+      p-3 space-y-2 bg-muted/20">
+      <div className="flex gap-2">
+        <Input
+          value={v.label}
+          onChange={(e) => updateVariant(i, "label", e.target.value)}
+          placeholder="e.g. Business Class, Junior Suite"
+          className="h-7 text-sm flex-1"
+        />
+        <button onClick={() => removeVariant(i)}
+          className="text-muted-foreground
+            hover:text-destructive shrink-0">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <Input
+        value={v.description || ""}
+        onChange={(e) => updateVariant(i, "description",
+          e.target.value)}
+        placeholder="Description (optional)"
+        className="h-7 text-xs"
+      />
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1">
+            Price
+          </p>
+          <Input type="number" value={v.cost || ""}
+            onChange={(e) => updateVariant(i, "cost",
+              parseInt(e.target.value) || null)}
+            className="h-7 text-xs" />
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1">
+            Qty
+          </p>
+          <Input type="number" min={1}
+            value={v.quantity || 1}
+            onChange={(e) => updateVariant(i, "quantity",
+              parseInt(e.target.value) || 1)}
+            className="h-7 text-xs" />
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1">
+            Policy
+          </p>
+          <Select value={v.refundability || "unknown"}
+            onValueChange={(val) =>
+              updateVariant(i, "refundability", val)}>
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unknown">?</SelectItem>
+              <SelectItem value="fully_refundable">
+                Refundable
+              </SelectItem>
+              <SelectItem value="partially_refundable">
+                Partial
+              </SelectItem>
+              <SelectItem value="non_refundable">
+                Non-refund.
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  ))}
+
+  <Button variant="outline" size="sm" onClick={addVariant}
+    className="w-full mt-1"
+    data-testid="button-add-variant">
+    <Plus className="w-3.5 h-3.5 mr-1.5" />
+    Add option
+  </Button>
+
+On segment save, sync variants:
+  After saving the segment, POST new variants and DELETE
+  removed ones via the variant API routes. Use the returned
+  segment.id for new segments.
+
+─── PART 6: PROPERTY GROUPING FOR HOTELS ────────────────────────────────────
+
+When an advisor adds a second hotel segment on the same day
+with the same hotel name (case-insensitive match on
+meta.hotelName), prompt them:
+
+  "This looks like another room at [Hotel Name].
+   Group with the existing booking?"
+  [Group them] [Keep separate]
+
+If "Group them": generate a propertyGroupId (crypto.randomUUID())
+and save it on both segments.
+
+In the segment editor for hotel type, also show a manual
+"Link to property group" option in an advanced section —
+a dropdown of existing hotel segments in the same version
+that have the same hotel name.
+
+IN ITINERARY BUILDER (trip-edit.tsx):
+Apply the same grouping logic used for journeys but for
+propertyGroupId on hotel segments. Render a
+PropertyGroupCard component for grouped hotels showing:
+
+  ┌─────────────────────────────────────────────┐
+  │ 🏨 Cipriani Venice                          │
+  │    Check-in Apr 3 · Check-out Apr 7 · 4 nights│
+  ├─────────────────────────────────────────────┤
+  │  Deluxe Room · 2 rooms · $450/night         │
+  │  Non-refundable                             │
+  ├─────────────────────────────────────────────┤
+  │  Junior Suite · 1 room · $950/night         │
+  │  Refundable until Mar 15                    │
+  └─────────────────────────────────────────────┘
+  Total: $3,550
+
+IN CLIENT PREVIEW (trip-view.tsx):
+Apply the same propertyGroupId grouping logic as journeyId.
+Render grouped rooms as a single hotel card with all room
+types listed and a combined total.
+
+─── PART 7: REFUNDABILITY BADGES IN BUILDER ─────────────────────────────────
+
+In trip-edit.tsx segment cards, show refundability badge
+when set:
+
+  non_refundable:
+    "⚠ Non-refundable" — red badge
+  partially_refundable:
+    "~ Partial refund [until date]" — amber badge
+  fully_refundable:
+    "✓ Refundable [until date]" — emerald badge
+
+Also show "X options" badge when has_variants is true:
+  <Badge variant="secondary" className="text-[10px]">
+    {variantCount} options
+  </Badge>
+
+─── PART 8: VARIANT DISPLAY IN CLIENT PREVIEW ───────────────────────────────
+
+For each segment with has_variants = true in trip-view.tsx,
+fetch variants (passing token) and show selectable cards.
+
+Variants are selectable but NOT submitted individually.
+Selecting a variant updates local state and calls
+POST .../select to save the selection server-side, but
+NO email fires at this point.
+
+  const [localSelections, setLocalSelections] = useState
+    Record<string, string>  // segmentId → variantId
+  >({});
+
+  async function selectVariant(segmentId: string,
+    variantId: string) {
+    setLocalSelections(prev =>
+      ({ ...prev, [segmentId]: variantId }));
+    await fetch(
+      `/api/segments/${segmentId}/variants/${variantId}/select`
+      + `?token=${token}`, { method: "POST" });
+  }
+
+Variant card design (selectable, not submitted yet):
+  - Unselected: white/card background, hover border
+  - Selected: primary/5 background, ring-1 ring-primary,
+    checkmark icon top-right
+  - Show price, description, refundability on each card
+
+Show refundability prominently on variants:
+  non_refundable: red "⚠ Non-refundable" line
+  fully_refundable: green "✓ Refundable until [date]"
+  partially_refundable: amber "~ Partial refund until [date]"
+
+─── PART 9: FLOATING SUBMIT BUTTON & SUMMARY SHEET ──────────────────────────
+
+Count total segments with has_variants = true across the
+whole trip as totalVariantSegments.
+
+Count how many have a selection saved as selectedCount.
+
+Show a floating action bar at the bottom of the preview
+page once selectedCount >= 1:
+
+  <div className="fixed bottom-6 left-1/2 -translate-x-1/2
+    z-50 flex items-center gap-3 px-5 py-3 rounded-full
+    bg-foreground text-background shadow-2xl
+    border border-border/20">
+    <span className="text-sm font-medium">
+      {selectedCount} of {totalVariantSegments} selected
+    </span>
+    <Button size="sm"
+      className="rounded-full bg-background text-foreground
+        hover:bg-background/90"
+      onClick={() => setSubmitSheetOpen(true)}
+      data-testid="button-review-selections">
+      Review & Submit →
+    </Button>
+  </div>
+
+SUBMIT SHEET (Sheet from bottom):
+  Title: "Your Selections"
+  Subtitle: "Review and submit your choices to your advisor"
+
+  For each segment with has_variants:
+    Show segment name (hotel name / flight route)
+    Show selected variant (or "Not yet selected" in muted text)
+    Show selected variant price
+
+  Summary line at bottom:
+    "X of Y options selected"
+    If selectedCount < totalVariantSegments:
+      <p className="text-xs text-muted-foreground">
+        You can submit now and return to select the remaining
+        options later.
+      </p>
+
+  Submit button (only active if selectedCount >= 1):
+    "Submit [selectedCount] selection[s]"
+    onClick: POST /api/trips/:tripId/submit-selections
+             ?token=[token]
+
+  On success:
+    - Show success state in sheet:
+      "✓ Selections submitted! Your advisor has been notified."
+    - Close sheet after 2 seconds
+    - Float bar updates: "Submitted · [date]"
+
+  If some still pending after submit, float bar changes to:
+    "2 submitted · 1 still pending"
+    with a smaller "Submit remaining" link
+
+  If trip.selections_submitted_at is set on load:
+    Show "Last submitted [date]" in float bar instead of
+    the initial CTA.
+
+─── PART 10: VARIANTS IN PDF ────────────────────────────────────────────────
+
+Pass variantMap (Map<segmentId, variant[]>) to generateTripPdf.
+
+Build variantMap in the PDF export route:
+  For each segment with has_variants = true, fetch variants
+  and add to the map.
+
+In pdf-generator.tsx SegmentView:
+  If segment has variants and NO variant is is_submitted:
+    Show all variants as options
+  If at least one variant is_submitted:
+    Show ONLY the submitted variant, labeled "Selected:"
+    Hide all others
+
+─── PART 11: REFUNDABILITY IN CLIENT PREVIEW ────────────────────────────────
+
+On each segment card in trip-view.tsx (non-variant segments),
+show refundability when set:
+
+  {segment.refundability === "non_refundable" && (
+    <div className="flex items-center gap-1 mt-2 text-xs
+      text-red-600 dark:text-red-400">
+      <AlertTriangle className="w-3 h-3" />
+      Non-refundable rate
+    </div>
+  )}
+  {segment.refundability !== "non_refundable" &&
+   segment.refundability !== "unknown" &&
+   segment.refundDeadline && (
+    <p className="text-xs text-emerald-600 mt-1">
+      {segment.refundability === "fully_refundable"
+        ? "✓ Fully refundable"
+        : "~ Partially refundable"}
+      {" "}until{" "}
+      {format(new Date(segment.refundDeadline),
+        "MMMM d, yyyy")}
+    </p>
+  )}
+
+─── VERIFY ──────────────────────────────────────────────────────────────────
+
+VARIANTS:
+1. Hotel segment editor → add two variants: "Deluxe $450"
+   (non-refundable) and "Junior Suite $750" (refundable
+   until Mar 15)
+2. Save → segment card shows "2 options" badge
+3. Open client preview via share link
+4. Both variants show as selectable cards
+5. Non-refundable variant shows red warning
+6. Click Deluxe variant → checkmark appears, no email sent
+7. Float bar appears: "1 of 1 selected → Review & Submit"
+8. Click Review & Submit → sheet shows selection summary
+9. Click Submit → advisor receives ONE summary email
+10. Float bar updates: "Submitted"
+
+MULTI-ROOM:
+11. Add second hotel segment same day, same hotel name
+12. Prompt appears to group them
+13. Group → PropertyGroupCard shows both rooms under one header
+14. Client preview shows grouped hotel card with combined total
+
+REFUNDABILITY:
+15. Set flight segment as non-refundable
+16. Builder shows red "Non-refundable" badge on card
+17. Client preview shows "⚠ Non-refundable rate" on flight card
+
+QUANTITY:
+18. Set flight to 2 passengers, $1,200/person → total $2,400

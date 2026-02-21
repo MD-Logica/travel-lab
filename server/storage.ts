@@ -1,7 +1,7 @@
 import {
   organizations, profiles, clients, trips, tripVersions, tripSegments, tripDocuments,
   flightTracking, notifications, segmentTemplates, conversations, messages, pushSubscriptions,
-  invitations, clientCollaborators, clientRelationships,
+  invitations, clientCollaborators, clientRelationships, segmentVariants,
   type Organization, type InsertOrganization,
   type Profile, type InsertProfile,
   type Client, type InsertClient,
@@ -17,6 +17,7 @@ import {
   type PushSubscription,
   type Invitation, type InsertInvitation,
   type ClientCollaborator, type InsertClientCollaborator,
+  type SegmentVariant, type InsertSegmentVariant,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, count, sql, or, ilike, desc, inArray } from "drizzle-orm";
@@ -136,6 +137,13 @@ export interface IStorage {
   getClientCompanions(clientId: string, orgId: string): Promise<{ id: string; companion: Client; relationshipLabel: string | null }[]>;
   createClientRelationship(data: { orgId: string; clientIdA: string; clientIdB: string; relationshipLabel: string | null }): Promise<any>;
   deleteClientRelationship(id: string, orgId: string): Promise<boolean>;
+
+  getVariantsBySegment(segmentId: string, orgId: string): Promise<SegmentVariant[]>;
+  createVariant(variant: InsertSegmentVariant): Promise<SegmentVariant>;
+  updateVariant(id: string, orgId: string, data: Partial<InsertSegmentVariant>): Promise<SegmentVariant | undefined>;
+  deleteVariant(id: string, orgId: string): Promise<void>;
+  selectVariant(segmentId: string, variantId: string): Promise<SegmentVariant[]>;
+  submitVariantsForTrip(tripId: string): Promise<{ submitted: number; pending: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1183,6 +1191,85 @@ export class DatabaseStorage implements IStorage {
     const result = await db.delete(clientRelationships)
       .where(and(eq(clientRelationships.id, id), eq(clientRelationships.orgId, orgId)));
     return (result.rowCount ?? 0) > 0;
+  }
+
+  async getVariantsBySegment(segmentId: string, orgId: string): Promise<SegmentVariant[]> {
+    return db.select().from(segmentVariants)
+      .where(and(eq(segmentVariants.segmentId, segmentId), eq(segmentVariants.orgId, orgId)))
+      .orderBy(segmentVariants.sortOrder);
+  }
+
+  async createVariant(variant: InsertSegmentVariant): Promise<SegmentVariant> {
+    const [result] = await db.insert(segmentVariants).values(variant).returning();
+    await db.update(tripSegments).set({ hasVariants: true }).where(eq(tripSegments.id, variant.segmentId));
+    return result;
+  }
+
+  async updateVariant(id: string, orgId: string, data: Partial<InsertSegmentVariant>): Promise<SegmentVariant | undefined> {
+    const [result] = await db.update(segmentVariants).set(data)
+      .where(and(eq(segmentVariants.id, id), eq(segmentVariants.orgId, orgId)))
+      .returning();
+    return result;
+  }
+
+  async deleteVariant(id: string, orgId: string): Promise<void> {
+    const [variant] = await db.select({ segmentId: segmentVariants.segmentId })
+      .from(segmentVariants)
+      .where(and(eq(segmentVariants.id, id), eq(segmentVariants.orgId, orgId)));
+    
+    await db.delete(segmentVariants)
+      .where(and(eq(segmentVariants.id, id), eq(segmentVariants.orgId, orgId)));
+    
+    if (variant) {
+      const remaining = await db.select({ cnt: count() })
+        .from(segmentVariants)
+        .where(eq(segmentVariants.segmentId, variant.segmentId));
+      if (!remaining[0]?.cnt || remaining[0].cnt === 0) {
+        await db.update(tripSegments).set({ hasVariants: false })
+          .where(eq(tripSegments.id, variant.segmentId));
+      }
+    }
+  }
+
+  async selectVariant(segmentId: string, variantId: string): Promise<SegmentVariant[]> {
+    await db.update(segmentVariants).set({ isSelected: false })
+      .where(eq(segmentVariants.segmentId, segmentId));
+    await db.update(segmentVariants).set({ isSelected: true })
+      .where(eq(segmentVariants.id, variantId));
+    return db.select().from(segmentVariants)
+      .where(eq(segmentVariants.segmentId, segmentId))
+      .orderBy(segmentVariants.sortOrder);
+  }
+
+  async submitVariantsForTrip(tripId: string): Promise<{ submitted: number; pending: number }> {
+    const segs = await db.select({ id: tripSegments.id })
+      .from(tripSegments)
+      .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
+    
+    if (segs.length === 0) return { submitted: 0, pending: 0 };
+    
+    const segIds = segs.map(s => s.id);
+    
+    await db.update(segmentVariants).set({ isSubmitted: true })
+      .where(and(
+        inArray(segmentVariants.segmentId, segIds),
+        eq(segmentVariants.isSelected, true)
+      ));
+    
+    const allVariants = await db.select({
+      segmentId: segmentVariants.segmentId,
+      isSelected: segmentVariants.isSelected,
+      isSubmitted: segmentVariants.isSubmitted,
+    }).from(segmentVariants).where(inArray(segmentVariants.segmentId, segIds));
+    
+    const submittedSegIds = new Set(allVariants.filter(v => v.isSubmitted).map(v => v.segmentId));
+    const submitted = submittedSegIds.size;
+    const pending = segs.length - submitted;
+    
+    await db.update(trips).set({ selectionsSubmittedAt: new Date() })
+      .where(eq(trips.id, tripId));
+    
+    return { submitted, pending };
   }
 }
 

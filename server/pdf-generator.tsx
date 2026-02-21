@@ -1,8 +1,10 @@
 import React from "react";
 import ReactPDF, { Document, Page, Text, View, Image, StyleSheet, Font } from "@react-pdf/renderer";
-import type { Trip, TripVersion, TripSegment } from "@shared/schema";
-import { formatDestinations } from "@shared/schema";
+import type { Trip, TripVersion, TripSegment, SegmentVariant } from "@shared/schema";
+import { formatDestinations, segmentVariants } from "@shared/schema";
 import { differenceInMinutes, parseISO } from "date-fns";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
 
 Font.register({
   family: "Serif",
@@ -63,6 +65,13 @@ const s = StyleSheet.create({
   segmentDetail: { fontSize: 9, color: colors.muted, marginBottom: 1.5 },
   segmentConfirmation: { fontSize: 9, fontWeight: 600, color: colors.primary, marginTop: 3 },
   segmentNotes: { fontSize: 9, color: colors.muted, fontStyle: "italic", marginTop: 3 },
+  variantBox: { marginTop: 6, padding: 6, backgroundColor: colors.white, borderRadius: 2, borderWidth: 0.5, borderColor: colors.border },
+  variantLabel: { fontSize: 8, fontWeight: 600, marginBottom: 2 },
+  variantDetail: { fontSize: 8, color: colors.muted, marginBottom: 1 },
+  variantHeader: { fontSize: 8, fontWeight: 600, color: colors.primary, marginBottom: 3, textTransform: "uppercase" as const, letterSpacing: 1 },
+  refundLine: { fontSize: 8, color: colors.muted, marginTop: 2 },
+  propertyGroupHeader: { fontFamily: "Serif", fontSize: 13, fontWeight: 700, color: colors.hotel, marginBottom: 4, marginTop: 8 },
+  propertyGroupTotal: { fontSize: 10, fontWeight: 600, color: colors.text, marginTop: 4, textAlign: "right" as const },
   footer: { position: "absolute", bottom: 25, left: 40, right: 40, textAlign: "center", fontSize: 7, color: colors.muted },
 });
 
@@ -136,7 +145,53 @@ async function resolveSegmentPhotos(segments: TripSegment[]): Promise<Map<string
 
 const bookingClassLabels: Record<string, string> = { first: "First", business: "Business", premium_economy: "Premium Economy", economy: "Economy" };
 
-function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h" }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean; timeFormat?: string }) {
+function formatRefundability(refundability: string | null | undefined, refundDeadline: string | Date | null | undefined): string | null {
+  if (!refundability || refundability === "unknown") return null;
+  if (refundability === "non_refundable" || refundability === "nonrefundable") return "Non-refundable";
+  const deadlineStr = refundDeadline ? formatDate(refundDeadline) : "";
+  if (refundability === "refundable") return deadlineStr ? `Refundable until ${deadlineStr}` : "Refundable";
+  if (refundability === "partial" || refundability === "partially_refundable") return deadlineStr ? `Partial refund until ${deadlineStr}` : "Partial refund available";
+  return null;
+}
+
+function VariantDisplay({ variants, showPricing }: { variants: SegmentVariant[]; showPricing: boolean }) {
+  if (!variants || variants.length === 0) return null;
+  const submittedVariant = variants.find(v => v.isSubmitted);
+
+  if (submittedVariant) {
+    const refundText = formatRefundability(submittedVariant.refundability, submittedVariant.refundDeadline);
+    return (
+      <View style={s.variantBox}>
+        <Text style={s.variantHeader}>Selected:</Text>
+        <Text style={s.variantLabel}>{submittedVariant.label}</Text>
+        {showPricing && submittedVariant.cost != null && submittedVariant.cost > 0 && (
+          <Text style={s.variantDetail}>{formatCurrency(submittedVariant.cost, submittedVariant.currency || "USD")}</Text>
+        )}
+        {refundText && <Text style={s.variantDetail}>{refundText}</Text>}
+      </View>
+    );
+  }
+
+  return (
+    <View style={s.variantBox}>
+      <Text style={s.variantHeader}>Options:</Text>
+      {variants.map((v) => {
+        const refundText = formatRefundability(v.refundability, v.refundDeadline);
+        return (
+          <View key={v.id} style={{ marginBottom: 3 }}>
+            <Text style={s.variantLabel}>{v.label}</Text>
+            {showPricing && v.cost != null && v.cost > 0 && (
+              <Text style={s.variantDetail}>{formatCurrency(v.cost, v.currency || "USD")}</Text>
+            )}
+            {refundText && <Text style={s.variantDetail}>{refundText}</Text>}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h", variants }: { segment: TripSegment; photos?: ResolvedPhoto[]; showPricing?: boolean; timeFormat?: string; variants?: SegmentVariant[] }) {
   const meta = (segment.metadata || {}) as Record<string, any>;
   const typeColor = getSegmentColor(segment.type);
   const details: string[] = [];
@@ -222,12 +277,22 @@ function SegmentView({ segment, photos, showPricing = true, timeFormat = "24h" }
         <Text style={s.segmentDetail}>Cost: {formatCurrency(segment.cost, segment.currency || "USD")}</Text>
       ) : null}
       {segment.notes ? <Text style={s.segmentNotes}>{segment.notes}</Text> : null}
+      {(() => {
+        const refundText = formatRefundability(
+          meta.refundability || segment.refundability,
+          meta.refundDeadline || segment.refundDeadline
+        );
+        return refundText ? <Text style={s.refundLine}>{refundText}</Text> : null;
+      })()}
       {photos && photos.length > 0 ? (
         <View style={{ flexDirection: "row", gap: 4, marginTop: 6 }}>
           {photos.map((p, i) => (
             <Image key={i} src={p.dataUri} style={{ width: 60, height: 60, borderRadius: 3 }} />
           ))}
         </View>
+      ) : null}
+      {segment.hasVariants && variants && variants.length > 0 ? (
+        <VariantDisplay variants={variants} showPricing={showPricing} />
       ) : null}
     </View>
   );
@@ -353,7 +418,26 @@ function fmtTime(t: string | null | undefined, tf: string): string {
   return `${h12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<string, ResolvedPhoto[]> }) {
+function PropertyGroupView({ groupSegments, showPricing, timeFormat, photoMap, variantMap }: { groupSegments: TripSegment[]; showPricing: boolean; timeFormat: string; photoMap: Map<string, ResolvedPhoto[]>; variantMap: Map<string, SegmentVariant[]> }) {
+  const firstMeta = (groupSegments[0].metadata || {}) as Record<string, any>;
+  const hotelName = firstMeta.hotelName || groupSegments[0].title || "Hotel";
+  const combinedTotal = groupSegments.reduce((sum, seg) => sum + (seg.cost || 0), 0);
+  const currency = groupSegments.find(seg => seg.currency)?.currency || "USD";
+
+  return (
+    <View style={{ marginBottom: 8 }}>
+      <Text style={s.propertyGroupHeader}>{hotelName}</Text>
+      {groupSegments.map((seg) => (
+        <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} />
+      ))}
+      {showPricing && combinedTotal > 0 && (
+        <Text style={s.propertyGroupTotal}>Property Total: {formatCurrency(combinedTotal, currency)}</Text>
+      )}
+    </View>
+  );
+}
+
+function TripPdfDocument({ data, photoMap, variantMap }: { data: PdfData; photoMap: Map<string, ResolvedPhoto[]>; variantMap: Map<string, SegmentVariant[]> }) {
   const { trip, organization, advisor, client, version, segments } = data;
   const showPricing = version.showPricing ?? true;
   const timeFormat = advisor?.timeFormat || "24h";
@@ -398,12 +482,24 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
           return (
             <View key={dayNum}>
               <Text style={s.dayHeader}>{dayLabel}</Text>
-              {renderItems.map((item) => {
-                if (item.kind === "journey") {
-                  return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
-                }
-                return <SegmentView key={item.segment.id} segment={item.segment} photos={photoMap.get(item.segment.id)} showPricing={showPricing} timeFormat={timeFormat} />;
-              })}
+              {(() => {
+                const seenPropertyGroups = new Set<string>();
+                return renderItems.map((item) => {
+                  if (item.kind === "journey") {
+                    return <JourneyPdfView key={`j-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
+                  }
+                  const seg = item.segment;
+                  if (seg.propertyGroupId && seg.type === "hotel") {
+                    if (seenPropertyGroups.has(seg.propertyGroupId)) return null;
+                    seenPropertyGroups.add(seg.propertyGroupId);
+                    const groupSegs = daySegments.filter(ds => ds.propertyGroupId === seg.propertyGroupId);
+                    if (groupSegs.length > 1) {
+                      return <PropertyGroupView key={`pg-${seg.propertyGroupId}`} groupSegments={groupSegs} showPricing={showPricing} timeFormat={timeFormat} photoMap={photoMap} variantMap={variantMap} />;
+                    }
+                  }
+                  return <SegmentView key={seg.id} segment={seg} photos={photoMap.get(seg.id)} showPricing={showPricing} timeFormat={timeFormat} variants={variantMap.get(seg.id)} />;
+                });
+              })()}
             </View>
           );
         })}
@@ -493,17 +589,42 @@ function TripPdfDocument({ data, photoMap }: { data: PdfData; photoMap: Map<stri
   );
 }
 
+async function resolveVariants(segments: TripSegment[]): Promise<Map<string, SegmentVariant[]>> {
+  const variantMap = new Map<string, SegmentVariant[]>();
+  const variantSegments = segments.filter(seg => seg.hasVariants);
+  if (variantSegments.length === 0) return variantMap;
+
+  const tasks = variantSegments.map(async (seg) => {
+    try {
+      const variants = await db.select().from(segmentVariants).where(eq(segmentVariants.segmentId, seg.id));
+      if (variants.length > 0) {
+        variants.sort((a, b) => a.sortOrder - b.sortOrder);
+        variantMap.set(seg.id, variants);
+      }
+    } catch (err) {
+      console.warn(`[PDF] Failed to fetch variants for segment ${seg.id}:`, err);
+    }
+  });
+
+  await Promise.all(tasks);
+  return variantMap;
+}
+
 export async function generateTripPdf(data: PdfData): Promise<NodeJS.ReadableStream> {
   if (!data.segments) data.segments = [];
   if (!data.version) throw new Error("No version provided for PDF generation");
   if (!data.trip) throw new Error("No trip provided for PDF generation");
 
   let photoMap = new Map<string, ResolvedPhoto[]>();
+  let variantMap = new Map<string, SegmentVariant[]>();
   try {
-    photoMap = await resolveSegmentPhotos(data.segments);
+    [photoMap, variantMap] = await Promise.all([
+      resolveSegmentPhotos(data.segments),
+      resolveVariants(data.segments),
+    ]);
   } catch (err) {
-    console.warn("[PDF] Failed to resolve segment photos:", err);
+    console.warn("[PDF] Failed to resolve photos/variants:", err);
   }
 
-  return ReactPDF.renderToStream(<TripPdfDocument data={data} photoMap={photoMap} />);
+  return ReactPDF.renderToStream(<TripPdfDocument data={data} photoMap={photoMap} variantMap={variantMap} />);
 }

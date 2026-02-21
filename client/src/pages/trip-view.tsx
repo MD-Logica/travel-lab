@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { formatDestinations } from "@shared/schema";
@@ -8,13 +8,16 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
+} from "@/components/ui/sheet";
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   Plane, Ship, Hotel, Car, UtensilsCrossed, Activity, StickyNote,
   Clock, MapPin, Hash, ChevronDown, Calendar, Download, Star,
   Info, Lightbulb, AlertTriangle, ShieldAlert, Users,
-  ArrowRight, FileDown, CalendarPlus, Diamond,
+  ArrowRight, FileDown, CalendarPlus, Diamond, CheckCircle, Send,
 } from "lucide-react";
 import type { Trip, TripVersion, TripSegment } from "@shared/schema";
 import { format, differenceInDays, isWithinInterval, isAfter, isBefore } from "date-fns";
@@ -576,12 +579,15 @@ function JourneyViewCard({ legs, showPricing, timeFormat = "24h" }: { legs: Trip
 
 type ViewDayRenderItem =
   | { kind: "segment"; segment: TripSegment }
-  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] }
+  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] };
 
 function buildViewDayRenderItems(daySegments: TripSegment[]): ViewDayRenderItem[] {
   const items: ViewDayRenderItem[] = [];
   const seenJourneyIds = new Set<string>();
+  const seenPropertyGroupIds = new Set<string>();
   const journeyGroups = new Map<string, TripSegment[]>();
+  const propertyGroups = new Map<string, TripSegment[]>();
 
   for (const seg of daySegments) {
     if (seg.journeyId) {
@@ -589,6 +595,12 @@ function buildViewDayRenderItems(daySegments: TripSegment[]): ViewDayRenderItem[
         journeyGroups.set(seg.journeyId, []);
       }
       journeyGroups.get(seg.journeyId)!.push(seg);
+    }
+    if (seg.propertyGroupId && seg.type === "hotel") {
+      if (!propertyGroups.has(seg.propertyGroupId)) {
+        propertyGroups.set(seg.propertyGroupId, []);
+      }
+      propertyGroups.get(seg.propertyGroupId)!.push(seg);
     }
   }
 
@@ -603,6 +615,12 @@ function buildViewDayRenderItems(daySegments: TripSegment[]): ViewDayRenderItem[
           return aLeg - bLeg;
         });
         items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else if (seg.propertyGroupId && seg.type === "hotel" && propertyGroups.get(seg.propertyGroupId)!.length > 1) {
+      if (!seenPropertyGroupIds.has(seg.propertyGroupId)) {
+        seenPropertyGroupIds.add(seg.propertyGroupId);
+        const rooms = propertyGroups.get(seg.propertyGroupId)!;
+        items.push({ kind: "propertyGroup", propertyGroupId: seg.propertyGroupId, rooms });
       }
     } else {
       items.push({ kind: "segment", segment: seg });
@@ -619,6 +637,104 @@ function formatViewCurrency(amount: number, currency: string = "USD"): string {
   }).format(amount);
 }
 
+function RefundabilityLabel({ segment }: { segment: TripSegment }) {
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const refundability = meta.refundability;
+  const refundDeadline = meta.refundDeadline;
+  if (!refundability || refundability === "unknown") return null;
+
+  if (refundability === "non_refundable") {
+    return <span className="text-[11px] text-red-600 dark:text-red-400" data-testid={`refund-status-${segment.id}`}>Non-refundable</span>;
+  }
+  if (refundability === "fully_refundable") {
+    return (
+      <span className="text-[11px] text-emerald-600 dark:text-emerald-400" data-testid={`refund-status-${segment.id}`}>
+        Refundable{refundDeadline ? ` until ${format(new Date(refundDeadline), "d MMM yyyy")}` : ""}
+      </span>
+    );
+  }
+  if (refundability === "partially_refundable") {
+    return (
+      <span className="text-[11px] text-amber-600 dark:text-amber-400" data-testid={`refund-status-${segment.id}`}>
+        Partial refund{refundDeadline ? ` until ${format(new Date(refundDeadline), "d MMM yyyy")}` : ""}
+      </span>
+    );
+  }
+  return null;
+}
+
+function PropertyGroupViewCard({ rooms, showPricing, timeFormat = "24h" }: { rooms: TripSegment[]; showPricing?: boolean; timeFormat?: "12h" | "24h" }) {
+  const firstRoom = rooms[0];
+  const firstMeta = (firstRoom.metadata || {}) as Record<string, any>;
+  const hotelName = firstMeta.hotelName || firstRoom.title || "Hotel";
+
+  const checkInDateTime = firstMeta.checkInDateTime;
+  const lastMeta = (rooms[rooms.length - 1].metadata || {}) as Record<string, any>;
+  const checkOutDateTime = lastMeta.checkOutDateTime || firstMeta.checkOutDateTime;
+
+  const totalCost = rooms.reduce((sum, r) => sum + (r.cost || 0), 0);
+  const currency = rooms.find(r => r.currency)?.currency || "USD";
+
+  return (
+    <div className="rounded-md border border-border/60 overflow-hidden" data-testid={`view-property-group-${firstRoom.propertyGroupId}`}>
+      <div className="flex items-stretch">
+        <div className="w-1.5 bg-amber-500 shrink-0" />
+        <div className="flex-1 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-amber-50 dark:bg-amber-950/40">
+              <Hotel className="w-3.5 h-3.5 text-amber-600" strokeWidth={1.5} />
+            </div>
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Hotel</span>
+            <Badge variant="outline" className="text-[10px]">
+              {rooms.length} room{rooms.length > 1 ? "s" : ""}
+            </Badge>
+          </div>
+          <p className="text-lg font-serif font-semibold">{hotelName}</p>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground mt-2">
+            {checkInDateTime && (
+              <span>Check-in: {format(new Date(checkInDateTime), `d MMM, ${timeFormatString(timeFormat)}`)}</span>
+            )}
+            {checkOutDateTime && (
+              <span>Check-out: {format(new Date(checkOutDateTime), `d MMM, ${timeFormatString(timeFormat)}`)}</span>
+            )}
+          </div>
+          <div className="space-y-0 border-l-2 border-amber-200/60 dark:border-amber-800/40 ml-3 pl-3 mt-3">
+            {rooms.map((room) => {
+              const meta = (room.metadata || {}) as Record<string, any>;
+              const roomType = meta.roomType || room.title || "Room";
+              const qty = room.quantity || 1;
+              return (
+                <div key={room.id} className="py-2" data-testid={`view-property-room-${room.id}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-sm font-medium">{roomType}</span>
+                      {qty > 1 && <span className="text-xs text-muted-foreground ml-1.5">x{qty}</span>}
+                    </div>
+                    {showPricing && room.cost != null && room.cost > 0 && (
+                      <span className="text-xs text-muted-foreground shrink-0">{formatViewCurrency(room.cost, room.currency || currency)}</span>
+                    )}
+                  </div>
+                  {meta.pricePerUnit != null && meta.pricePerUnit > 0 && (
+                    <p className="text-[11px] text-muted-foreground/70 mt-0.5">{formatViewCurrency(meta.pricePerUnit, room.currency || currency)} / night</p>
+                  )}
+                  <RefundabilityLabel segment={room} />
+                </div>
+              );
+            })}
+          </div>
+          {showPricing && totalCost > 0 && (
+            <div className="flex justify-end mt-2 pt-2 border-t border-border/30">
+              <span className="text-xs text-muted-foreground" data-testid={`view-property-group-cost-${firstRoom.propertyGroupId}`}>
+                {formatViewCurrency(totalCost, currency)}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SegmentView({ segment, showPricing, timeFormat = "24h" }: { segment: TripSegment; showPricing?: boolean; timeFormat?: "12h" | "24h" }) {
   const card = (() => {
     switch (segment.type) {
@@ -633,20 +749,89 @@ function SegmentView({ segment, showPricing, timeFormat = "24h" }: { segment: Tr
     }
   })();
 
-  if (showPricing && segment.cost != null && segment.cost > 0) {
-    return (
-      <div>
-        {card}
-        <div className="flex justify-end mt-1 mr-1">
-          <span className="text-xs text-muted-foreground" data-testid={`view-segment-cost-${segment.id}`}>
-            {formatViewCurrency(segment.cost, segment.currency || "USD")}
-          </span>
-        </div>
-      </div>
-    );
-  }
+  const hasCost = showPricing && segment.cost != null && segment.cost > 0;
+  const meta = (segment.metadata || {}) as Record<string, any>;
+  const hasRefundInfo = meta.refundability && meta.refundability !== "unknown";
 
-  return card;
+  if (!hasCost && !hasRefundInfo) return card;
+
+  return (
+    <div>
+      {card}
+      <div className="flex items-center justify-between mt-1 mx-1 gap-2 flex-wrap">
+        <RefundabilityLabel segment={segment} />
+        {hasCost && (
+          <span className="text-xs text-muted-foreground ml-auto" data-testid={`view-segment-cost-${segment.id}`}>
+            {formatViewCurrency(segment.cost!, segment.currency || "USD")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function VariantCards({
+  segment,
+  variants,
+  selectedVariantId,
+  onSelect,
+}: {
+  segment: TripSegment;
+  variants: any[];
+  selectedVariantId?: string;
+  onSelect: (segmentId: string, variantId: string) => void;
+}) {
+  return (
+    <div className="ml-4 pl-4 border-l-2 border-primary/20 space-y-2" data-testid={`variant-list-${segment.id}`}>
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">Choose an option</p>
+      {variants.map((v: any) => {
+        const isSelected = selectedVariantId === v.id;
+        return (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => onSelect(segment.id, v.id)}
+            className={`w-full text-left rounded-md border p-3 transition-all relative ${
+              isSelected
+                ? "bg-primary/5 ring-1 ring-primary border-primary/30"
+                : "bg-card border-border/60 hover:border-primary/40"
+            }`}
+            data-testid={`variant-card-${v.id}`}
+          >
+            {isSelected && (
+              <div className="absolute top-2 right-2">
+                <CheckCircle className="w-4 h-4 text-primary" />
+              </div>
+            )}
+            <p className="text-sm font-medium pr-6">{v.label}</p>
+            {v.description && (
+              <p className="text-xs text-muted-foreground mt-0.5">{v.description}</p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+              {v.cost != null && v.cost > 0 && (
+                <span className="text-xs font-medium">
+                  {formatViewCurrency(v.cost, v.currency || "USD")}
+                </span>
+              )}
+              {v.refundability === "non_refundable" && (
+                <span className="text-[11px] text-red-600 dark:text-red-400">Non-refundable</span>
+              )}
+              {v.refundability === "fully_refundable" && (
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                  Refundable{v.refundDeadline ? ` until ${format(new Date(v.refundDeadline), "d MMM yyyy")}` : ""}
+                </span>
+              )}
+              {v.refundability === "partially_refundable" && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Partial refund{v.refundDeadline ? ` until ${format(new Date(v.refundDeadline), "d MMM yyyy")}` : ""}
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 function DayAccordion({
@@ -656,6 +841,10 @@ function DayAccordion({
   defaultOpen,
   showPricing,
   timeFormat = "24h",
+  token,
+  variantMap,
+  localSelections,
+  onSelectVariant,
 }: {
   dayNumber: number;
   segments: TripSegment[];
@@ -663,6 +852,10 @@ function DayAccordion({
   defaultOpen: boolean;
   showPricing?: boolean;
   timeFormat?: "12h" | "24h";
+  token?: string;
+  variantMap?: Record<string, any[]>;
+  localSelections?: Record<string, string>;
+  onSelectVariant?: (segmentId: string, variantId: string) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -696,7 +889,26 @@ function DayAccordion({
                 if (item.kind === "journey") {
                   return <JourneyViewCard key={`journey-${item.journeyId}`} legs={item.legs} showPricing={showPricing} timeFormat={timeFormat} />;
                 }
-                return <SegmentView key={item.segment.id} segment={item.segment} showPricing={showPricing} timeFormat={timeFormat} />;
+                if (item.kind === "propertyGroup") {
+                  return <PropertyGroupViewCard key={`property-${item.propertyGroupId}`} rooms={item.rooms} showPricing={showPricing} timeFormat={timeFormat} />;
+                }
+                const seg = item.segment;
+                const variants = token && seg.hasVariants && variantMap?.[seg.id];
+                return (
+                  <div key={seg.id}>
+                    <SegmentView segment={seg} showPricing={showPricing} timeFormat={timeFormat} />
+                    {variants && variants.length > 0 && onSelectVariant && (
+                      <div className="mt-2">
+                        <VariantCards
+                          segment={seg}
+                          variants={variants}
+                          selectedVariantId={localSelections?.[seg.id]}
+                          onSelect={onSelectVariant}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
               })}
             </div>
           </motion.div>
@@ -712,6 +924,11 @@ export default function TripViewPage() {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [showFloatingBar, setShowFloatingBar] = useState(false);
   const heroRef = useRef<HTMLDivElement>(null);
+
+  const [variantMap, setVariantMap] = useState<Record<string, any[]>>({});
+  const [localSelections, setLocalSelections] = useState<Record<string, string>>({});
+  const [submitSheetOpen, setSubmitSheetOpen] = useState(false);
+  const [submitSuccess, setSubmitSuccess] = useState(false);
 
   const token = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -733,6 +950,43 @@ export default function TripViewPage() {
       return res.json();
     },
   });
+
+  useEffect(() => {
+    if (!data || !token) return;
+    const allSegments = data.versions.flatMap(v => v.segments);
+    const variantSegments = allSegments.filter(s => s.hasVariants);
+    if (variantSegments.length === 0) return;
+
+    const fetchVariants = async () => {
+      const newMap: Record<string, any[]> = {};
+      const newSelections: Record<string, string> = {};
+      await Promise.all(
+        variantSegments.map(async (seg) => {
+          try {
+            const res = await fetch(`/api/segments/${seg.id}/variants?token=${token}`);
+            if (res.ok) {
+              const variants = await res.json();
+              newMap[seg.id] = variants;
+              const selected = variants.find((v: any) => v.isSelected);
+              if (selected) newSelections[seg.id] = selected.id;
+            }
+          } catch {}
+        })
+      );
+      setVariantMap(newMap);
+      setLocalSelections(prev => ({ ...prev, ...newSelections }));
+    };
+    fetchVariants();
+  }, [data, token]);
+
+  const selectVariant = useCallback(async (segmentId: string, variantId: string) => {
+    setLocalSelections(prev => ({ ...prev, [segmentId]: variantId }));
+    try {
+      await fetch(`/api/segments/${segmentId}/variants/${variantId}/select?token=${token}`, {
+        method: "POST",
+      });
+    } catch {}
+  }, [token]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -977,6 +1231,10 @@ export default function TripViewPage() {
                 defaultOpen={dayNumber <= 2}
                 showPricing={!!activeVersion?.showPricing}
                 timeFormat={timeFormat}
+                token={token}
+                variantMap={variantMap}
+                localSelections={localSelections}
+                onSelectVariant={selectVariant}
               />
             ))
           )}
@@ -1053,6 +1311,120 @@ export default function TripViewPage() {
           <p className="text-center text-xs text-muted-foreground/40 tracking-wider uppercase mt-6">Travel Lab</p>
         </footer>
       </div>
+
+      {(() => {
+        if (!token || !activeVersion) return null;
+        const allSegments = activeVersion.segments || [];
+        const variantSegments = allSegments.filter(s => s.hasVariants);
+        const totalVariantSegments = variantSegments.length;
+        if (totalVariantSegments === 0) return null;
+        const selectedCount = variantSegments.filter(s => localSelections[s.id]).length;
+        if (selectedCount === 0 && !trip.selectionsSubmittedAt) return null;
+
+        return (
+          <>
+            <AnimatePresence>
+              <motion.div
+                initial={{ y: 60, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 60, opacity: 0 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50"
+                data-testid="variant-submit-bar"
+              >
+                <div className="flex items-center gap-3 px-5 py-3 rounded-full bg-foreground text-background shadow-2xl">
+                  <span className="text-sm font-medium">
+                    {selectedCount} of {totalVariantSegments} selected
+                  </span>
+                  {trip.selectionsSubmittedAt ? (
+                    <span className="text-xs opacity-70">
+                      Last submitted {format(new Date(trip.selectionsSubmittedAt), "d MMM")}
+                    </span>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="rounded-full"
+                    onClick={() => { setSubmitSuccess(false); setSubmitSheetOpen(true); }}
+                    data-testid="button-review-submit"
+                  >
+                    Review & Submit <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                  </Button>
+                </div>
+              </motion.div>
+            </AnimatePresence>
+
+            <Sheet open={submitSheetOpen} onOpenChange={setSubmitSheetOpen}>
+              <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
+                <SheetHeader className="text-left">
+                  <SheetTitle>Your Selections</SheetTitle>
+                  <SheetDescription>Review and submit your choices to your advisor</SheetDescription>
+                </SheetHeader>
+
+                {submitSuccess ? (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="submit-success">
+                    <CheckCircle className="w-10 h-10 text-emerald-500" />
+                    <p className="text-base font-medium">Selections submitted!</p>
+                    <p className="text-sm text-muted-foreground">Your advisor has been notified.</p>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    {variantSegments.map((seg) => {
+                      const selectedId = localSelections[seg.id];
+                      const variants = variantMap[seg.id] || [];
+                      const selectedVariant = variants.find((v: any) => v.id === selectedId);
+                      return (
+                        <div key={seg.id} className="flex items-center justify-between py-2 border-b border-border/30 last:border-b-0" data-testid={`sheet-segment-${seg.id}`}>
+                          <div>
+                            <p className="text-sm font-medium">{seg.title}</p>
+                            {selectedVariant ? (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {selectedVariant.label}
+                                {selectedVariant.cost > 0 && ` · ${formatViewCurrency(selectedVariant.cost, selectedVariant.currency || "USD")}`}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground/60 mt-0.5 italic">Not yet selected</p>
+                            )}
+                          </div>
+                          {selectedVariant && <CheckCircle className="w-4 h-4 text-primary shrink-0" />}
+                        </div>
+                      );
+                    })}
+
+                    <div className="pt-3 space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        {selectedCount} of {totalVariantSegments} options selected
+                      </p>
+                      {selectedCount < totalVariantSegments && (
+                        <p className="text-xs text-muted-foreground/70">
+                          You can submit now and return to select the remaining options later.
+                        </p>
+                      )}
+                      <Button
+                        className="w-full"
+                        disabled={selectedCount === 0}
+                        onClick={async () => {
+                          try {
+                            await fetch(`/api/trips/${trip.id}/submit-selections?token=${token}`, { method: "POST" });
+                            setSubmitSuccess(true);
+                            setTimeout(() => {
+                              setSubmitSheetOpen(false);
+                            }, 2000);
+                          } catch {}
+                        }}
+                        data-testid="button-submit-selections"
+                      >
+                        <Send className="w-3.5 h-3.5 mr-1.5" />
+                        Submit {selectedCount} selection{selectedCount !== 1 ? "s" : ""}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </SheetContent>
+            </Sheet>
+          </>
+        );
+      })()}
     </div>
   );
 }

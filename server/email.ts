@@ -61,6 +61,54 @@ export async function sendTeamInviteEmail({
   });
 }
 
+export async function sendSelectionSubmittedEmail({
+  toEmail,
+  clientName,
+  tripTitle,
+  selections,
+  submitted,
+  pending,
+}: {
+  toEmail: string;
+  clientName: string;
+  tripTitle: string;
+  selections: { segmentTitle: string; variantLabel: string; price?: string }[];
+  submitted: number;
+  pending: number;
+}) {
+  const selectionHtml = selections.map(s =>
+    `<li style="margin-bottom: 8px;">
+      <strong>${s.segmentTitle}</strong>: ${s.variantLabel}${s.price ? ` (${s.price})` : ""}
+    </li>`
+  ).join("");
+
+  await getResend().emails.send({
+    from: "onboarding@resend.dev",
+    to: toEmail,
+    subject: `${clientName} submitted their selections for ${tripTitle}`,
+    html: `
+      <div style="font-family: Georgia, serif; max-width: 560px;
+        margin: 0 auto; padding: 40px 24px; color: #1a1a1a;">
+        <h1 style="font-size: 24px; font-weight: normal;
+          margin-bottom: 8px;">
+          Client Selections Received
+        </h1>
+        <p style="color: #555; margin-bottom: 24px;">
+          <strong>${clientName}</strong> has submitted their
+          selections for <strong>${tripTitle}</strong>.
+        </p>
+        <ul style="color: #333; padding-left: 20px; margin-bottom: 24px;">
+          ${selectionHtml}
+        </ul>
+        <p style="color: #999; font-size: 13px; border-top: 1px solid #eee; padding-top: 16px;">
+          ${submitted} of ${submitted + pending} options selected.
+          ${pending > 0 ? `${pending} option${pending > 1 ? "s" : ""} still pending.` : "All options selected."}
+        </p>
+      </div>
+    `,
+  });
+}
+
 export async function sendClientPortalInviteEmail({
   toEmail,
   clientName,

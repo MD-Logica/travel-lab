@@ -106,6 +106,7 @@ export const trips = pgTable("trips", {
   additionalClientIds: text("additional_client_ids").array().default(sql`'{}'`),
   shareToken: varchar("share_token").unique(),
   shareEnabled: boolean("share_enabled").notNull().default(false),
+  selectionsSubmittedAt: timestamp("selections_submitted_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -146,9 +147,53 @@ export const tripSegments = pgTable("trip_segments", {
   photos: text("photos").array(),
   metadata: jsonb("metadata"),
   journeyId: varchar("journey_id"),
+  hasVariants: boolean("has_variants").notNull().default(false),
+  quantity: integer("quantity").default(1),
+  pricePerUnit: integer("price_per_unit"),
+  refundability: text("refundability").default("unknown"),
+  refundDeadline: timestamp("refund_deadline"),
+  propertyGroupId: varchar("property_group_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+export const segmentVariants = pgTable("segment_variants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  segmentId: varchar("segment_id").notNull().references(() => tripSegments.id, { onDelete: "cascade" }),
+  orgId: varchar("org_id").notNull().references(() => organizations.id),
+  label: text("label").notNull(),
+  description: text("description"),
+  cost: integer("cost"),
+  currency: text("currency").default("USD"),
+  pricePerUnit: integer("price_per_unit"),
+  quantity: integer("quantity").default(1),
+  refundability: text("refundability").default("unknown"),
+  refundDeadline: timestamp("refund_deadline"),
+  metadata: jsonb("metadata"),
+  isSelected: boolean("is_selected").notNull().default(false),
+  isSubmitted: boolean("is_submitted").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSegmentVariantSchema = createInsertSchema(segmentVariants).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type SegmentVariant = typeof segmentVariants.$inferSelect;
+export type InsertSegmentVariant = z.infer<typeof insertSegmentVariantSchema>;
+
+export const segmentVariantsRelations = relations(segmentVariants, ({ one }) => ({
+  segment: one(tripSegments, {
+    fields: [segmentVariants.segmentId],
+    references: [tripSegments.id],
+  }),
+  organization: one(organizations, {
+    fields: [segmentVariants.orgId],
+    references: [organizations.id],
+  }),
+}));
 
 export const tripDocuments = pgTable("trip_documents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

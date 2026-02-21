@@ -10,7 +10,8 @@ import { generateTripPdf } from "./pdf-generator";
 import { generateCalendar } from "./calendar-generator";
 import { checkSingleFlight } from "./flight-tracker";
 import { differenceInCalendarDays } from "date-fns";
-import { sendTeamInviteEmail, sendClientPortalInviteEmail } from "./email";
+import { sendTeamInviteEmail, sendClientPortalInviteEmail, sendSelectionSubmittedEmail } from "./email";
+import { segmentVariants, tripSegments, trips, profiles, clients } from "@shared/schema";
 import webpush from "web-push";
 
 const objectStorageService = new ObjectStorageService();
@@ -539,6 +540,183 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Toggle share error:", error);
       res.status(500).json({ message: "Failed to update sharing" });
+    }
+  });
+
+  // ─── VARIANT ROUTES ────────────────────────────────────────────────
+
+  app.get("/api/segments/:segmentId/variants", async (req: any, res) => {
+    try {
+      const { segmentId } = req.params;
+      const token = req.query.token as string | undefined;
+
+      // Try authenticated access first
+      if (req._orgId) {
+        const variants = await storage.getVariantsBySegment(segmentId, req._orgId);
+        return res.json(variants);
+      }
+
+      // Token-based public access
+      if (token) {
+        const { db } = await import("./db");
+        const { eq, and } = await import("drizzle-orm");
+        const [seg] = await db.select({ tripId: tripSegments.tripId, orgId: tripSegments.orgId })
+          .from(tripSegments).where(eq(tripSegments.id, segmentId));
+        if (!seg) return res.status(404).json({ message: "Segment not found" });
+
+        const [trip] = await db.select({ shareToken: trips.shareToken, shareEnabled: trips.shareEnabled })
+          .from(trips).where(eq(trips.id, seg.tripId));
+        if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+          return res.status(403).json({ message: "Access denied" });
+        }
+
+        const variants = await storage.getVariantsBySegment(segmentId, seg.orgId);
+        return res.json(variants);
+      }
+
+      return res.status(401).json({ message: "Authentication required" });
+    } catch (error) {
+      console.error("Get variants error:", error);
+      res.status(500).json({ message: "Failed to get variants" });
+    }
+  });
+
+  app.post("/api/segments/:segmentId/variants", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { segmentId } = req.params;
+      const orgId = req._orgId;
+      const variantData = { ...req.body, segmentId, orgId };
+      const variant = await storage.createVariant(variantData);
+      res.json(variant);
+    } catch (error) {
+      console.error("Create variant error:", error);
+      res.status(500).json({ message: "Failed to create variant" });
+    }
+  });
+
+  app.patch("/api/segments/:segmentId/variants/:variantId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { variantId } = req.params;
+      const orgId = req._orgId;
+      const variant = await storage.updateVariant(variantId, orgId, req.body);
+      if (!variant) return res.status(404).json({ message: "Variant not found" });
+      res.json(variant);
+    } catch (error) {
+      console.error("Update variant error:", error);
+      res.status(500).json({ message: "Failed to update variant" });
+    }
+  });
+
+  app.delete("/api/segments/:segmentId/variants/:variantId", isAuthenticated, orgMiddleware, async (req: any, res) => {
+    try {
+      const { variantId } = req.params;
+      const orgId = req._orgId;
+      await storage.deleteVariant(variantId, orgId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete variant error:", error);
+      res.status(500).json({ message: "Failed to delete variant" });
+    }
+  });
+
+  app.post("/api/segments/:segmentId/variants/:variantId/select", async (req: any, res) => {
+    try {
+      const { segmentId, variantId } = req.params;
+      const token = req.query.token as string;
+      if (!token) return res.status(401).json({ message: "Token required" });
+
+      const { db } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const [seg] = await db.select({ tripId: tripSegments.tripId, orgId: tripSegments.orgId })
+        .from(tripSegments).where(eq(tripSegments.id, segmentId));
+      if (!seg) return res.status(404).json({ message: "Segment not found" });
+
+      const [trip] = await db.select({ shareToken: trips.shareToken, shareEnabled: trips.shareEnabled })
+        .from(trips).where(eq(trips.id, seg.tripId));
+      if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const variants = await storage.selectVariant(segmentId, variantId);
+      res.json(variants);
+    } catch (error) {
+      console.error("Select variant error:", error);
+      res.status(500).json({ message: "Failed to select variant" });
+    }
+  });
+
+  app.post("/api/trips/:tripId/submit-selections", async (req: any, res) => {
+    try {
+      const { tripId } = req.params;
+      const token = req.query.token as string;
+      if (!token) return res.status(401).json({ message: "Token required" });
+
+      const { db } = await import("./db");
+      const { eq, and, inArray } = await import("drizzle-orm");
+
+      const [trip] = await db.select().from(trips).where(eq(trips.id, tripId));
+      if (!trip || !trip.shareEnabled || trip.shareToken !== token) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const result = await storage.submitVariantsForTrip(tripId);
+
+      // Send summary email to advisor
+      try {
+        if (trip.advisorId) {
+          const [advisor] = await db.select({ email: profiles.email, fullName: profiles.fullName })
+            .from(profiles).where(eq(profiles.id, trip.advisorId));
+
+          let clientName = "Client";
+          if (trip.clientId) {
+            const [cl] = await db.select({ fullName: clients.fullName })
+              .from(clients).where(eq(clients.id, trip.clientId));
+            if (cl) clientName = cl.fullName;
+          }
+
+          if (advisor?.email) {
+            // Get submitted variants for email
+            const segs = await db.select({ id: tripSegments.id, title: tripSegments.title })
+              .from(tripSegments)
+              .where(and(eq(tripSegments.tripId, tripId), eq(tripSegments.hasVariants, true)));
+
+            const segIds = segs.map(s => s.id);
+            const submittedVariants = segIds.length > 0
+              ? await db.select().from(segmentVariants)
+                  .where(and(
+                    inArray(segmentVariants.segmentId, segIds),
+                    eq(segmentVariants.isSubmitted, true),
+                    eq(segmentVariants.isSelected, true)
+                  ))
+              : [];
+
+            const selections = submittedVariants.map(v => {
+              const seg = segs.find(s => s.id === v.segmentId);
+              return {
+                segmentTitle: seg?.title || "Segment",
+                variantLabel: v.label,
+                price: v.cost ? new Intl.NumberFormat("en-US", { style: "currency", currency: v.currency || "USD", minimumFractionDigits: 0 }).format(v.cost) : undefined,
+              };
+            });
+
+            await sendSelectionSubmittedEmail({
+              toEmail: advisor.email,
+              clientName,
+              tripTitle: trip.title,
+              selections,
+              submitted: result.submitted,
+              pending: result.pending,
+            });
+          }
+        }
+      } catch (emailErr) {
+        console.error("Selection email failed:", emailErr);
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error("Submit selections error:", error);
+      res.status(500).json({ message: "Failed to submit selections" });
     }
   });
 

@@ -1101,6 +1101,22 @@ export function SegmentEditor({
   const [saveAsTemplate, setSaveAsTemplate] = useState(false);
   const [templateLabel, setTemplateLabel] = useState("");
   const [connectionLegs, setConnectionLegs] = useState<ConnectionLeg[]>([]);
+  const [variants, setVariants] = useState<any[]>([]);
+  const [existingVariantIds, setExistingVariantIds] = useState<string[]>([]);
+
+  const addVariant = () => {
+    setVariants([...variants, { label: "", description: "", cost: 0, quantity: 1, refundability: "unknown" }]);
+  };
+
+  const updateVariant = (index: number, updates: Record<string, any>) => {
+    const updated = [...variants];
+    updated[index] = { ...updated[index], ...updates };
+    setVariants(updated);
+  };
+
+  const removeVariant = (index: number) => {
+    setVariants(variants.filter((_, i) => i !== index));
+  };
 
   const resetForm = useCallback(() => {
     setType("activity");
@@ -1118,6 +1134,8 @@ export function SegmentEditor({
     setSaveAsTemplate(false);
     setTemplateLabel("");
     setConnectionLegs([]);
+    setVariants([]);
+    setExistingVariantIds([]);
   }, [defaultDay]);
 
   useEffect(() => {
@@ -1135,6 +1153,20 @@ export function SegmentEditor({
         setNotes(existingSegment.notes || "");
         setPhotos((existingSegment.photos as string[]) || []);
         setMetadata((existingSegment.metadata as Record<string, any>) || {});
+        if (existingSegment.hasVariants) {
+          fetch(`/api/segments/${existingSegment.id}/variants`, { credentials: "include" })
+            .then((r) => r.json())
+            .then((data) => {
+              if (Array.isArray(data)) {
+                setVariants(data);
+                setExistingVariantIds(data.map((v: any) => v.id));
+              }
+            })
+            .catch(() => {});
+        } else {
+          setVariants([]);
+          setExistingVariantIds([]);
+        }
       } else if (templateData) {
         setType(templateData.type);
         setTitle(templateData.title);
@@ -1217,7 +1249,38 @@ export function SegmentEditor({
         return result;
       }
     },
-    onSuccess: async () => {
+    onSuccess: async (savedSegment: any) => {
+      const segmentId = savedSegment?.id || existingSegment?.id;
+      if (segmentId && (type === "hotel" || type === "flight") && (variants.length > 0 || existingVariantIds.length > 0)) {
+        try {
+          const currentIds = variants.filter((v) => v.id).map((v) => v.id);
+          const deletedIds = existingVariantIds.filter((id) => !currentIds.includes(id));
+          for (const id of deletedIds) {
+            await apiRequest("DELETE", `/api/segments/${segmentId}/variants/${id}`);
+          }
+          for (const v of variants) {
+            if (v.id && existingVariantIds.includes(v.id)) {
+              await apiRequest("PATCH", `/api/segments/${segmentId}/variants/${v.id}`, {
+                label: v.label,
+                description: v.description || null,
+                cost: v.cost || null,
+                quantity: v.quantity || 1,
+                refundability: v.refundability || "unknown",
+              });
+            } else if (!v.id) {
+              await apiRequest("POST", `/api/segments/${segmentId}/variants`, {
+                label: v.label || "Option",
+                description: v.description || null,
+                cost: v.cost || null,
+                quantity: v.quantity || 1,
+                refundability: v.refundability || "unknown",
+                segmentId,
+              });
+            }
+          }
+        } catch {
+        }
+      }
       if (saveAsTemplate && templateLabel.trim()) {
         try {
           await apiRequest("POST", "/api/segment-templates", {
@@ -1367,6 +1430,169 @@ export function SegmentEditor({
               </Select>
             </div>
           </FieldRow>
+
+          {(type === "hotel" || type === "flight" || type === "activity") && (
+            <>
+              <SectionHeading>Cancellation Policy</SectionHeading>
+              <div>
+                <FieldLabel>Refundability</FieldLabel>
+                <Select
+                  value={metadata.refundability || "unknown"}
+                  onValueChange={(v) => setMetadata({ ...metadata, refundability: v })}
+                >
+                  <SelectTrigger data-testid="select-refundability">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unknown">Not specified</SelectItem>
+                    <SelectItem value="fully_refundable">Fully refundable</SelectItem>
+                    <SelectItem value="partially_refundable">Partially refundable</SelectItem>
+                    <SelectItem value="non_refundable">Non-refundable</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {(metadata.refundability === "fully_refundable" || metadata.refundability === "partially_refundable") && (
+                <div>
+                  <FieldLabel>Refund Deadline</FieldLabel>
+                  <Input
+                    type="date"
+                    value={metadata.refundDeadline || ""}
+                    onChange={(e) => setMetadata({ ...metadata, refundDeadline: e.target.value })}
+                    data-testid="input-refund-deadline"
+                  />
+                </div>
+              )}
+            </>
+          )}
+
+          {(type === "hotel" || type === "flight") && (
+            <>
+              <FieldRow>
+                <div>
+                  <FieldLabel>{type === "hotel" ? "Rooms" : "Passengers"}</FieldLabel>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={metadata.quantity || 1}
+                    onChange={(e) => {
+                      const qty = parseInt(e.target.value) || 1;
+                      const ppu = metadata.pricePerUnit || 0;
+                      setMetadata({ ...metadata, quantity: qty });
+                      if (ppu > 0) setCost(String(qty * ppu));
+                    }}
+                    data-testid="input-quantity"
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Price per unit</FieldLabel>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={metadata.pricePerUnit || ""}
+                    onChange={(e) => {
+                      const ppu = parseInt(e.target.value) || 0;
+                      const qty = metadata.quantity || 1;
+                      setMetadata({ ...metadata, pricePerUnit: ppu });
+                      if (ppu > 0) setCost(String(qty * ppu));
+                    }}
+                    placeholder="0"
+                    data-testid="input-price-per-unit"
+                  />
+                </div>
+              </FieldRow>
+              {(metadata.quantity || 1) > 1 && metadata.pricePerUnit > 0 && (
+                <p className="text-sm text-muted-foreground" data-testid="text-total-cost">
+                  Total: {currency === "USD" ? "$" : currency === "EUR" ? "\u20ac" : currency === "GBP" ? "\u00a3" : currency + " "}
+                  {((metadata.quantity || 1) * metadata.pricePerUnit).toLocaleString()}
+                </p>
+              )}
+            </>
+          )}
+
+          {(type === "hotel" || type === "flight") && (
+            <>
+              <SectionHeading>Options / Variants</SectionHeading>
+              {variants.map((v, i) => (
+                <div key={v.id || `new-${i}`} className="border border-border rounded-md p-3 space-y-2" data-testid={`card-variant-${i}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <Input
+                      value={v.label}
+                      onChange={(e) => updateVariant(i, { label: e.target.value })}
+                      placeholder="Option label"
+                      className="flex-1"
+                      data-testid={`input-variant-label-${i}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeVariant(i)}
+                      data-testid={`button-remove-variant-${i}`}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <Input
+                    value={v.description || ""}
+                    onChange={(e) => updateVariant(i, { description: e.target.value })}
+                    placeholder="Description (optional)"
+                    data-testid={`input-variant-description-${i}`}
+                  />
+                  <FieldRow cols={3}>
+                    <div>
+                      <FieldLabel>Price</FieldLabel>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={v.cost || ""}
+                        onChange={(e) => updateVariant(i, { cost: parseInt(e.target.value) || 0 })}
+                        placeholder="0"
+                        data-testid={`input-variant-price-${i}`}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Qty</FieldLabel>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={v.quantity || 1}
+                        onChange={(e) => updateVariant(i, { quantity: parseInt(e.target.value) || 1 })}
+                        data-testid={`input-variant-qty-${i}`}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Policy</FieldLabel>
+                      <Select
+                        value={v.refundability || "unknown"}
+                        onValueChange={(val) => updateVariant(i, { refundability: val })}
+                      >
+                        <SelectTrigger data-testid={`select-variant-policy-${i}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="unknown">Not specified</SelectItem>
+                          <SelectItem value="fully_refundable">Fully refundable</SelectItem>
+                          <SelectItem value="partially_refundable">Partially refundable</SelectItem>
+                          <SelectItem value="non_refundable">Non-refundable</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </FieldRow>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={addVariant}
+                data-testid="button-add-variant"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                Add option
+              </Button>
+            </>
+          )}
 
           <PhotosField photos={photos} onChange={setPhotos} />
         </div>

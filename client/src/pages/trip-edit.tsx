@@ -307,6 +307,32 @@ function SegmentCard({
                 {badges.map((b, i) => (
                   <Badge key={i} variant={b.variant || "secondary"} className="text-[10px] shrink-0">{b.label}</Badge>
                 ))}
+                {(() => {
+                  const refund = meta.refundability || segment.refundability;
+                  const deadline = meta.refundDeadline || (segment.refundDeadline ? format(new Date(segment.refundDeadline), "MMM d") : null);
+                  if (!refund || refund === "unknown") return null;
+                  if (refund === "non_refundable") return (
+                    <Badge variant="outline" className="text-[10px] shrink-0 border-red-300 text-red-600 dark:border-red-700 dark:text-red-400" data-testid={`badge-refund-${segment.id}`}>
+                      Non-refundable
+                    </Badge>
+                  );
+                  if (refund === "partially_refundable") return (
+                    <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-600 dark:border-amber-700 dark:text-amber-400" data-testid={`badge-refund-${segment.id}`}>
+                      Partial refund{deadline ? ` until ${deadline}` : ""}
+                    </Badge>
+                  );
+                  if (refund === "fully_refundable") return (
+                    <Badge variant="outline" className="text-[10px] shrink-0 border-emerald-300 text-emerald-600 dark:border-emerald-700 dark:text-emerald-400" data-testid={`badge-refund-${segment.id}`}>
+                      Refundable{deadline ? ` until ${deadline}` : ""}
+                    </Badge>
+                  );
+                  return null;
+                })()}
+                {segment.hasVariants && (
+                  <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`badge-variants-${segment.id}`}>
+                    Options available
+                  </Badge>
+                )}
               </div>
               {secondaryText && (
                 <p className="text-xs text-muted-foreground truncate mt-0.5">{secondaryText}</p>
@@ -430,12 +456,15 @@ function SegmentCard({
 
 type DayRenderItem =
   | { kind: "segment"; segment: TripSegment }
-  | { kind: "journey"; journeyId: string; legs: TripSegment[] };
+  | { kind: "journey"; journeyId: string; legs: TripSegment[] }
+  | { kind: "propertyGroup"; propertyGroupId: string; rooms: TripSegment[] };
 
 function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
   const items: DayRenderItem[] = [];
   const seenJourneyIds = new Set<string>();
   const journeyGroups = new Map<string, TripSegment[]>();
+  const seenPropertyGroupIds = new Set<string>();
+  const propertyGroups = new Map<string, TripSegment[]>();
 
   for (const seg of daySegments) {
     if (seg.journeyId) {
@@ -443,6 +472,12 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
         journeyGroups.set(seg.journeyId, []);
       }
       journeyGroups.get(seg.journeyId)!.push(seg);
+    }
+    if (seg.propertyGroupId && seg.type === "hotel") {
+      if (!propertyGroups.has(seg.propertyGroupId)) {
+        propertyGroups.set(seg.propertyGroupId, []);
+      }
+      propertyGroups.get(seg.propertyGroupId)!.push(seg);
     }
   }
 
@@ -457,6 +492,12 @@ function buildDayRenderItems(daySegments: TripSegment[]): DayRenderItem[] {
           return aLeg - bLeg;
         });
         items.push({ kind: "journey", journeyId: seg.journeyId, legs });
+      }
+    } else if (seg.propertyGroupId && seg.type === "hotel" && propertyGroups.get(seg.propertyGroupId)!.length > 1) {
+      if (!seenPropertyGroupIds.has(seg.propertyGroupId)) {
+        seenPropertyGroupIds.add(seg.propertyGroupId);
+        const rooms = propertyGroups.get(seg.propertyGroupId)!;
+        items.push({ kind: "propertyGroup", propertyGroupId: seg.propertyGroupId, rooms });
       }
     } else {
       items.push({ kind: "segment", segment: seg });
@@ -663,6 +704,127 @@ function JourneyCard({
             </div>
           ) : null;
         })()}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PropertyGroupCard({
+  rooms,
+  tripId,
+  onEdit,
+  showPricing,
+}: {
+  rooms: TripSegment[];
+  tripId: string;
+  onEdit: (s: TripSegment) => void;
+  showPricing?: boolean;
+}) {
+  const firstRoom = rooms[0];
+  const firstMeta = (firstRoom.metadata || {}) as Record<string, any>;
+  const hotelName = firstMeta.hotelName || firstRoom.title || "Hotel";
+
+  const checkIn = firstMeta.checkIn;
+  const lastMeta = (rooms[rooms.length - 1].metadata || {}) as Record<string, any>;
+  const checkOut = lastMeta.checkOut || firstMeta.checkOut;
+
+  let nightsDisplay = "";
+  if (checkIn && checkOut) {
+    try {
+      const ci = new Date(checkIn);
+      const co = new Date(checkOut);
+      const nights = differenceInCalendarDays(co, ci);
+      if (nights > 0) nightsDisplay = `${nights} night${nights > 1 ? "s" : ""}`;
+    } catch {}
+  }
+
+  const formatShortDate = (d: string | null | undefined) => {
+    if (!d) return "";
+    try { return format(new Date(d), "d MMM"); } catch { return d; }
+  };
+
+  const refundLabel = (seg: TripSegment) => {
+    const r = seg.refundability || (seg.metadata as any)?.refundability;
+    if (!r || r === "unknown") return null;
+    if (r === "non_refundable") return { text: "Non-refundable", cls: "text-red-600 dark:text-red-400" };
+    if (r === "partially_refundable") return { text: "Partial refund", cls: "text-amber-600 dark:text-amber-400" };
+    if (r === "fully_refundable") return { text: "Refundable", cls: "text-emerald-600 dark:text-emerald-400" };
+    return null;
+  };
+
+  const totalCost = rooms.reduce((sum, r) => sum + (r.cost || 0), 0);
+
+  return (
+    <Card className="group relative hover-elevate border-amber-200/40 dark:border-amber-800/40" data-testid={`card-property-group-${rooms[0].propertyGroupId}`}>
+      <CardContent className="p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center w-9 h-9 rounded-md shrink-0 text-amber-600 bg-amber-50 dark:bg-amber-950/40">
+            <Hotel className="w-4 h-4" strokeWidth={1.5} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium text-base tracking-tight" data-testid="text-property-group-name">{hotelName}</p>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+              {checkIn && checkOut && (
+                <span>{formatShortDate(checkIn)} &rarr; {formatShortDate(checkOut)}</span>
+              )}
+              {nightsDisplay && (
+                <>
+                  <span className="text-muted-foreground/40">&middot;</span>
+                  <span>{nightsDisplay}</span>
+                </>
+              )}
+              <Badge variant="outline" className="text-[10px]">
+                {rooms.length} room{rooms.length > 1 ? "s" : ""}
+              </Badge>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-0 pl-4 border-l-2 border-amber-200/60 dark:border-amber-800/40 ml-4">
+          {rooms.map((room) => {
+            const meta = (room.metadata || {}) as Record<string, any>;
+            const roomType = meta.roomType || room.title || "Room";
+            const qty = room.quantity || 1;
+            const refund = refundLabel(room);
+
+            return (
+              <div
+                key={room.id}
+                className="py-2 flex items-center gap-3 group/room cursor-pointer hover:bg-accent/30 rounded-md px-2 -mx-2 transition-colors"
+                onClick={() => onEdit(room)}
+                data-testid={`property-room-${room.id}`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-sm">{roomType}</span>
+                    {qty > 1 && (
+                      <Badge variant="secondary" className="text-[9px]">x{qty}</Badge>
+                    )}
+                    {refund && (
+                      <span className={`text-[10px] font-medium ${refund.cls}`}>{refund.text}</span>
+                    )}
+                  </div>
+                  {showPricing && room.cost != null && room.cost > 0 && (
+                    <span className="text-xs text-muted-foreground mt-0.5 block">
+                      {room.currency || "USD"} {room.cost.toLocaleString()}
+                      {room.pricePerUnit ? ` (${room.currency || "USD"} ${room.pricePerUnit.toLocaleString()}/night)` : ""}
+                    </span>
+                  )}
+                </div>
+                <div className="opacity-0 group-hover/room:opacity-100 transition-opacity">
+                  <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {showPricing && totalCost > 0 && (
+          <div className="flex items-center gap-1 text-xs text-muted-foreground pt-1 border-t border-border/30">
+            <DollarSign className="w-3 h-3" strokeWidth={1.5} />
+            {rooms[0].currency || "USD"} {totalCost.toLocaleString()} total
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1532,6 +1694,13 @@ export default function TripEditPage() {
   const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [propertyGroupDialog, setPropertyGroupDialog] = useState<{
+    open: boolean;
+    newSegmentId: string;
+    existingSegmentId: string;
+    hotelName: string;
+  }>({ open: false, newSegmentId: "", existingSegmentId: "", hotelName: "" });
+  const prevSegmentDialogOpen = useRef(false);
 
   const { data: tripData, isLoading: tripLoading } = useQuery<TripFull>({
     queryKey: ["/api/trips", id, "full"],
@@ -1589,6 +1758,48 @@ export default function TripEditPage() {
     }
     return groups;
   }, [segments]);
+
+  const propertyGroupMutation = useMutation({
+    mutationFn: async ({ newSegmentId, existingSegmentId }: { newSegmentId: string; existingSegmentId: string }) => {
+      const groupId = crypto.randomUUID();
+      await apiRequest("PATCH", `/api/trips/${id}/segments/${existingSegmentId}`, { propertyGroupId: groupId });
+      await apiRequest("PATCH", `/api/trips/${id}/segments/${newSegmentId}`, { propertyGroupId: groupId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", id] });
+      toast({ title: "Hotel rooms grouped" });
+      setPropertyGroupDialog({ open: false, newSegmentId: "", existingSegmentId: "", hotelName: "" });
+    },
+    onError: (e: Error) => {
+      toast({ title: "Error grouping", description: e.message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    if (prevSegmentDialogOpen.current && !segmentDialogOpen && segments.length > 0) {
+      const hotelSegments = segments.filter(s => s.type === "hotel" && !s.propertyGroupId);
+      for (let i = hotelSegments.length - 1; i >= 0; i--) {
+        const seg = hotelSegments[i];
+        const segHotelName = ((seg.metadata as any)?.hotelName || "").toLowerCase().trim();
+        if (!segHotelName) continue;
+        const match = hotelSegments.find(other =>
+          other.id !== seg.id &&
+          other.dayNumber === seg.dayNumber &&
+          ((other.metadata as any)?.hotelName || "").toLowerCase().trim() === segHotelName
+        );
+        if (match) {
+          setPropertyGroupDialog({
+            open: true,
+            newSegmentId: seg.id,
+            existingSegmentId: match.id,
+            hotelName: (seg.metadata as any)?.hotelName || seg.title || "Hotel",
+          });
+          break;
+        }
+      }
+    }
+    prevSegmentDialogOpen.current = segmentDialogOpen;
+  }, [segmentDialogOpen, segments]);
 
   const tripStart = trip?.startDate ? new Date(trip.startDate) : null;
   const tripEnd = trip?.endDate ? new Date(trip.endDate) : null;
@@ -2374,6 +2585,17 @@ export default function TripEditPage() {
                               />
                             );
                           }
+                          if (item.kind === "propertyGroup") {
+                            return (
+                              <PropertyGroupCard
+                                key={`property-${item.propertyGroupId}`}
+                                rooms={item.rooms}
+                                tripId={id!}
+                                onEdit={openEditSegment}
+                                showPricing={showPricing}
+                              />
+                            );
+                          }
                           return (
                             <SegmentCard
                               key={item.segment.id}
@@ -2478,6 +2700,38 @@ export default function TripEditPage() {
               data-testid="button-confirm-delete-trip"
             >
               {deleteTripMutation.isPending ? "Deleting..." : "Delete permanently"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={propertyGroupDialog.open} onOpenChange={(o) => setPropertyGroupDialog(prev => ({ ...prev, open: o }))}>
+        <DialogContent className="max-w-sm" data-testid="dialog-property-group">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-lg">Group hotel rooms?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This looks like another room at <span className="font-medium text-foreground">{propertyGroupDialog.hotelName}</span>. Group with the existing booking?
+          </p>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPropertyGroupDialog({ open: false, newSegmentId: "", existingSegmentId: "", hotelName: "" })}
+              data-testid="button-keep-separate"
+            >
+              Keep separate
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => propertyGroupMutation.mutate({
+                newSegmentId: propertyGroupDialog.newSegmentId,
+                existingSegmentId: propertyGroupDialog.existingSegmentId,
+              })}
+              disabled={propertyGroupMutation.isPending}
+              data-testid="button-group-them"
+            >
+              {propertyGroupMutation.isPending ? "Grouping..." : "Group them"}
             </Button>
           </div>
         </DialogContent>
